@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use bevy_renet2::{
     netcode::{ClientAuthentication, NativeSocket, NetcodeClientPlugin, NetcodeClientTransport},
-    prelude::{ConnectionConfig, RenetClient, RenetClientPlugin},
+    prelude::{RenetClient, RenetClientPlugin},
 };
 use common::*;
 
@@ -67,7 +67,7 @@ fn renet_init() -> (RenetClient, NetcodeClientTransport) {
 
     let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
 
-    let client = RenetClient::new(ConnectionConfig::test(), transport.is_reliable());
+    let client = RenetClient::new(common::data::renet_config(), transport.is_reliable());
 
     (client, transport)
 }

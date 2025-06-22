@@ -10,7 +10,7 @@ use bevy_renet2::{
         NativeSocket, NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication,
         ServerSetupConfig,
     },
-    prelude::{ConnectionConfig, RenetServer, RenetServerPlugin},
+    prelude::{RenetServer, RenetServerPlugin},
 };
 
 use common::*;
@@ -63,7 +63,7 @@ fn renet_init() -> (RenetServer, NetcodeServerTransport) {
 
     let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
 
-    let server = RenetServer::new(ConnectionConfig::test());
+    let server = RenetServer::new(common::data::renet_config());
 
     (server, transport)
 }

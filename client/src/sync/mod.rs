@@ -25,6 +25,7 @@ fn sync_players(
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message = data::decode(&message);
+
         match server_message {
             ServerMessage::PlayerConnected { id } => {
                 info!("Player {} connected.", id);
