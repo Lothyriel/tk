@@ -7,9 +7,10 @@ pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, update)
-            .add_systems(Update, move_players)
-            .add_systems(Update, sync_players);
+        app.insert_resource(Time::<Fixed>::from_hz(128.0))
+            .add_systems(FixedUpdate, update)
+            .add_systems(FixedUpdate, move_players)
+            .add_systems(FixedUpdate, sync_players);
     }
 }
 
