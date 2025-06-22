@@ -6,7 +6,9 @@ pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (sync_players, send_input).run_if(client_connected));
+        let sync_services = (send_input, recv_players_pos, recv_connectivity);
+
+        app.add_systems(Update, sync_services.run_if(client_connected));
     }
 }
 
@@ -16,7 +18,7 @@ fn send_input(player_input: Res<PlayerInput>, mut client: ResMut<RenetClient>) {
     client.send_message(DefaultChannel::ReliableOrdered, input_message);
 }
 
-fn sync_players(
+fn recv_connectivity(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -47,15 +49,19 @@ fn sync_players(
             }
         }
     }
+}
 
+fn recv_players_pos(mut commands: Commands, mut client: ResMut<RenetClient>, lobby: ResMut<Lobby>) {
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
         let players: HashMap<ClientId, [f32; 3]> = data::decode(&message);
+
         for (player_id, translation) in players.iter() {
             if let Some(player_entity) = lobby.players.get(player_id) {
                 let transform = Transform {
                     translation: (*translation).into(),
                     ..Default::default()
                 };
+
                 commands.entity(*player_entity).insert(transform);
             }
         }

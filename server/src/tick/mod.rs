@@ -8,8 +8,8 @@ pub struct Plugin;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Time::<Fixed>::from_hz(128.0))
-            .add_systems(FixedUpdate, handle_connectivity)
-            .add_systems(FixedUpdate, handle_player_input)
+            .add_systems(FixedUpdate, recv_connectivity)
+            .add_systems(FixedUpdate, recv_players_input)
             .add_systems(FixedUpdate, physx_tick)
             .add_systems(FixedUpdate, send_players_pos);
     }
@@ -39,7 +39,7 @@ fn send_players_pos(mut server: ResMut<RenetServer>, query: Query<(&Transform, &
     server.broadcast_message(DefaultChannel::Unreliable, sync_message);
 }
 
-fn handle_player_input(
+fn recv_players_input(
     mut commands: Commands,
     mut server: ResMut<RenetServer>,
     lobby: ResMut<Lobby>,
@@ -56,7 +56,7 @@ fn handle_player_input(
     }
 }
 
-fn handle_connectivity(
+fn recv_connectivity(
     mut server_events: EventReader<ServerEvent>,
     mut commands: Commands,
     mut lobby: ResMut<Lobby>,
@@ -88,6 +88,7 @@ fn handle_connectivity(
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 info!("Player {} disconnected: {}", client_id, reason);
+
                 if let Some(player_entity) = lobby.players.remove(client_id) {
                     commands.entity(player_entity).despawn();
                 }
