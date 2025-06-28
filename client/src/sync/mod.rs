@@ -1,6 +1,6 @@
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_renet2::prelude::{ClientId, DefaultChannel, RenetClient, client_connected};
-use common::{Lobby, PlayerInput, ServerMessage, data};
+use common::{ClientInput, Lobby, PlayerId, ServerMessage, data};
 
 pub struct Plugin;
 
@@ -12,7 +12,7 @@ impl bevy::prelude::Plugin for Plugin {
     }
 }
 
-fn send_input(player_input: Res<PlayerInput>, mut client: ResMut<RenetClient>) {
+fn send_input(player_input: Res<ClientInput>, mut client: ResMut<RenetClient>) {
     let input_message = data::encode(&*player_input);
 
     client.send_message(DefaultChannel::ReliableOrdered, input_message);
@@ -26,9 +26,9 @@ fn recv_connectivity(
     mut lobby: ResMut<Lobby>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
-        let server_message = data::decode(&message);
+        let event = data::decode(&message);
 
-        match server_message {
+        match event {
             ServerMessage::PlayerConnected { id } => {
                 info!("Player {} connected.", id);
                 let player_entity = commands

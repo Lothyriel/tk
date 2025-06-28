@@ -34,7 +34,7 @@ impl bevy::prelude::Plugin for ClientPlugin {
             .add_plugins(ui::Plugin)
             .add_plugins(input::Plugin)
             .add_plugins(sync::Plugin)
-            .init_resource::<PlayerInput>()
+            .init_resource::<ClientInput>()
             .insert_resource(client)
             .insert_resource(transport);
     }

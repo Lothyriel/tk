@@ -15,7 +15,7 @@ impl bevy::prelude::Plugin for Plugin {
     }
 }
 
-fn physx_tick(mut query: Query<(&mut Transform, &PlayerInput)>, time: Res<Time>) {
+fn physx_tick(mut query: Query<(&mut Transform, &ClientInput)>, time: Res<Time>) {
     for (mut transform, input) in query.iter_mut() {
         let x = (input.right as i8 - input.left as i8) as f32;
         let y = (input.down as i8 - input.up as i8) as f32;
@@ -27,7 +27,7 @@ fn physx_tick(mut query: Query<(&mut Transform, &PlayerInput)>, time: Res<Time>)
     }
 }
 
-fn send_players_pos(mut server: ResMut<RenetServer>, query: Query<(&Transform, &Player)>) {
+fn send_players_pos(mut server: ResMut<RenetServer>, query: Query<(&Transform, &Client)>) {
     let mut players: HashMap<ClientId, [f32; 3]> = HashMap::new();
 
     for (transform, player) in query.iter() {
@@ -47,7 +47,7 @@ fn recv_players_input(
     for client_id in server.clients_id() {
         while let Some(message) = server.receive_message(client_id, DefaultChannel::ReliableOrdered)
         {
-            let player_input: PlayerInput = data::decode(&message);
+            let player_input: ClientInput = data::decode(&message);
 
             if let Some(player_entity) = lobby.players.get(&client_id) {
                 commands.entity(*player_entity).insert(player_input);
@@ -66,10 +66,11 @@ fn recv_connectivity(
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected.", client_id);
+
                 // Spawn player cube
                 let player_entity = commands
-                    .spawn(Player { id: *client_id })
-                    .insert(PlayerInput::default())
+                    .spawn(Client { id: *client_id })
+                    .insert(ClientInput::default())
                     .insert(Transform::from_xyz(0.0, 0.5, 0.0))
                     .id();
 

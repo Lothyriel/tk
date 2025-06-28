@@ -23,8 +23,11 @@ fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Component, Resource)]
+pub struct PlayerId(pub u64);
+
 #[derive(Debug, Default, Serialize, Deserialize, Component, Resource)]
-pub struct PlayerInput {
+pub struct ClientInput {
     pub up: bool,
     pub down: bool,
     pub left: bool,
@@ -32,7 +35,7 @@ pub struct PlayerInput {
 }
 
 #[derive(Debug, Component)]
-pub struct Player {
+pub struct Client {
     pub id: ClientId,
 }
 

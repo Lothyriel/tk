@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::PlayerInput;
+use common::ClientInput;
 
 pub struct Plugin;
 
@@ -9,7 +9,7 @@ impl bevy::prelude::Plugin for Plugin {
     }
 }
 
-fn player_input(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<PlayerInput>) {
+fn player_input(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>) {
     input.left = keyboard.pressed(KeyCode::KeyA) || keyboard.pressed(KeyCode::ArrowLeft);
     input.right = keyboard.pressed(KeyCode::KeyD) || keyboard.pressed(KeyCode::ArrowRight);
     input.up = keyboard.pressed(KeyCode::KeyW) || keyboard.pressed(KeyCode::ArrowUp);
