@@ -26,7 +26,7 @@ fn keyboard(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>)
     let left = keyboard.pressed(KeyCode::KeyQ) as i8;
     let right = keyboard.pressed(KeyCode::KeyE) as i8;
 
-    input.camera.roll = (right - left) as f32 * MAX_ROLL_ANGLE;
+    input.camera.roll = (left - right) as f32 * MAX_ROLL_ANGLE;
 }
 
 fn mouse(
