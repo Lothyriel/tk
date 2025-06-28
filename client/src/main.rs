@@ -12,8 +12,8 @@ use bevy_renet2::{
 use common::*;
 
 mod input;
+mod render;
 mod sync;
-mod ui;
 
 fn main() {
     App::new()
@@ -31,7 +31,7 @@ impl bevy::prelude::Plugin for ClientPlugin {
         app.add_plugins(common::Plugin)
             .add_plugins(RenetClientPlugin)
             .add_plugins(NetcodeClientPlugin)
-            .add_plugins(ui::Plugin)
+            .add_plugins(render::Plugin)
             .add_plugins(input::Plugin)
             .add_plugins(sync::Plugin)
             .init_resource::<ClientInput>()

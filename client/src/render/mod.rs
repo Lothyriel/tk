@@ -57,6 +57,7 @@ fn spawn_view_model(
     commands
         .spawn((
             Client { id: player_id.0 },
+            PlayerId(player_id.0),
             CameraSensitivity::default(),
             Transform::from_xyz(0.0, 1.0, 0.0),
             Visibility::default(),
