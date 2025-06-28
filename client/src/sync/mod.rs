@@ -1,6 +1,6 @@
-use bevy::{platform::collections::HashMap, prelude::*};
-use bevy_renet2::prelude::{ClientId, DefaultChannel, RenetClient, client_connected};
-use common::{ClientInput, Lobby, PlayerId, ServerMessage, data};
+use bevy::prelude::*;
+use bevy_renet2::prelude::{DefaultChannel, RenetClient, client_connected};
+use common::{ClientData, ClientInput, Lobby, PlayerId, ServerMessage, data};
 
 pub struct Plugin;
 
@@ -30,21 +30,29 @@ fn recv_connectivity(
         let event = data::decode(&message);
 
         match event {
-            ServerMessage::PlayerConnected { id } => {
+            ServerMessage::ClientConnected { id } => {
                 info!("Player {} connected.", id);
-                let mut player_entity = commands.spawn((
+
+                let client_bundle = (
                     Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
                     MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
                     Transform::from_xyz(0.0, 0.5, 0.0),
-                ));
+                );
 
+                // this probably needs to change, shadows are weird
+                // (prob not considering the camera)
                 if id == player_id.0 {
-                    player_entity.insert(PlayerId(player_id.0));
-                }
+                    commands
+                        .get_entity(lobby.players[&id])
+                        .expect("Player to be in lobby")
+                        .insert(client_bundle);
+                } else {
+                    let client = commands.spawn(client_bundle);
 
-                lobby.players.insert(id, player_entity.id());
+                    lobby.players.insert(id, client.id());
+                }
             }
-            ServerMessage::PlayerDisconnected { id } => {
+            ServerMessage::ClientDisconnected { id } => {
                 info!("Player {} disconnected.", id);
                 if let Some(player_entity) = lobby.players.remove(&id) {
                     commands.entity(player_entity).despawn();
@@ -56,12 +64,13 @@ fn recv_connectivity(
 
 fn recv_players_pos(mut commands: Commands, mut client: ResMut<RenetClient>, lobby: ResMut<Lobby>) {
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
-        let players: HashMap<ClientId, [f32; 3]> = data::decode(&message);
+        let players: Vec<ClientData> = data::decode(&message);
 
-        for (player_id, translation) in players.iter() {
-            if let Some(player_entity) = lobby.players.get(player_id) {
+        for ClientData { id, pos, rot } in players.iter() {
+            if let Some(player_entity) = lobby.players.get(id) {
                 let transform = Transform {
-                    translation: (*translation).into(),
+                    translation: (*pos).into(),
+                    rotation: rot.into(),
                     ..Default::default()
                 };
 

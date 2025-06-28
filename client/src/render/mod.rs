@@ -1,10 +1,7 @@
-use std::f32::consts::FRAC_PI_2;
-
 use bevy::{
-    color::palettes::tailwind, input::mouse::AccumulatedMouseMotion, pbr::NotShadowCaster,
-    prelude::*, render::view::RenderLayers,
+    color::palettes::tailwind, pbr::NotShadowCaster, prelude::*, render::view::RenderLayers,
 };
-use common::{Client, PlayerId};
+use common::{Client, Lobby, PlayerId};
 
 pub struct Plugin;
 
@@ -13,23 +10,7 @@ impl bevy::prelude::Plugin for Plugin {
         let startup_systems = (spawn_view_model, spawn_world_model, spawn_lights);
 
         app.add_systems(Startup, startup_systems)
-            .add_systems(Update, (move_player, change_fov));
-    }
-}
-
-#[derive(Debug, Component, Deref, DerefMut)]
-struct CameraSensitivity(Vec2);
-
-impl Default for CameraSensitivity {
-    fn default() -> Self {
-        Self(
-            // These factors are just arbitrary mouse sensitivity values.
-            // It's often nicer to have a faster horizontal sensitivity than vertical.
-            // We use a component for them so that we can make them user-configurable at runtime
-            // for accessibility reasons.
-            // It also allows you to inspect them in an editor if you `Reflect` the component.
-            Vec2::new(0.003, 0.002),
-        )
+            .add_systems(Update, change_fov);
     }
 }
 
@@ -49,16 +30,16 @@ fn spawn_view_model(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut lobby: ResMut<Lobby>,
     player_id: Res<PlayerId>,
 ) {
     let arm = meshes.add(Cuboid::new(0.1, 0.1, 0.5));
     let arm_material = materials.add(Color::from(tailwind::TEAL_200));
 
-    commands
+    let player = commands
         .spawn((
             Client { id: player_id.0 },
             PlayerId(player_id.0),
-            CameraSensitivity::default(),
             Transform::from_xyz(0.0, 1.0, 0.0),
             Visibility::default(),
         ))
@@ -98,7 +79,10 @@ fn spawn_view_model(
                 // The arm is free-floating, so shadows would look weird.
                 NotShadowCaster,
             ));
-        });
+        })
+        .id();
+
+    lobby.players.insert(player_id.0, player);
 }
 
 fn spawn_world_model(
@@ -139,43 +123,6 @@ fn spawn_lights(mut commands: Commands) {
         // The light source illuminates both the world model and the view model.
         RenderLayers::from_layers(&[DEFAULT_RENDER_LAYER, VIEW_MODEL_RENDER_LAYER]),
     ));
-}
-
-fn move_player(
-    accumulated_mouse_motion: Res<AccumulatedMouseMotion>,
-    player: Single<(&mut Transform, &CameraSensitivity), With<PlayerId>>,
-) {
-    let (mut transform, camera_sensitivity) = player.into_inner();
-
-    let delta = accumulated_mouse_motion.delta;
-
-    if delta == Vec2::ZERO {
-        return;
-    }
-
-    // Note that we are not multiplying by delta_time here.
-    // The reason is that for mouse movement, we already get the full movement that happened since the last frame.
-    // This means that if we multiply by delta_time, we will get a smaller rotation than intended by the user.
-    // This situation is reversed when reading e.g. analog input from a gamepad however, where the same rules
-    // as for keyboard input apply. Such an input should be multiplied by delta_time to get the intended rotation
-    // independent of the framerate.
-    let delta_yaw = -delta.x * camera_sensitivity.x;
-    let delta_pitch = -delta.y * camera_sensitivity.y;
-
-    let (yaw, pitch, roll) = transform.rotation.to_euler(EulerRot::YXZ);
-    let yaw = yaw + delta_yaw;
-
-    // If the pitch was ±¹⁄₂ π, the camera would look straight up or down.
-    // When the user wants to move the camera back to the horizon, which way should the camera face?
-    // The camera has no way of knowing what direction was "forward" before landing in that extreme position,
-    // so the direction picked will for all intents and purposes be arbitrary.
-    // Another issue is that for mathematical reasons, the yaw will effectively be flipped when the pitch is at the extremes.
-    // To not run into these issues, we clamp the pitch to a safe range.
-    const PITCH_LIMIT: f32 = FRAC_PI_2 - 0.01;
-
-    let pitch = (pitch + delta_pitch).clamp(-PITCH_LIMIT, PITCH_LIMIT);
-
-    transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll);
 }
 
 fn change_fov(
