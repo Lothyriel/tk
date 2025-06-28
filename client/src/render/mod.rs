@@ -33,6 +33,7 @@ fn spawn_view_model(
     mut lobby: ResMut<Lobby>,
     player_id: Res<PlayerId>,
 ) {
+    // save meshes and materials handles so we can reutilize
     let arm = meshes.add(Cuboid::new(0.1, 0.1, 0.5));
     let arm_material = materials.add(Color::from(tailwind::TEAL_200));
 
@@ -42,47 +43,57 @@ fn spawn_view_model(
             PlayerId(player_id.0),
             Transform::from_xyz(0.0, 1.0, 0.0),
             Visibility::default(),
+            children![
+                world_camera(),
+                // Spawn view model camera.
+                view_model_camera(),
+                // Spawn the player's right arm.
+                player_right_arm(arm, arm_material),
+            ],
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                WorldModelCamera,
-                Camera3d::default(),
-                Projection::from(PerspectiveProjection {
-                    fov: 90.0_f32.to_radians(),
-                    ..default()
-                }),
-            ));
-
-            // Spawn view model camera.
-            parent.spawn((
-                Camera3d::default(),
-                Camera {
-                    // Bump the order to render on top of the world model.
-                    order: 1,
-                    ..default()
-                },
-                Projection::from(PerspectiveProjection {
-                    fov: 70.0_f32.to_radians(),
-                    ..default()
-                }),
-                // Only render objects belonging to the view model.
-                RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
-            ));
-
-            // Spawn the player's right arm.
-            parent.spawn((
-                Mesh3d(arm),
-                MeshMaterial3d(arm_material),
-                Transform::from_xyz(0.2, -0.1, -0.25),
-                // Ensure the arm is only rendered by the view model camera.
-                RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
-                // The arm is free-floating, so shadows would look weird.
-                NotShadowCaster,
-            ));
-        })
         .id();
 
     lobby.players.insert(player_id.0, player);
+}
+
+fn world_camera() -> impl Bundle {
+    (
+        WorldModelCamera,
+        Camera3d::default(),
+        Projection::from(PerspectiveProjection {
+            fov: 90.0_f32.to_radians(),
+            ..default()
+        }),
+    )
+}
+
+fn view_model_camera() -> impl Bundle {
+    (
+        Camera3d::default(),
+        Camera {
+            // Bump the order to render on top of the world model.
+            order: 1,
+            ..default()
+        },
+        Projection::from(PerspectiveProjection {
+            fov: 70.0_f32.to_radians(),
+            ..default()
+        }),
+        // Only render objects belonging to the view model.
+        RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
+    )
+}
+
+fn player_right_arm(arm: Handle<Mesh>, arm_material: Handle<StandardMaterial>) -> impl Bundle {
+    (
+        Mesh3d(arm),
+        MeshMaterial3d(arm_material),
+        Transform::from_xyz(0.2, -0.1, -0.25),
+        // Ensure the arm is only rendered by the view model camera.
+        RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
+        // The arm is free-floating, so shadows would look weird.
+        NotShadowCaster,
+    )
 }
 
 fn spawn_world_model(
