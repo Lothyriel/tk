@@ -24,6 +24,7 @@ fn recv_connectivity(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut client: ResMut<RenetClient>,
     mut lobby: ResMut<Lobby>,
+    player_id: Res<PlayerId>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let event = data::decode(&message);
@@ -31,15 +32,17 @@ fn recv_connectivity(
         match event {
             ServerMessage::PlayerConnected { id } => {
                 info!("Player {} connected.", id);
-                let player_entity = commands
-                    .spawn((
-                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
-                        MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
-                        Transform::from_xyz(0.0, 0.5, 0.0),
-                    ))
-                    .id();
+                let mut player_entity = commands.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
+                    MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
+                    Transform::from_xyz(0.0, 0.5, 0.0),
+                ));
 
-                lobby.players.insert(id, player_entity);
+                if id == player_id.0 {
+                    player_entity.insert(PlayerId(player_id.0));
+                }
+
+                lobby.players.insert(id, player_entity.id());
             }
             ServerMessage::PlayerDisconnected { id } => {
                 info!("Player {} disconnected.", id);
