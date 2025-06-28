@@ -39,8 +39,7 @@ fn physx_tick(mut query: Query<(&mut Transform, &ClientInput)>, time: Res<Time>)
         transform.translation +=
             movement * PLAYER_MOVE_SPEED * adjustment * time.delta().as_secs_f32();
 
-        let CameraInput { yaw, pitch, roll } = input.camera;
-        transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll);
+        transform.rotation = Quat::from(&input.camera);
     }
 }
 
