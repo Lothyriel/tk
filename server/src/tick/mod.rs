@@ -20,24 +20,16 @@ fn physx_tick(mut query: Query<(&mut Transform, &ClientInput)>, time: Res<Time>)
         let x = (input.right as i8 - input.left as i8) as f32;
         let z = (input.backward as i8 - input.forward as i8) as f32;
 
-        let input_dir = Vec3::new(x, 0.0, z);
-
-        // to avoid speeding up diagonally
-        let adjustment = if input_dir.x != 0.0 && input_dir.z != 0.0 {
-            0.7
-        } else {
-            1.0
-        };
+        let input_dir = Vec3::new(x, 0.0, z).normalize_or_zero();
 
         // Extract yaw rotation
         let yaw_rotation = Quat::from_rotation_y(input.camera.yaw);
 
         // Rotate the input direction by the player's yaw
-        let movement = yaw_rotation * input_dir.normalize_or_zero();
+        let movement = yaw_rotation * input_dir;
 
         // Apply movement
-        transform.translation +=
-            movement * PLAYER_MOVE_SPEED * adjustment * time.delta().as_secs_f32();
+        transform.translation += movement * PLAYER_MOVE_SPEED * time.delta().as_secs_f32();
 
         transform.rotation = Quat::from(&input.camera);
     }
