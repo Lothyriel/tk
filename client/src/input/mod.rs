@@ -1,6 +1,10 @@
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*};
+use bevy::{
+    input::mouse::AccumulatedMouseMotion,
+    prelude::*,
+    window::{CursorGrabMode, PrimaryWindow},
+};
 use common::{CameraInput, ClientInput};
 
 pub struct Plugin;
@@ -9,8 +13,16 @@ impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ClientInput>()
             .init_resource::<CameraSensitivity>()
+            .add_systems(Startup, setup_cursor)
             .add_systems(Update, (keyboard, mouse));
     }
+}
+
+fn setup_cursor(q: Single<&mut Window, With<PrimaryWindow>>) {
+    let mut window = q.into_inner();
+
+    window.cursor_options.grab_mode = CursorGrabMode::Locked;
+    window.cursor_options.visible = false;
 }
 
 fn keyboard(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>) {
