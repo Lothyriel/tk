@@ -1,6 +1,7 @@
 pub mod data;
 
 use bevy::{platform::collections::HashMap, prelude::*};
+use bevy_rapier3d::prelude::*;
 use bevy_renet2::{netcode::NetcodeTransportError, prelude::ClientId};
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,7 @@ pub struct Plugin;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         app.init_resource::<Lobby>()
+            .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
             .add_systems(Update, panic_on_error_system);
     }
 }
