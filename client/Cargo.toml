@@ -10,5 +10,5 @@ common = { path = "../common" }
 bevy = { workspace = true }
 serde = { workspace = true }
 bevy_renet2 = { workspace = true }
-dotenvy_macro = "0.15.7"
+dotenvy = "0.15.7"
 rand = "0.9.1"

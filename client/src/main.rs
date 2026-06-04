@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, UdpSocket},
+    net::{Ipv4Addr, SocketAddr, UdpSocket},
     time::SystemTime,
 };
 
@@ -41,17 +41,22 @@ impl bevy::prelude::Plugin for ClientPlugin {
 }
 
 fn renet_init() -> (RenetClient, NetcodeClientTransport, u64) {
+    dotenvy::dotenv().ok();
+
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();
 
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
 
-    let server_addr = dotenvy_macro::dotenv!("SERVER_ADDR")
+    let server_addr = std::env::var("SERVER_ADDR")
+        .expect("Missing SERVER_ADDR")
         .parse()
         .expect("Valid SERVER_ADDR");
 
-    info!("Connecting on {}", server_addr);
+    let server_socket = SocketAddr::new(server_addr, DEFAULT_PORT);
+
+    info!("Connecting on {}", server_socket);
 
     let client_id = rand::random();
 
@@ -59,7 +64,7 @@ fn renet_init() -> (RenetClient, NetcodeClientTransport, u64) {
         client_id,
         protocol_id: PROTOCOL_ID,
         socket_id: 0,
-        server_addr,
+        server_addr: server_socket,
         user_data: None,
     };
 
