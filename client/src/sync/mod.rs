@@ -27,7 +27,7 @@ fn recv_connectivity(
     player_id: Res<PlayerId>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
-        let event = data::decode(&message);
+        let event: ServerMessage = data::decode(&message);
 
         match event {
             ServerMessage::ClientConnected { id } => {

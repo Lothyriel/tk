@@ -8,5 +8,4 @@ edition = "2024"
 [dependencies]
 common = { path = "../common" }
 bevy = { workspace = true }
-serde = { workspace = true }
 bevy_renet2 = { workspace = true }

@@ -45,7 +45,7 @@ fn send_players_pos(mut server: ResMut<RenetServer>, query: Query<(&Transform, &
         })
         .collect();
 
-    let sync_message = data::encode(players);
+    let sync_message = data::encode(&players);
 
     server.broadcast_message(DefaultChannel::Unreliable, sync_message);
 }
@@ -88,13 +88,13 @@ fn recv_connectivity(
                 // We could send an InitState with all the players id and positions for the client
                 // but this is easier to do.
                 for &player_id in lobby.players.keys() {
-                    let message = data::encode(ServerMessage::ClientConnected { id: player_id });
+                    let message = data::encode(&ServerMessage::ClientConnected { id: player_id });
                     server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
 
                 lobby.players.insert(*client_id, player_entity);
 
-                let message = data::encode(ServerMessage::ClientConnected { id: *client_id });
+                let message = data::encode(&ServerMessage::ClientConnected { id: *client_id });
 
                 server.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
@@ -105,7 +105,7 @@ fn recv_connectivity(
                     commands.entity(player_entity).despawn();
                 }
 
-                let message = data::encode(ServerMessage::ClientDisconnected { id: *client_id });
+                let message = data::encode(&ServerMessage::ClientDisconnected { id: *client_id });
 
                 server.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }

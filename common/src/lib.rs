@@ -3,7 +3,7 @@ pub mod data;
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_rapier3d::prelude::*;
 use bevy_renet2::{netcode::NetcodeTransportError, prelude::ClientId};
-use serde::{Deserialize, Serialize};
+use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
 pub const PROTOCOL_ID: u64 = 0;
@@ -25,17 +25,17 @@ fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Component, Resource)]
+#[derive(Debug, Archive, Serialize, Deserialize, Component, Resource)]
 pub struct PlayerId(pub u64);
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Archive, Serialize, Deserialize)]
 pub struct ClientData {
     pub id: ClientId,
     pub pos: [f32; 3],
     pub rot: CameraInput,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Component, Resource)]
+#[derive(Debug, Default, Archive, Serialize, Deserialize, Component, Resource)]
 pub struct ClientInput {
     pub forward: bool,
     pub backward: bool,
@@ -45,7 +45,7 @@ pub struct ClientInput {
     pub camera: CameraInput,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Component)]
+#[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
 pub struct CameraInput {
     pub pitch: f32,
     pub yaw: f32,
@@ -79,7 +79,7 @@ pub struct Lobby {
     pub players: HashMap<ClientId, Entity>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Component)]
+#[derive(Debug, Archive, Serialize, Deserialize, Component)]
 pub enum ServerMessage {
     ClientConnected { id: ClientId },
     ClientDisconnected { id: ClientId },
