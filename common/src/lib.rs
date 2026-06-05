@@ -9,9 +9,15 @@ pub const DEFAULT_PORT: u16 = 9080;
 pub const PROTOCOL_ID: u64 = 0;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
+pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;
 pub const PLAYER_STEP_HEIGHT: f32 = 0.25;
+pub const PLAYER_CROUCH_SCALE: f32 =
+    (PLAYER_CROUCH_COLLIDER_HALF_HEIGHT + PLAYER_COLLIDER_RADIUS)
+        / (PLAYER_COLLIDER_HALF_HEIGHT + PLAYER_COLLIDER_RADIUS);
+pub const PLAYER_CROUCH_VIEW_OFFSET: f32 = -0.35;
 pub const PLAYER_WALK_SPEED: f32 = 3.25;
 pub const PLAYER_RUN_SPEED: f32 = 5.5;
+pub const PLAYER_CROUCH_SPEED: f32 = 1.75;
 pub const PLAYER_GROUND_ACCELERATION: f32 = 10.0;
 pub const PLAYER_GROUND_DECELERATION: f32 = 7.5;
 pub const PLAYER_AIR_ACCELERATION: f32 = 4.0;
@@ -43,6 +49,7 @@ pub struct ClientData {
     pub id: ClientId,
     pub pos: [f32; 3],
     pub rot: CameraInput,
+    pub crouched: bool,
 }
 
 #[derive(Debug, Default, Archive, Serialize, Deserialize, Component, Resource)]
@@ -52,6 +59,7 @@ pub struct ClientInput {
     pub left: bool,
     pub right: bool,
     pub run: bool,
+    pub crouch: bool,
     pub jump: bool,
     pub camera: CameraInput,
 }
@@ -90,6 +98,12 @@ pub struct MovementState {
     pub velocity: Vec3,
     pub grounded: bool,
     pub jump_queued: bool,
+    pub crouched: bool,
+}
+
+#[derive(Debug, Default, Component)]
+pub struct PlayerVisualState {
+    pub crouched: bool,
 }
 
 #[derive(Debug, Default, Resource)]

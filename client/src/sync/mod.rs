@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use bevy_renet2::prelude::{DefaultChannel, RenetClient, client_connected};
-use common::{ClientData, ClientInput, Lobby, PlayerId, ServerMessage, data};
+use common::{ClientData, ClientInput, Lobby, PlayerId, PlayerVisualState, ServerMessage, data};
+
+use crate::render::PlayerBodyVisual;
 
 pub struct Plugin;
 
@@ -33,21 +35,21 @@ fn recv_connectivity(
             ServerMessage::ClientConnected { id } => {
                 info!("Player {} connected.", id);
 
-                let client_bundle = (
-                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
-                    MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
-                    Transform::from_xyz(0.0, 0.5, 0.0),
-                );
-
                 // this probably needs to change, shadows are weird
                 // (prob not considering the camera)
                 if id == player_id.0 {
                     commands
                         .get_entity(lobby.players[&id])
                         .expect("Player to be in lobby")
-                        .insert(client_bundle);
+                        .insert(PlayerVisualState::default());
                 } else {
-                    let client = commands.spawn(client_bundle);
+                    let client = commands.spawn((
+                        PlayerVisualState::default(),
+                        children![player_body_mesh(
+                            meshes.add(Cuboid::from_size(Vec3::splat(1.0))),
+                            materials.add(Color::srgb(0.8, 0.7, 0.6)),
+                        )],
+                    ));
 
                     lobby.players.insert(id, client.id());
                 }
@@ -66,7 +68,13 @@ fn recv_players_pos(mut commands: Commands, mut client: ResMut<RenetClient>, lob
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
         let players: Vec<ClientData> = data::decode(&message);
 
-        for ClientData { id, pos, rot } in players.iter() {
+        for ClientData {
+            id,
+            pos,
+            rot,
+            crouched,
+        } in players.iter()
+        {
             if let Some(player_entity) = lobby.players.get(id) {
                 let transform = Transform {
                     translation: (*pos).into(),
@@ -74,8 +82,19 @@ fn recv_players_pos(mut commands: Commands, mut client: ResMut<RenetClient>, lob
                     ..Default::default()
                 };
 
-                commands.entity(*player_entity).insert(transform);
+                commands
+                    .entity(*player_entity)
+                    .insert((transform, PlayerVisualState { crouched: *crouched }));
             }
         }
     }
+}
+
+fn player_body_mesh(mesh: Handle<Mesh>, material: Handle<StandardMaterial>) -> impl Bundle {
+    (
+        PlayerBodyVisual,
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Transform::from_xyz(0.0, -0.5, 0.0),
+    )
 }

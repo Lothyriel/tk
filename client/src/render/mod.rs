@@ -2,7 +2,10 @@ use bevy::{
     camera::visibility::RenderLayers, color::palettes::tailwind, light::NotShadowCaster,
     prelude::*,
 };
-use common::{Client, ClientInput, Lobby, PlayerId};
+use common::{
+    Client, ClientInput, Lobby, PlayerId, PlayerVisualState, PLAYER_CROUCH_SCALE,
+    PLAYER_CROUCH_VIEW_OFFSET,
+};
 
 pub struct Plugin;
 
@@ -11,7 +14,7 @@ impl bevy::prelude::Plugin for Plugin {
         let startup_systems = (spawn_view_model, spawn_world_model, spawn_lights);
 
         app.add_systems(Startup, startup_systems)
-            .add_systems(Update, (change_fov, sync_local_view));
+            .add_systems(Update, (change_fov, sync_local_view, sync_player_visuals));
     }
 }
 
@@ -20,6 +23,9 @@ struct WorldModelCamera;
 
 #[derive(Debug, Component)]
 struct LocalView;
+
+#[derive(Debug, Component)]
+pub struct PlayerBodyVisual;
 
 /// Used implicitly by all entities without a `RenderLayers` component.
 /// Our world model camera and all objects other than the player are on this layer.
@@ -54,6 +60,7 @@ fn spawn_view_model(
                 // Spawn the player's right arm.
                 player_right_arm(arm, arm_material),
             ],
+            PlayerVisualState::default(),
         ))
         .id();
 
@@ -167,8 +174,14 @@ fn change_fov(
 
 fn sync_local_view(
     player_input: Res<ClientInput>,
+    player_visual_state: Single<&PlayerVisualState, With<PlayerId>>,
     mut query: Query<&mut Transform, With<LocalView>>,
 ) {
+    let vertical_offset = if player_visual_state.crouched {
+        PLAYER_CROUCH_VIEW_OFFSET
+    } else {
+        0.0
+    };
     let rotation = Quat::from_euler(
         EulerRot::YXZ,
         0.0,
@@ -178,5 +191,29 @@ fn sync_local_view(
 
     for mut transform in query.iter_mut() {
         transform.rotation = rotation;
+        transform.translation.y = vertical_offset;
+    }
+}
+
+fn sync_player_visuals(
+    parents: Query<&ChildOf, With<PlayerBodyVisual>>,
+    player_states: Query<&PlayerVisualState>,
+    mut query: Query<(Entity, &mut Transform), With<PlayerBodyVisual>>,
+) {
+    for (entity, mut transform) in query.iter_mut() {
+        let Ok(parent) = parents.get(entity) else {
+            continue;
+        };
+        let Ok(visual_state) = player_states.get(parent.0) else {
+            continue;
+        };
+
+        if visual_state.crouched {
+            transform.translation.y = -0.5 * PLAYER_CROUCH_SCALE;
+            transform.scale = Vec3::new(1.0, PLAYER_CROUCH_SCALE, 1.0);
+        } else {
+            transform.translation.y = -0.5;
+            transform.scale = Vec3::ONE;
+        }
     }
 }

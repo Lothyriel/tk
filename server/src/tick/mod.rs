@@ -33,18 +33,37 @@ fn spawn_world_colliders(mut commands: Commands) {
 }
 
 fn physx_tick(
+    rapier_context: ReadRapierContext,
     mut query: Query<(
+        Entity,
         &ClientInput,
         &mut MovementState,
+        &mut Collider,
         &mut KinematicCharacterController,
         Option<&KinematicCharacterControllerOutput>,
         &mut Transform,
     )>,
     time: Res<Time>,
 ) {
+    let rapier_context = rapier_context
+        .single()
+        .expect("Default Rapier context to exist");
     let delta = time.delta_secs();
 
-    for (input, mut movement, mut controller, output, mut transform) in query.iter_mut() {
+    for (entity, input, mut movement, mut collider, mut controller, output, mut transform) in
+        query.iter_mut()
+    {
+        let wants_to_crouch = input.crouch;
+
+        if wants_to_crouch && !movement.crouched {
+            set_crouched_state(&mut movement, &mut collider, &mut transform, true);
+        } else if !wants_to_crouch
+            && movement.crouched
+            && can_stand_up(entity, &rapier_context, transform.translation)
+        {
+            set_crouched_state(&mut movement, &mut collider, &mut transform, false);
+        }
+
         let x = (input.right as i8 - input.left as i8) as f32;
         let z = (input.backward as i8 - input.forward as i8) as f32;
 
@@ -53,7 +72,13 @@ fn physx_tick(
         let wish_dir = yaw_rotation * local_input;
 
         let horizontal_velocity = Vec3::new(movement.velocity.x, 0.0, movement.velocity.z);
-        let target_speed = if input.run { PLAYER_RUN_SPEED } else { PLAYER_WALK_SPEED };
+        let target_speed = if movement.crouched {
+            PLAYER_CROUCH_SPEED
+        } else if input.run {
+            PLAYER_RUN_SPEED
+        } else {
+            PLAYER_WALK_SPEED
+        };
         let target_horizontal_velocity = wish_dir * target_speed;
 
         let grounded = output.is_some_and(|output| output.grounded);
@@ -116,13 +141,17 @@ fn sync_ground_state(
     }
 }
 
-fn send_players_pos(mut server: ResMut<RenetServer>, query: Query<(&Transform, &Client)>) {
+fn send_players_pos(
+    mut server: ResMut<RenetServer>,
+    query: Query<(&Transform, &Client, &MovementState)>,
+) {
     let players: Vec<_> = query
         .iter()
-        .map(|(transform, client)| ClientData {
+        .map(|(transform, client, movement)| ClientData {
             id: client.id,
             pos: transform.translation.into(),
             rot: transform.rotation.into(),
+            crouched: movement.crouched,
         })
         .collect();
 
@@ -209,4 +238,57 @@ fn recv_connectivity(
             }
         }
     }
+}
+
+fn set_crouched_state(
+    movement: &mut MovementState,
+    collider: &mut Collider,
+    transform: &mut Transform,
+    crouched: bool,
+) {
+    movement.crouched = crouched;
+    *collider = Collider::capsule_y(current_collider_half_height(crouched), PLAYER_COLLIDER_RADIUS);
+    transform.translation.y += if crouched {
+        crouched_eye_height() - standing_eye_height()
+    } else {
+        standing_eye_height() - crouched_eye_height()
+    };
+}
+
+fn can_stand_up(entity: Entity, rapier_context: &RapierContext<'_>, translation: Vec3) -> bool {
+    let standing_shape = Collider::capsule_y(PLAYER_COLLIDER_HALF_HEIGHT, PLAYER_COLLIDER_RADIUS);
+    let shape_position = translation + Vec3::Y * (standing_eye_height() - crouched_eye_height());
+    let filter = QueryFilter::new().exclude_collider(entity).exclude_sensors();
+
+    rapier_context
+        .cast_shape(
+            shape_position,
+            Quat::IDENTITY,
+            Vec3::ZERO,
+            (&standing_shape).into(),
+            ShapeCastOptions {
+                max_time_of_impact: 0.0,
+                stop_at_penetration: true,
+                compute_impact_geometry_on_penetration: false,
+                target_distance: 0.0,
+            },
+            filter,
+        )
+        .is_none()
+}
+
+fn current_collider_half_height(crouched: bool) -> f32 {
+    if crouched {
+        PLAYER_CROUCH_COLLIDER_HALF_HEIGHT
+    } else {
+        PLAYER_COLLIDER_HALF_HEIGHT
+    }
+}
+
+fn standing_eye_height() -> f32 {
+    PLAYER_COLLIDER_HALF_HEIGHT + PLAYER_COLLIDER_RADIUS
+}
+
+fn crouched_eye_height() -> f32 {
+    PLAYER_CROUCH_COLLIDER_HALF_HEIGHT + PLAYER_COLLIDER_RADIUS
 }

@@ -29,6 +29,7 @@ fn keyboard(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>)
     input.backward = keyboard.pressed(KeyCode::KeyS);
     input.right = keyboard.pressed(KeyCode::KeyD);
     input.run = keyboard.pressed(KeyCode::ShiftLeft);
+    input.crouch = keyboard.pressed(KeyCode::ControlLeft);
 
     input.jump = keyboard.pressed(KeyCode::Space);
 
