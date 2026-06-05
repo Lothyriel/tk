@@ -2,7 +2,7 @@ use bevy::{
     camera::visibility::RenderLayers, color::palettes::tailwind, light::NotShadowCaster,
     prelude::*,
 };
-use common::{Client, Lobby, PlayerId};
+use common::{Client, ClientInput, Lobby, PlayerId};
 
 pub struct Plugin;
 
@@ -11,12 +11,15 @@ impl bevy::prelude::Plugin for Plugin {
         let startup_systems = (spawn_view_model, spawn_world_model, spawn_lights);
 
         app.add_systems(Startup, startup_systems)
-            .add_systems(Update, change_fov);
+            .add_systems(Update, (change_fov, sync_local_view));
     }
 }
 
 #[derive(Debug, Component)]
 struct WorldModelCamera;
+
+#[derive(Debug, Component)]
+struct LocalView;
 
 /// Used implicitly by all entities without a `RenderLayers` component.
 /// Our world model camera and all objects other than the player are on this layer.
@@ -59,8 +62,10 @@ fn spawn_view_model(
 
 fn world_camera() -> impl Bundle {
     (
+        LocalView,
         WorldModelCamera,
         Camera3d::default(),
+        Transform::default(),
         Projection::from(PerspectiveProjection {
             fov: 90.0_f32.to_radians(),
             ..default()
@@ -70,12 +75,14 @@ fn world_camera() -> impl Bundle {
 
 fn view_model_camera() -> impl Bundle {
     (
+        LocalView,
         Camera3d::default(),
         Camera {
             // Bump the order to render on top of the world model.
             order: 1,
             ..default()
         },
+        Transform::default(),
         Projection::from(PerspectiveProjection {
             fov: 70.0_f32.to_radians(),
             ..default()
@@ -87,6 +94,7 @@ fn view_model_camera() -> impl Bundle {
 
 fn player_right_arm(arm: Handle<Mesh>, arm_material: Handle<StandardMaterial>) -> impl Bundle {
     (
+        LocalView,
         Mesh3d(arm),
         MeshMaterial3d(arm_material),
         Transform::from_xyz(0.2, -0.1, -0.25),
@@ -154,5 +162,21 @@ fn change_fov(
     if input.pressed(KeyCode::ArrowDown) {
         perspective.fov += 1.0_f32.to_radians();
         perspective.fov = perspective.fov.min(160.0_f32.to_radians());
+    }
+}
+
+fn sync_local_view(
+    player_input: Res<ClientInput>,
+    mut query: Query<&mut Transform, With<LocalView>>,
+) {
+    let rotation = Quat::from_euler(
+        EulerRot::YXZ,
+        0.0,
+        player_input.camera.pitch,
+        player_input.camera.roll,
+    );
+
+    for mut transform in query.iter_mut() {
+        transform.rotation = rotation;
     }
 }

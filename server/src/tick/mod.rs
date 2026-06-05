@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_rapier3d::prelude::*;
 
 use bevy_renet2::prelude::{DefaultChannel, RenetServer, ServerEvent};
 use common::*;
@@ -8,30 +9,110 @@ pub struct Plugin;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Time::<Fixed>::from_hz(128.0))
+            .add_systems(Startup, spawn_world_colliders)
             .add_systems(FixedUpdate, recv_connectivity)
             .add_systems(FixedUpdate, recv_players_input)
             .add_systems(FixedUpdate, physx_tick)
+            .add_systems(PostUpdate, sync_ground_state)
             .add_systems(FixedUpdate, send_players_pos);
     }
 }
 
-fn physx_tick(mut query: Query<(&mut Transform, &ClientInput)>, time: Res<Time>) {
-    for (mut transform, input) in query.iter_mut() {
+fn spawn_world_colliders(mut commands: Commands) {
+    commands.spawn(Collider::cuboid(10.0, 0.1, 10.0));
+
+    commands.spawn((
+        Collider::cuboid(1.0, 0.25, 0.5),
+        Transform::from_xyz(0.0, 0.25, -3.0),
+    ));
+
+    commands.spawn((
+        Collider::cuboid(1.0, 0.25, 0.5),
+        Transform::from_xyz(0.75, 1.75, 0.0),
+    ));
+}
+
+fn physx_tick(
+    mut query: Query<(
+        &ClientInput,
+        &mut MovementState,
+        &mut KinematicCharacterController,
+        Option<&KinematicCharacterControllerOutput>,
+        &mut Transform,
+    )>,
+    time: Res<Time>,
+) {
+    let delta = time.delta_secs();
+
+    for (input, mut movement, mut controller, output, mut transform) in query.iter_mut() {
         let x = (input.right as i8 - input.left as i8) as f32;
         let z = (input.backward as i8 - input.forward as i8) as f32;
 
-        let input_dir = Vec3::new(x, 0.0, z).normalize_or_zero();
-
-        // Extract yaw rotation
+        let local_input = Vec3::new(x, 0.0, z).normalize_or_zero();
         let yaw_rotation = Quat::from_rotation_y(input.camera.yaw);
+        let wish_dir = yaw_rotation * local_input;
 
-        // Rotate the input direction by the player's yaw
-        let movement = yaw_rotation * input_dir;
+        let horizontal_velocity = Vec3::new(movement.velocity.x, 0.0, movement.velocity.z);
+        let target_speed = if input.run { PLAYER_RUN_SPEED } else { PLAYER_WALK_SPEED };
+        let target_horizontal_velocity = wish_dir * target_speed;
 
-        // Apply movement
-        transform.translation += movement * PLAYER_MOVE_SPEED * time.delta().as_secs_f32();
+        let grounded = output.is_some_and(|output| output.grounded);
+        movement.grounded = grounded;
 
-        transform.rotation = Quat::from(&input.camera);
+        let horizontal_delta = target_horizontal_velocity - horizontal_velocity;
+
+        let accel = if grounded {
+            if local_input == Vec3::ZERO {
+                PLAYER_GROUND_DECELERATION
+            } else {
+                PLAYER_GROUND_ACCELERATION
+            }
+        } else if local_input == Vec3::ZERO {
+            0.0
+        } else {
+            PLAYER_AIR_ACCELERATION
+        };
+
+        let accel_factor = (accel * delta).min(1.0);
+        let air_control = if grounded { 1.0 } else { PLAYER_AIR_CONTROL };
+        let next_horizontal_velocity = horizontal_velocity + horizontal_delta * accel_factor * air_control;
+
+        movement.velocity.x = next_horizontal_velocity.x;
+        movement.velocity.z = next_horizontal_velocity.z;
+
+        if grounded {
+            if movement.velocity.y < 0.0 {
+                movement.velocity.y = 0.0;
+            }
+
+            if input.jump && !movement.jump_queued {
+                movement.velocity.y = PLAYER_JUMP_SPEED;
+                movement.grounded = false;
+                movement.jump_queued = true;
+            }
+        } else {
+            movement.velocity.y -= PLAYER_GRAVITY * delta;
+        }
+
+        if !input.jump {
+            movement.jump_queued = false;
+        }
+
+        controller.translation = Some(movement.velocity * delta);
+
+        transform.rotation = Quat::from_rotation_y(input.camera.yaw);
+    }
+}
+
+fn sync_ground_state(
+    mut query: Query<(&mut MovementState, &KinematicCharacterControllerOutput)>,
+) {
+    for (mut movement, output) in query.iter_mut() {
+        movement.grounded = output.grounded;
+
+        if output.grounded && movement.velocity.y < 0.0 {
+            movement.velocity.y = 0.0;
+        }
     }
 }
 
@@ -82,7 +163,24 @@ fn recv_connectivity(
                 let player_entity = commands
                     .spawn(Client { id: *client_id })
                     .insert(ClientInput::default())
-                    .insert(Transform::from_xyz(0.0, 0.5, 0.0))
+                    .insert(Collider::capsule_y(
+                        PLAYER_COLLIDER_HALF_HEIGHT,
+                        PLAYER_COLLIDER_RADIUS,
+                    ))
+                    .insert(KinematicCharacterController {
+                        autostep: Some(CharacterAutostep {
+                            max_height: CharacterLength::Absolute(PLAYER_STEP_HEIGHT),
+                            min_width: CharacterLength::Absolute(PLAYER_COLLIDER_RADIUS * 2.0),
+                            include_dynamic_bodies: false,
+                        }),
+                        snap_to_ground: Some(CharacterLength::Absolute(0.2)),
+                        ..Default::default()
+                    })
+                    .insert(MovementState {
+                        grounded: true,
+                        ..Default::default()
+                    })
+                    .insert(Transform::from_xyz(0.0, 1.5, 0.0))
                     .id();
 
                 // We could send an InitState with all the players id and positions for the client

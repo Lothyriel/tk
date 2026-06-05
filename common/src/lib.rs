@@ -7,14 +7,24 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
 pub const PROTOCOL_ID: u64 = 0;
-pub const PLAYER_MOVE_SPEED: f32 = 5.0;
+pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
+pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
+pub const PLAYER_STEP_HEIGHT: f32 = 0.25;
+pub const PLAYER_WALK_SPEED: f32 = 3.25;
+pub const PLAYER_RUN_SPEED: f32 = 5.5;
+pub const PLAYER_GROUND_ACCELERATION: f32 = 10.0;
+pub const PLAYER_GROUND_DECELERATION: f32 = 7.5;
+pub const PLAYER_AIR_ACCELERATION: f32 = 4.0;
+pub const PLAYER_AIR_CONTROL: f32 = 0.2;
+pub const PLAYER_GRAVITY: f32 = 20.0;
+pub const PLAYER_JUMP_SPEED: f32 = 6.5;
 
 pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         app.init_resource::<Lobby>()
-            .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+            .add_plugins(RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule())
             .add_systems(Update, panic_on_error_system);
     }
 }
@@ -41,6 +51,7 @@ pub struct ClientInput {
     pub backward: bool,
     pub left: bool,
     pub right: bool,
+    pub run: bool,
     pub jump: bool,
     pub camera: CameraInput,
 }
@@ -72,6 +83,13 @@ impl From<Quat> for CameraInput {
 #[derive(Debug, Component)]
 pub struct Client {
     pub id: ClientId,
+}
+
+#[derive(Debug, Default, Component)]
+pub struct MovementState {
+    pub velocity: Vec3,
+    pub grounded: bool,
+    pub jump_queued: bool,
 }
 
 #[derive(Debug, Default, Resource)]
