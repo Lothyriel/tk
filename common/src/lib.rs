@@ -19,7 +19,7 @@ impl bevy::prelude::Plugin for Plugin {
     }
 }
 
-fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
+fn panic_on_error_system(mut renet_error: MessageReader<NetcodeTransportError>) {
     if let Some(e) = renet_error.read().next() {
         panic!("{}", e);
     }

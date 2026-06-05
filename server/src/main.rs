@@ -3,7 +3,7 @@ use std::{
     time::SystemTime,
 };
 
-use bevy::{log::LogPlugin, prelude::*};
+use bevy::{log::LogPlugin, prelude::*, transform::TransformPlugin};
 
 use bevy_renet2::{
     netcode::{
@@ -21,6 +21,7 @@ fn main() {
     App::new()
         .add_plugins(LogPlugin::default())
         .add_plugins(MinimalPlugins)
+        .add_plugins(TransformPlugin)
         .add_plugins(ServerPlugin)
         .run();
 }

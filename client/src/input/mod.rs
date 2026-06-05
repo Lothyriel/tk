@@ -3,7 +3,7 @@ use std::f32::consts::FRAC_PI_2;
 use bevy::{
     input::mouse::AccumulatedMouseMotion,
     prelude::*,
-    window::{CursorGrabMode, PrimaryWindow},
+    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 use common::{CameraInput, ClientInput};
 
@@ -18,11 +18,9 @@ impl bevy::prelude::Plugin for Plugin {
     }
 }
 
-fn setup_cursor(q: Single<&mut Window, With<PrimaryWindow>>) {
-    let mut window = q.into_inner();
-
-    window.cursor_options.grab_mode = CursorGrabMode::Locked;
-    window.cursor_options.visible = false;
+fn setup_cursor(mut q: Single<&mut CursorOptions, With<PrimaryWindow>>) {
+    q.visible = false;
+    q.grab_mode = CursorGrabMode::Locked;
 }
 
 fn keyboard(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>) {

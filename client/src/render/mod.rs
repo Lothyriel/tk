@@ -1,5 +1,6 @@
 use bevy::{
-    color::palettes::tailwind, pbr::NotShadowCaster, prelude::*, render::view::RenderLayers,
+    camera::visibility::RenderLayers, color::palettes::tailwind, light::NotShadowCaster,
+    prelude::*,
 };
 use common::{Client, Lobby, PlayerId};
 

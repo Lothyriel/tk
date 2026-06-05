@@ -68,7 +68,7 @@ fn recv_players_input(
 }
 
 fn recv_connectivity(
-    mut server_events: EventReader<ServerEvent>,
+    mut server_events: MessageReader<ServerEvent>,
     mut commands: Commands,
     mut lobby: ResMut<Lobby>,
     mut server: ResMut<RenetServer>,

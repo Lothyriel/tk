@@ -8,4 +8,5 @@ edition = "2024"
 [dependencies]
 common = { path = "../common" }
 bevy = { workspace = true }
+bevy_rapier3d = { workspace = true }
 bevy_renet2 = { workspace = true }

@@ -16,7 +16,7 @@ codegen-units = 1
 lto = "thin"
 
 [workspace.dependencies]
-bevy = "0.16.1"
-bevy_renet2 = { version = "0.10.0", features = ["netcode", "native_transport"] }
-bevy_rapier3d = { version = "0.30.0", features = [ "simd-stable" ] }
+bevy = "0.18"
+bevy_renet2 = { version = "0.15.0", features = ["netcode", "native_transport"] }
+bevy_rapier3d = { version = "0.34.0", features = ["simd-stable"] }
 rkyv = { version = "0.8.12", features = ["bytecheck"] }
