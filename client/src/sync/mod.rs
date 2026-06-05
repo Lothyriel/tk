@@ -13,7 +13,7 @@ impl bevy::prelude::Plugin for Plugin {
 }
 
 fn send_input(player_input: Res<ClientInput>, mut client: ResMut<RenetClient>) {
-    let input_message = data::encode(&*player_input);
+    let input_message = data::encode_message(&*player_input);
 
     client.send_message(DefaultChannel::ReliableOrdered, input_message);
 }

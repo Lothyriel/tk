@@ -2005,6 +2005,7 @@ dependencies = [
  "bevy",
  "bevy_rapier3d",
  "bevy_renet2",
+ "bytes",
  "rkyv",
 ]
 

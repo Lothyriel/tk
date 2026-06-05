@@ -9,4 +9,5 @@ edition = "2021"
 bevy = { workspace = true }
 bevy_renet2 = { workspace = true }
 bevy_rapier3d = { workspace = true }
+bytes = { workspace = true }
 rkyv = { workspace = true }

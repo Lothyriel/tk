@@ -1,12 +1,11 @@
 use bevy_renet2::prelude::ConnectionConfig;
+use bytes::Bytes;
 use rkyv::{
-    Archive, Deserialize, Serialize,
-    api::high::{HighSerializer, HighValidator},
+    api::high::{to_bytes_in, HighSerializer, HighValidator},
     from_bytes,
     rancor::{Error, Strategy},
     ser::allocator::ArenaHandle,
-    to_bytes,
-    util::AlignedVec,
+    Archive, Deserialize, Serialize,
 };
 
 pub fn renet_config() -> ConnectionConfig {
@@ -14,10 +13,10 @@ pub fn renet_config() -> ConnectionConfig {
     ConnectionConfig::test()
 }
 
-pub fn encode(
-    input: &impl for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, Error>>,
-) -> Vec<u8> {
-    to_bytes::<Error>(input).unwrap().into_vec()
+pub fn encode_message(
+    input: &impl for<'a> Serialize<HighSerializer<Vec<u8>, ArenaHandle<'a>, Error>>,
+) -> Bytes {
+    Bytes::from(to_bytes_in::<_, Error>(input, Vec::new()).unwrap())
 }
 
 pub fn decode<D>(input: &[u8]) -> D

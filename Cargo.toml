@@ -20,3 +20,4 @@ bevy = "0.18"
 bevy_renet2 = { version = "0.15.0", features = ["netcode", "native_transport"] }
 bevy_rapier3d = { version = "0.34.0", features = ["simd-stable"] }
 rkyv = { version = "0.8.12", features = ["bytecheck"] }
+bytes = "1"
