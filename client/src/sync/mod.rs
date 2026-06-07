@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_renet2::prelude::{DefaultChannel, RenetClient, client_connected};
 use common::{
     ImpactMarkData, Lobby, PlayerId, PlayerVisualState, ProjectileData, ServerMessage,
-    WorldSnapshot, data,
+    WeaponKind, WorldSnapshot, data,
 };
 
 use crate::render::{ImpactMarkVisual, ProjectileVisual, player_body_mesh};
@@ -11,9 +11,25 @@ pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        let sync_services = (send_input, recv_players_pos, recv_connectivity);
+        app.init_resource::<WeaponAudio>()
+            .add_systems(Update, (send_input, recv_players_pos, recv_connectivity).run_if(client_connected));
+    }
+}
 
-        app.add_systems(Update, sync_services.run_if(client_connected));
+#[derive(Debug, Resource)]
+struct WeaponAudio {
+    rifle: Handle<AudioSource>,
+    pistol: Handle<AudioSource>,
+}
+
+impl FromWorld for WeaponAudio {
+    fn from_world(world: &mut World) -> Self {
+        let asset_server = world.resource::<AssetServer>();
+
+        Self {
+            rifle: asset_server.load("sound/rifle-shot.ogg"),
+            pistol: asset_server.load("sound/pistol-shot.ogg"),
+        }
     }
 }
 
@@ -74,7 +90,7 @@ fn recv_players_pos(
     projectile_visuals: Query<(Entity, &ProjectileVisual)>,
     impact_visuals: Query<(Entity, &ImpactMarkVisual)>,
     player_id: Res<PlayerId>,
-    asset_server: Res<AssetServer>,
+    weapon_audio: Res<WeaponAudio>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
         let snapshot: WorldSnapshot = data::decode(&message);
@@ -98,9 +114,19 @@ fn recv_players_pos(
             }
         }
 
+        let local_weapon = snapshot
+            .players
+            .iter()
+            .find(|player| Some(player.id) == Some(player_id.0))
+            .map(|player| player.weapon)
+            .unwrap_or(WeaponKind::Rifle);
+
         for _projectile_id in snapshot.fired_projectile_ids.iter() {
             commands.spawn((
-                AudioPlayer::new(asset_server.load("sounds/placeholder-shot.ogg")),
+                AudioPlayer::new(match local_weapon {
+                    WeaponKind::Rifle => weapon_audio.rifle.clone(),
+                    WeaponKind::Pistol => weapon_audio.pistol.clone(),
+                }),
                 PlaybackSettings::DESPAWN,
             ));
         }
@@ -119,8 +145,6 @@ fn recv_players_pos(
             &impact_visuals,
             &snapshot.impact_marks,
         );
-
-        let _ = player_id;
     }
 }
 

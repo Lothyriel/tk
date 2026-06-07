@@ -3,7 +3,7 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    Client, ClientInput, Lobby, PlayerId, PlayerVisualState, WeaponKind, PLAYER_CROUCH_SCALE,
+    Client, ClientInput, Lobby, PlayerId, PlayerVisualState, PLAYER_CROUCH_SCALE,
     PLAYER_CROUCH_VIEW_OFFSET,
 };
 
@@ -19,7 +19,6 @@ impl bevy::prelude::Plugin for Plugin {
                 change_fov,
                 sync_local_view,
                 sync_player_visuals,
-                sync_view_weapon,
                 sync_local_alive_visibility,
             ),
         );
@@ -31,6 +30,9 @@ struct WorldModelCamera;
 
 #[derive(Debug, Component)]
 struct LocalView;
+
+#[derive(Debug, Component)]
+struct BaseLocalOffset(Vec3);
 
 #[derive(Debug, Component)]
 pub struct PlayerBodyVisual;
@@ -48,9 +50,6 @@ pub struct ImpactMarkVisual {
 #[derive(Debug, Component)]
 struct Crosshair;
 
-#[derive(Debug, Component)]
-struct LocalWeaponView;
-
 const DEFAULT_RENDER_LAYER: usize = 0;
 const VIEW_MODEL_RENDER_LAYER: usize = 1;
 
@@ -63,7 +62,6 @@ fn spawn_view_model(
 ) {
     let arm = meshes.add(Cuboid::new(0.1, 0.1, 0.5));
     let arm_material = materials.add(Color::from(tailwind::TEAL_200));
-    let rifle_spec = WeaponKind::Rifle.spec();
 
     let player = commands
         .spawn((
@@ -75,19 +73,9 @@ fn spawn_view_model(
                 world_camera(),
                 view_model_camera(),
                 player_right_arm(arm, arm_material),
-                local_weapon_view(
-                    meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
-                    materials.add(Color::srgb(
-                        rifle_spec.model_color[0],
-                        rifle_spec.model_color[1],
-                        rifle_spec.model_color[2],
-                    )),
-                ),
             ],
             PlayerVisualState {
                 alive: true,
-                weapon: WeaponKind::Rifle,
-                ammo_in_mag: rifle_spec.magazine_size,
                 ..default()
             },
         ))
@@ -99,6 +87,7 @@ fn spawn_view_model(
 fn world_camera() -> impl Bundle {
     (
         LocalView,
+        BaseLocalOffset(Vec3::ZERO),
         WorldModelCamera,
         Camera3d::default(),
         Transform::default(),
@@ -112,6 +101,7 @@ fn world_camera() -> impl Bundle {
 fn view_model_camera() -> impl Bundle {
     (
         LocalView,
+        BaseLocalOffset(Vec3::ZERO),
         Camera3d::default(),
         Camera {
             order: 1,
@@ -127,23 +117,14 @@ fn view_model_camera() -> impl Bundle {
 }
 
 fn player_right_arm(arm: Handle<Mesh>, arm_material: Handle<StandardMaterial>) -> impl Bundle {
+    let translation = Vec3::new(0.2, -0.1, -0.25);
+
     (
         LocalView,
+        BaseLocalOffset(translation),
         Mesh3d(arm),
         MeshMaterial3d(arm_material),
-        Transform::from_xyz(0.2, -0.1, -0.25),
-        RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
-        NotShadowCaster,
-    )
-}
-
-fn local_weapon_view(mesh: Handle<Mesh>, material: Handle<StandardMaterial>) -> impl Bundle {
-    (
-        LocalView,
-        LocalWeaponView,
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-        Transform::from_xyz(0.28, -0.18, -0.45).with_scale(Vec3::new(0.18, 0.12, 0.9)),
+        Transform::from_translation(translation),
         RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
         NotShadowCaster,
     )
@@ -231,7 +212,7 @@ fn change_fov(
 fn sync_local_view(
     player_input: Res<ClientInput>,
     player_visual_state: Single<&PlayerVisualState, With<PlayerId>>,
-    mut query: Query<&mut Transform, With<LocalView>>,
+    mut query: Query<(&BaseLocalOffset, &mut Transform), With<LocalView>>,
 ) {
     let vertical_offset = if player_visual_state.crouched {
         PLAYER_CROUCH_VIEW_OFFSET
@@ -245,9 +226,9 @@ fn sync_local_view(
         player_input.camera.roll,
     );
 
-    for mut transform in query.iter_mut() {
+    for (base_offset, mut transform) in query.iter_mut() {
         transform.rotation = rotation;
-        transform.translation.y = vertical_offset;
+        transform.translation = base_offset.0 + Vec3::Y * vertical_offset;
     }
 }
 
@@ -276,33 +257,6 @@ fn sync_player_visuals(
         } else {
             transform.translation.y = -0.5;
             transform.scale = Vec3::ONE;
-        }
-    }
-}
-
-fn sync_view_weapon(
-    player_state: Single<&PlayerVisualState, With<PlayerId>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut query: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>, &mut Visibility), With<LocalWeaponView>>,
-) {
-    let spec = player_state.weapon.spec();
-
-    for (mut transform, material, mut visibility) in query.iter_mut() {
-        *visibility = if player_state.alive {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-
-        transform.translation = Vec3::from(spec.model_offset);
-        transform.scale = Vec3::from(spec.model_scale);
-
-        if let Some(material) = materials.get_mut(material) {
-            material.base_color = Color::srgb(
-                spec.model_color[0],
-                spec.model_color[1],
-                spec.model_color[2],
-            );
         }
     }
 }
