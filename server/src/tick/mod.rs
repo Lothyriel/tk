@@ -13,7 +13,8 @@ impl bevy::prelude::Plugin for Plugin {
             .add_systems(Startup, spawn_world_colliders)
             .add_systems(FixedUpdate, recv_connectivity)
             .add_systems(FixedUpdate, recv_players_input)
-            .add_systems(FixedUpdate, physx_tick)
+            .add_systems(FixedUpdate, respawn_tick.after(recv_players_input))
+            .add_systems(FixedUpdate, physx_tick.after(respawn_tick))
             .add_systems(FixedUpdate, weapons_tick.after(physx_tick))
             .add_systems(FixedUpdate, projectiles_tick.after(weapons_tick))
             .add_systems(PostUpdate, sync_ground_state)
@@ -26,6 +27,7 @@ struct WorldState {
     next_projectile_id: u64,
     next_mark_id: u64,
     impact_marks: Vec<ImpactMarkData>,
+    fired_projectile_ids: Vec<u64>,
 }
 
 #[derive(Debug, Component)]
@@ -35,11 +37,11 @@ struct Health {
 
 #[derive(Debug, Component)]
 struct Arsenal {
-    rifle_ammo: u32,
-    pistol_ammo: u32,
+    magazines: [u32; 2],
     active_weapon: WeaponKind,
     last_fire_pressed_sequence: u32,
     last_reload_sequence: u32,
+    last_respawn_sequence: u32,
     reload_timer: f32,
     reload_weapon: Option<WeaponKind>,
     last_shot_at: f32,
@@ -48,11 +50,14 @@ struct Arsenal {
 impl Default for Arsenal {
     fn default() -> Self {
         Self {
-            rifle_ammo: WeaponKind::Rifle.magazine_size(),
-            pistol_ammo: WeaponKind::Pistol.magazine_size(),
+            magazines: [
+                WeaponKind::Rifle.spec().magazine_size,
+                WeaponKind::Pistol.spec().magazine_size,
+            ],
             active_weapon: WeaponKind::Rifle,
             last_fire_pressed_sequence: 0,
             last_reload_sequence: 0,
+            last_respawn_sequence: 0,
             reload_timer: 0.0,
             reload_weapon: None,
             last_shot_at: f32::NEG_INFINITY,
@@ -81,6 +86,41 @@ fn spawn_world_colliders(mut commands: Commands) {
         Collider::cuboid(1.0, 0.25, 0.5),
         Transform::from_xyz(0.75, 1.75, 0.0),
     ));
+}
+
+fn respawn_tick(
+    mut query: Query<(
+        &ClientInput,
+        &mut Health,
+        &mut Arsenal,
+        &mut MovementState,
+        &mut Collider,
+        &mut Transform,
+    )>,
+) {
+    for (input, mut health, mut arsenal, mut movement, mut collider, mut transform) in query.iter_mut() {
+        if health.current > 0.0 {
+            arsenal.last_respawn_sequence = input.respawn_sequence;
+            continue;
+        }
+
+        if input.respawn_sequence == arsenal.last_respawn_sequence {
+            continue;
+        }
+
+        arsenal.last_respawn_sequence = input.respawn_sequence;
+        health.current = PLAYER_MAX_HEALTH;
+        arsenal.magazines = [
+            WeaponKind::Rifle.spec().magazine_size,
+            WeaponKind::Pistol.spec().magazine_size,
+        ];
+        arsenal.reload_timer = 0.0;
+        arsenal.reload_weapon = None;
+        movement.velocity = Vec3::ZERO;
+
+        set_crouched_state(&mut movement, &mut collider, &mut transform, false);
+        transform.translation = Vec3::new(0.0, PLAYER_RESPAWN_HEIGHT, 0.0);
+    }
 }
 
 fn physx_tick(
@@ -202,6 +242,7 @@ fn weapons_tick(
 ) {
     let now = time.elapsed_secs();
     let delta = time.delta_secs();
+    world_state.fired_projectile_ids.clear();
 
     for (entity, input, transform, movement, health, mut arsenal) in query.iter_mut() {
         if health.current <= 0.0 {
@@ -215,7 +256,7 @@ fn weapons_tick(
 
             if arsenal.reload_timer == 0.0 {
                 if let Some(weapon) = arsenal.reload_weapon.take() {
-                    *ammo_for_weapon_mut(&mut arsenal, weapon) = weapon.magazine_size();
+                    *ammo_for_weapon_mut(&mut arsenal, weapon) = weapon.spec().magazine_size;
                 }
             }
         }
@@ -224,10 +265,10 @@ fn weapons_tick(
             arsenal.last_reload_sequence = input.reload_sequence;
 
             let active_weapon = arsenal.active_weapon;
-            if *ammo_for_weapon(&arsenal, active_weapon) < active_weapon.magazine_size()
-                && arsenal.reload_timer == 0.0
+            let spec = active_weapon.spec();
+            if *ammo_for_weapon(&arsenal, active_weapon) < spec.magazine_size && arsenal.reload_timer == 0.0
             {
-                arsenal.reload_timer = active_weapon.reload_seconds();
+                arsenal.reload_timer = spec.reload_seconds;
                 arsenal.reload_weapon = Some(active_weapon);
             }
         }
@@ -237,7 +278,8 @@ fn weapons_tick(
         }
 
         let active_weapon = arsenal.active_weapon;
-        let wants_to_fire = if active_weapon.is_automatic() {
+        let spec = active_weapon.spec();
+        let wants_to_fire = if spec.automatic {
             input.fire
         } else {
             input.fire_pressed_sequence != arsenal.last_fire_pressed_sequence
@@ -247,12 +289,12 @@ fn weapons_tick(
             continue;
         }
 
-        if now - arsenal.last_shot_at < active_weapon.seconds_per_shot() {
+        if now - arsenal.last_shot_at < spec.seconds_per_shot() {
             continue;
         }
 
         if *ammo_for_weapon(&arsenal, active_weapon) == 0 {
-            arsenal.reload_timer = active_weapon.reload_seconds();
+            arsenal.reload_timer = spec.reload_seconds;
             arsenal.reload_weapon = Some(active_weapon);
             arsenal.last_fire_pressed_sequence = input.fire_pressed_sequence;
             continue;
@@ -272,22 +314,24 @@ fn weapons_tick(
         let muzzle_origin = transform.translation
             + Vec3::new(0.0, 0.55 + crouch_offset, 0.0)
             + muzzle_dir * 0.7;
+        let projectile_id = world_state.next_projectile_id;
 
         commands.spawn((
             Projectile {
-                id: world_state.next_projectile_id,
-                velocity: muzzle_dir * active_weapon.muzzle_speed(),
-                damage: active_weapon.damage(),
+                id: projectile_id,
+                velocity: muzzle_dir * spec.muzzle_speed,
+                damage: spec.damage,
                 lifetime: PROJECTILE_LIFETIME,
                 owner_entity: entity,
             },
             Transform::from_translation(muzzle_origin),
         ));
 
+        world_state.fired_projectile_ids.push(projectile_id);
         world_state.next_projectile_id = world_state.next_projectile_id.wrapping_add(1);
 
         if *ammo_for_weapon(&arsenal, active_weapon) == 0 {
-            arsenal.reload_timer = active_weapon.reload_seconds();
+            arsenal.reload_timer = spec.reload_seconds;
             arsenal.reload_weapon = Some(active_weapon);
         }
     }
@@ -299,7 +343,10 @@ fn projectiles_tick(
     rapier_context: ReadRapierContext,
     time: Res<Time>,
     mut projectiles: Query<(Entity, &mut Projectile, &mut Transform)>,
-    mut players: Query<(Entity, &mut Health), With<Client>>,
+    mut players: Query<
+        (Entity, &mut Health, &mut MovementState, &mut Collider, &mut Transform),
+        (With<Client>, Without<Projectile>),
+    >,
 ) {
     const MAX_IMPACT_MARKS: usize = 256;
 
@@ -325,8 +372,16 @@ fn projectiles_tick(
             {
                 let mut hit_player = false;
 
-                if let Ok((_, mut health)) = players.get_mut(hit_entity) {
+                if let Ok((_, mut health, mut movement, mut collider, mut player_transform)) =
+                    players.get_mut(hit_entity)
+                {
                     health.current = (health.current - projectile.damage).max(0.0);
+
+                    if health.current <= 0.0 {
+                        movement.velocity = Vec3::ZERO;
+                        set_crouched_state(&mut movement, &mut collider, &mut player_transform, false);
+                    }
+
                     hit_player = true;
                 }
 
@@ -382,6 +437,7 @@ fn send_world_snapshot(
             pos: transform.translation.into(),
             rot: transform.rotation.into(),
             crouched: movement.crouched,
+            alive: health.current > 0.0,
             health: health.current,
             weapon: arsenal.active_weapon,
             ammo_in_mag: *ammo_for_weapon(arsenal, arsenal.active_weapon),
@@ -401,6 +457,7 @@ fn send_world_snapshot(
         players,
         projectiles,
         impact_marks: world_state.impact_marks.clone(),
+        fired_projectile_ids: world_state.fired_projectile_ids.clone(),
     };
 
     let sync_message = data::encode(&snapshot);
@@ -460,7 +517,7 @@ fn recv_connectivity(
                         grounded: true,
                         ..Default::default()
                     })
-                    .insert(Transform::from_xyz(0.0, 1.5, 0.0))
+                    .insert(Transform::from_xyz(0.0, PLAYER_RESPAWN_HEIGHT, 0.0))
                     .id();
 
                 for &player_id in lobby.players.keys() {
@@ -495,6 +552,10 @@ fn set_crouched_state(
     transform: &mut Transform,
     crouched: bool,
 ) {
+    if movement.crouched == crouched {
+        return;
+    }
+
     movement.crouched = crouched;
     *collider = Collider::capsule_y(
         current_collider_half_height(crouched),
@@ -547,16 +608,17 @@ fn crouched_eye_height() -> f32 {
     PLAYER_CROUCH_COLLIDER_HALF_HEIGHT + PLAYER_COLLIDER_RADIUS
 }
 
-fn ammo_for_weapon(arsenal: &Arsenal, weapon: WeaponKind) -> &u32 {
+fn weapon_index(weapon: WeaponKind) -> usize {
     match weapon {
-        WeaponKind::Rifle => &arsenal.rifle_ammo,
-        WeaponKind::Pistol => &arsenal.pistol_ammo,
+        WeaponKind::Rifle => 0,
+        WeaponKind::Pistol => 1,
     }
 }
 
+fn ammo_for_weapon(arsenal: &Arsenal, weapon: WeaponKind) -> &u32 {
+    &arsenal.magazines[weapon_index(weapon)]
+}
+
 fn ammo_for_weapon_mut(arsenal: &mut Arsenal, weapon: WeaponKind) -> &mut u32 {
-    match weapon {
-        WeaponKind::Rifle => &mut arsenal.rifle_ammo,
-        WeaponKind::Pistol => &mut arsenal.pistol_ammo,
-    }
+    &mut arsenal.magazines[weapon_index(weapon)]
 }

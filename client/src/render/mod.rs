@@ -3,7 +3,7 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    Client, ClientInput, Lobby, PlayerId, PlayerVisualState, PLAYER_CROUCH_SCALE,
+    Client, ClientInput, Lobby, PlayerId, PlayerVisualState, WeaponKind, PLAYER_CROUCH_SCALE,
     PLAYER_CROUCH_VIEW_OFFSET,
 };
 
@@ -11,10 +11,18 @@ pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        let startup_systems = (spawn_view_model, spawn_world_model, spawn_lights);
+        let startup_systems = (spawn_view_model, spawn_world_model, spawn_lights, spawn_crosshair);
 
-        app.add_systems(Startup, startup_systems)
-            .add_systems(Update, (change_fov, sync_local_view, sync_player_visuals));
+        app.add_systems(Startup, startup_systems).add_systems(
+            Update,
+            (
+                change_fov,
+                sync_local_view,
+                sync_player_visuals,
+                sync_view_weapon,
+                sync_local_alive_visibility,
+            ),
+        );
     }
 }
 
@@ -37,13 +45,13 @@ pub struct ImpactMarkVisual {
     pub id: u64,
 }
 
-/// Used implicitly by all entities without a `RenderLayers` component.
-/// Our world model camera and all objects other than the player are on this layer.
-/// The light source belongs to both layers.
-const DEFAULT_RENDER_LAYER: usize = 0;
+#[derive(Debug, Component)]
+struct Crosshair;
 
-/// Used by the view model camera and the player's arm.
-/// The light source belongs to both layers.
+#[derive(Debug, Component)]
+struct LocalWeaponView;
+
+const DEFAULT_RENDER_LAYER: usize = 0;
 const VIEW_MODEL_RENDER_LAYER: usize = 1;
 
 fn spawn_view_model(
@@ -53,9 +61,9 @@ fn spawn_view_model(
     mut lobby: ResMut<Lobby>,
     player_id: Res<PlayerId>,
 ) {
-    // save meshes and materials handles so we can reutilize
     let arm = meshes.add(Cuboid::new(0.1, 0.1, 0.5));
     let arm_material = materials.add(Color::from(tailwind::TEAL_200));
+    let rifle_spec = WeaponKind::Rifle.spec();
 
     let player = commands
         .spawn((
@@ -65,12 +73,23 @@ fn spawn_view_model(
             Visibility::default(),
             children![
                 world_camera(),
-                // Spawn view model camera.
                 view_model_camera(),
-                // Spawn the player's right arm.
                 player_right_arm(arm, arm_material),
+                local_weapon_view(
+                    meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+                    materials.add(Color::srgb(
+                        rifle_spec.model_color[0],
+                        rifle_spec.model_color[1],
+                        rifle_spec.model_color[2],
+                    )),
+                ),
             ],
-            PlayerVisualState::default(),
+            PlayerVisualState {
+                alive: true,
+                weapon: WeaponKind::Rifle,
+                ammo_in_mag: rifle_spec.magazine_size,
+                ..default()
+            },
         ))
         .id();
 
@@ -95,7 +114,6 @@ fn view_model_camera() -> impl Bundle {
         LocalView,
         Camera3d::default(),
         Camera {
-            // Bump the order to render on top of the world model.
             order: 1,
             ..default()
         },
@@ -104,7 +122,6 @@ fn view_model_camera() -> impl Bundle {
             fov: 70.0_f32.to_radians(),
             ..default()
         }),
-        // Only render objects belonging to the view model.
         RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
     )
 }
@@ -115,11 +132,44 @@ fn player_right_arm(arm: Handle<Mesh>, arm_material: Handle<StandardMaterial>) -
         Mesh3d(arm),
         MeshMaterial3d(arm_material),
         Transform::from_xyz(0.2, -0.1, -0.25),
-        // Ensure the arm is only rendered by the view model camera.
         RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
-        // The arm is free-floating, so shadows would look weird.
         NotShadowCaster,
     )
+}
+
+fn local_weapon_view(mesh: Handle<Mesh>, material: Handle<StandardMaterial>) -> impl Bundle {
+    (
+        LocalView,
+        LocalWeaponView,
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Transform::from_xyz(0.28, -0.18, -0.45).with_scale(Vec3::new(0.18, 0.12, 0.9)),
+        RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
+        NotShadowCaster,
+    )
+}
+
+fn spawn_crosshair(mut commands: Commands) {
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            GlobalZIndex(100),
+        ))
+        .with_child((
+            Crosshair,
+            Node {
+                width: Val::Px(6.0),
+                height: Val::Px(6.0),
+                ..default()
+            },
+            BackgroundColor(Color::WHITE),
+        ));
 }
 
 fn spawn_world_model(
@@ -130,9 +180,6 @@ fn spawn_world_model(
     let floor = meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(10.0)));
     let cube = meshes.add(Cuboid::new(2.0, 0.5, 1.0));
     let material = materials.add(Color::WHITE);
-
-    // The world model camera will render the floor and the cubes spawned in this system.
-    // Assigning no `RenderLayers` component defaults to layer 0.
 
     commands.spawn((Mesh3d(floor), MeshMaterial3d(material.clone())));
 
@@ -157,7 +204,6 @@ fn spawn_lights(mut commands: Commands) {
             ..default()
         },
         Transform::from_xyz(-2.0, 4.0, -0.75),
-        // The light source illuminates both the world model and the view model.
         RenderLayers::from_layers(&[DEFAULT_RENDER_LAYER, VIEW_MODEL_RENDER_LAYER]),
     ));
 }
@@ -208,14 +254,20 @@ fn sync_local_view(
 fn sync_player_visuals(
     parents: Query<&ChildOf, With<PlayerBodyVisual>>,
     player_states: Query<&PlayerVisualState>,
-    mut query: Query<(Entity, &mut Transform), With<PlayerBodyVisual>>,
+    mut query: Query<(Entity, &mut Transform, &mut Visibility), With<PlayerBodyVisual>>,
 ) {
-    for (entity, mut transform) in query.iter_mut() {
+    for (entity, mut transform, mut visibility) in query.iter_mut() {
         let Ok(parent) = parents.get(entity) else {
             continue;
         };
         let Ok(visual_state) = player_states.get(parent.0) else {
             continue;
+        };
+
+        *visibility = if visual_state.alive {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
         };
 
         if visual_state.crouched {
@@ -225,6 +277,46 @@ fn sync_player_visuals(
             transform.translation.y = -0.5;
             transform.scale = Vec3::ONE;
         }
+    }
+}
+
+fn sync_view_weapon(
+    player_state: Single<&PlayerVisualState, With<PlayerId>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut query: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>, &mut Visibility), With<LocalWeaponView>>,
+) {
+    let spec = player_state.weapon.spec();
+
+    for (mut transform, material, mut visibility) in query.iter_mut() {
+        *visibility = if player_state.alive {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+
+        transform.translation = Vec3::from(spec.model_offset);
+        transform.scale = Vec3::from(spec.model_scale);
+
+        if let Some(material) = materials.get_mut(material) {
+            material.base_color = Color::srgb(
+                spec.model_color[0],
+                spec.model_color[1],
+                spec.model_color[2],
+            );
+        }
+    }
+}
+
+fn sync_local_alive_visibility(
+    player_state: Single<&PlayerVisualState, With<PlayerId>>,
+    mut crosshair: Query<&mut Visibility, With<Crosshair>>,
+) {
+    for mut visibility in crosshair.iter_mut() {
+        *visibility = if player_state.alive {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
     }
 }
 

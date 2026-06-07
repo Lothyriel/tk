@@ -27,6 +27,7 @@ pub const PLAYER_JUMP_SPEED: f32 = 6.5;
 pub const PLAYER_MAX_HEALTH: f32 = 100.0;
 pub const PROJECTILE_LIFETIME: f32 = 3.0;
 pub const PROJECTILE_GRAVITY: f32 = 9.81;
+pub const PLAYER_RESPAWN_HEIGHT: f32 = 1.5;
 
 pub struct Plugin;
 
@@ -53,6 +54,7 @@ pub struct ClientData {
     pub pos: [f32; 3],
     pub rot: CameraInput,
     pub crouched: bool,
+    pub alive: bool,
     pub health: f32,
     pub weapon: WeaponKind,
     pub ammo_in_mag: u32,
@@ -67,6 +69,7 @@ pub struct ClientInput {
     pub run: bool,
     pub crouch: bool,
     pub jump: bool,
+    pub respawn_sequence: u32,
     pub fire: bool,
     pub fire_pressed_sequence: u32,
     pub reload_sequence: u32,
@@ -82,47 +85,56 @@ pub enum WeaponKind {
 }
 
 impl WeaponKind {
-    pub fn magazine_size(self) -> u32 {
+    pub fn spec(self) -> WeaponSpec {
         match self {
-            Self::Rifle => 30,
-            Self::Pistol => 17,
+            Self::Rifle => WeaponSpec {
+                kind: self,
+                name: "Rifle",
+                magazine_size: 30,
+                rounds_per_minute: 600.0,
+                reload_seconds: 2.4,
+                muzzle_speed: 715.0,
+                damage: 34.0,
+                automatic: true,
+                model_scale: [0.18, 0.12, 0.9],
+                model_offset: [0.28, -0.18, -0.45],
+                model_color: [0.16, 0.16, 0.16],
+            },
+            Self::Pistol => WeaponSpec {
+                kind: self,
+                name: "Pistol",
+                magazine_size: 17,
+                rounds_per_minute: 400.0,
+                reload_seconds: 1.5,
+                muzzle_speed: 375.0,
+                damage: 26.0,
+                automatic: false,
+                model_scale: [0.12, 0.1, 0.35],
+                model_offset: [0.2, -0.18, -0.25],
+                model_color: [0.22, 0.22, 0.24],
+            },
         }
     }
+}
 
-    pub fn rounds_per_minute(self) -> f32 {
-        match self {
-            Self::Rifle => 600.0,
-            Self::Pistol => 400.0,
-        }
-    }
+#[derive(Debug, Clone, Copy)]
+pub struct WeaponSpec {
+    pub kind: WeaponKind,
+    pub name: &'static str,
+    pub magazine_size: u32,
+    pub rounds_per_minute: f32,
+    pub reload_seconds: f32,
+    pub muzzle_speed: f32,
+    pub damage: f32,
+    pub automatic: bool,
+    pub model_scale: [f32; 3],
+    pub model_offset: [f32; 3],
+    pub model_color: [f32; 3],
+}
 
-    pub fn reload_seconds(self) -> f32 {
-        match self {
-            Self::Rifle => 2.4,
-            Self::Pistol => 1.5,
-        }
-    }
-
-    pub fn muzzle_speed(self) -> f32 {
-        match self {
-            Self::Rifle => 715.0,
-            Self::Pistol => 375.0,
-        }
-    }
-
-    pub fn damage(self) -> f32 {
-        match self {
-            Self::Rifle => 34.0,
-            Self::Pistol => 26.0,
-        }
-    }
-
-    pub fn is_automatic(self) -> bool {
-        matches!(self, Self::Rifle)
-    }
-
+impl WeaponSpec {
     pub fn seconds_per_shot(self) -> f32 {
-        60.0 / self.rounds_per_minute()
+        60.0 / self.rounds_per_minute
     }
 }
 
@@ -165,6 +177,7 @@ pub struct MovementState {
 
 #[derive(Debug, Default, Component)]
 pub struct PlayerVisualState {
+    pub alive: bool,
     pub crouched: bool,
     pub health: f32,
     pub weapon: WeaponKind,
@@ -190,6 +203,7 @@ pub struct WorldSnapshot {
     pub players: Vec<ClientData>,
     pub projectiles: Vec<ProjectileData>,
     pub impact_marks: Vec<ImpactMarkData>,
+    pub fired_projectile_ids: Vec<u64>,
 }
 
 #[derive(Debug, Default, Resource)]

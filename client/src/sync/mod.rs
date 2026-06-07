@@ -73,6 +73,8 @@ fn recv_players_pos(
     lobby: Res<Lobby>,
     projectile_visuals: Query<(Entity, &ProjectileVisual)>,
     impact_visuals: Query<(Entity, &ImpactMarkVisual)>,
+    player_id: Res<PlayerId>,
+    asset_server: Res<AssetServer>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
         let snapshot: WorldSnapshot = data::decode(&message);
@@ -86,6 +88,7 @@ fn recv_players_pos(
                         ..Default::default()
                     },
                     PlayerVisualState {
+                        alive: player.alive,
                         crouched: player.crouched,
                         health: player.health,
                         weapon: player.weapon,
@@ -93,6 +96,13 @@ fn recv_players_pos(
                     },
                 ));
             }
+        }
+
+        for _projectile_id in snapshot.fired_projectile_ids.iter() {
+            commands.spawn((
+                AudioPlayer::new(asset_server.load("sounds/placeholder-shot.ogg")),
+                PlaybackSettings::DESPAWN,
+            ));
         }
 
         sync_projectile_visuals(
@@ -109,6 +119,8 @@ fn recv_players_pos(
             &impact_visuals,
             &snapshot.impact_marks,
         );
+
+        let _ = player_id;
     }
 }
 

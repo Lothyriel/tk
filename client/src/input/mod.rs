@@ -48,6 +48,11 @@ fn keyboard(
         sequencing.reload_sequence = sequencing.reload_sequence.wrapping_add(1);
     }
 
+    if keyboard.just_pressed(KeyCode::Space) {
+        sequencing.respawn_sequence = sequencing.respawn_sequence.wrapping_add(1);
+    }
+
+    input.respawn_sequence = sequencing.respawn_sequence;
     input.fire_pressed_sequence = sequencing.fire_pressed_sequence;
     input.reload_sequence = sequencing.reload_sequence;
 
@@ -110,6 +115,7 @@ pub struct CameraSensitivity(Vec2);
 
 #[derive(Debug, Default, Resource)]
 struct InputSequencing {
+    respawn_sequence: u32,
     fire_pressed_sequence: u32,
     reload_sequence: u32,
 }
