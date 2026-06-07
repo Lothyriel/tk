@@ -3,7 +3,7 @@ use std::{
     time::SystemTime,
 };
 
-use bevy::prelude::*;
+use bevy::{asset::AssetPlugin, prelude::*};
 
 use bevy_renet2::{
     netcode::{ClientAuthentication, NativeSocket, NetcodeClientPlugin, NetcodeClientTransport},
@@ -17,7 +17,10 @@ mod sync;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(AssetPlugin {
+            file_path: "../assets".into(),
+            ..default()
+        }))
         .add_plugins(ClientPlugin)
         .run();
 }
