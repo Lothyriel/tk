@@ -27,6 +27,16 @@ struct LocalView;
 #[derive(Debug, Component)]
 pub struct PlayerBodyVisual;
 
+#[derive(Debug, Component)]
+pub struct ProjectileVisual {
+    pub id: u64,
+}
+
+#[derive(Debug, Component)]
+pub struct ImpactMarkVisual {
+    pub id: u64,
+}
+
 /// Used implicitly by all entities without a `RenderLayers` component.
 /// Our world model camera and all objects other than the player are on this layer.
 /// The light source belongs to both layers.
@@ -216,4 +226,16 @@ fn sync_player_visuals(
             transform.scale = Vec3::ONE;
         }
     }
+}
+
+pub fn player_body_mesh(
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+) -> impl Bundle {
+    (
+        PlayerBodyVisual,
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Transform::from_xyz(0.0, -0.5, 0.0),
+    )
 }

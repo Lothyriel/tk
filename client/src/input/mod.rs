@@ -5,16 +5,17 @@ use bevy::{
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
-use common::{CameraInput, ClientInput};
+use common::{CameraInput, ClientInput, WeaponKind};
 
 pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ClientInput>()
+            .init_resource::<InputSequencing>()
             .init_resource::<CameraSensitivity>()
             .add_systems(Startup, setup_cursor)
-            .add_systems(Update, (keyboard, mouse));
+            .add_systems(Update, (keyboard, mouse, weapon_switch));
     }
 }
 
@@ -23,7 +24,12 @@ fn setup_cursor(mut q: Single<&mut CursorOptions, With<PrimaryWindow>>) {
     q.grab_mode = CursorGrabMode::Locked;
 }
 
-fn keyboard(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>) {
+fn keyboard(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut sequencing: ResMut<InputSequencing>,
+    mut input: ResMut<ClientInput>,
+) {
     input.forward = keyboard.pressed(KeyCode::KeyW);
     input.left = keyboard.pressed(KeyCode::KeyA);
     input.backward = keyboard.pressed(KeyCode::KeyS);
@@ -32,6 +38,18 @@ fn keyboard(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>)
     input.crouch = keyboard.pressed(KeyCode::ControlLeft);
 
     input.jump = keyboard.pressed(KeyCode::Space);
+    input.fire = mouse.pressed(MouseButton::Left);
+
+    if mouse.just_pressed(MouseButton::Left) {
+        sequencing.fire_pressed_sequence = sequencing.fire_pressed_sequence.wrapping_add(1);
+    }
+
+    if keyboard.just_pressed(KeyCode::KeyR) {
+        sequencing.reload_sequence = sequencing.reload_sequence.wrapping_add(1);
+    }
+
+    input.fire_pressed_sequence = sequencing.fire_pressed_sequence;
+    input.reload_sequence = sequencing.reload_sequence;
 
     const MAX_ROLL_ANGLE: f32 = 0.3;
 
@@ -39,6 +57,16 @@ fn keyboard(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>)
     let right = keyboard.pressed(KeyCode::KeyE) as i8;
 
     input.camera.roll = (left - right) as f32 * MAX_ROLL_ANGLE;
+}
+
+fn weapon_switch(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>) {
+    if keyboard.just_pressed(KeyCode::Digit1) {
+        input.weapon = WeaponKind::Rifle;
+    }
+
+    if keyboard.just_pressed(KeyCode::Digit2) {
+        input.weapon = WeaponKind::Pistol;
+    }
 }
 
 fn mouse(
@@ -79,6 +107,12 @@ fn mouse(
 
 #[derive(Debug, Resource, Deref)]
 pub struct CameraSensitivity(Vec2);
+
+#[derive(Debug, Default, Resource)]
+struct InputSequencing {
+    fire_pressed_sequence: u32,
+    reload_sequence: u32,
+}
 
 impl Default for CameraSensitivity {
     fn default() -> Self {

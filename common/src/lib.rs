@@ -24,6 +24,9 @@ pub const PLAYER_AIR_ACCELERATION: f32 = 4.0;
 pub const PLAYER_AIR_CONTROL: f32 = 0.2;
 pub const PLAYER_GRAVITY: f32 = 20.0;
 pub const PLAYER_JUMP_SPEED: f32 = 6.5;
+pub const PLAYER_MAX_HEALTH: f32 = 100.0;
+pub const PROJECTILE_LIFETIME: f32 = 3.0;
+pub const PROJECTILE_GRAVITY: f32 = 9.81;
 
 pub struct Plugin;
 
@@ -50,6 +53,9 @@ pub struct ClientData {
     pub pos: [f32; 3],
     pub rot: CameraInput,
     pub crouched: bool,
+    pub health: f32,
+    pub weapon: WeaponKind,
+    pub ammo_in_mag: u32,
 }
 
 #[derive(Debug, Default, Archive, Serialize, Deserialize, Component, Resource)]
@@ -61,7 +67,63 @@ pub struct ClientInput {
     pub run: bool,
     pub crouch: bool,
     pub jump: bool,
+    pub fire: bool,
+    pub fire_pressed_sequence: u32,
+    pub reload_sequence: u32,
+    pub weapon: WeaponKind,
     pub camera: CameraInput,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+pub enum WeaponKind {
+    #[default]
+    Rifle,
+    Pistol,
+}
+
+impl WeaponKind {
+    pub fn magazine_size(self) -> u32 {
+        match self {
+            Self::Rifle => 30,
+            Self::Pistol => 17,
+        }
+    }
+
+    pub fn rounds_per_minute(self) -> f32 {
+        match self {
+            Self::Rifle => 600.0,
+            Self::Pistol => 400.0,
+        }
+    }
+
+    pub fn reload_seconds(self) -> f32 {
+        match self {
+            Self::Rifle => 2.4,
+            Self::Pistol => 1.5,
+        }
+    }
+
+    pub fn muzzle_speed(self) -> f32 {
+        match self {
+            Self::Rifle => 715.0,
+            Self::Pistol => 375.0,
+        }
+    }
+
+    pub fn damage(self) -> f32 {
+        match self {
+            Self::Rifle => 34.0,
+            Self::Pistol => 26.0,
+        }
+    }
+
+    pub fn is_automatic(self) -> bool {
+        matches!(self, Self::Rifle)
+    }
+
+    pub fn seconds_per_shot(self) -> f32 {
+        60.0 / self.rounds_per_minute()
+    }
 }
 
 #[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
@@ -104,6 +166,30 @@ pub struct MovementState {
 #[derive(Debug, Default, Component)]
 pub struct PlayerVisualState {
     pub crouched: bool,
+    pub health: f32,
+    pub weapon: WeaponKind,
+    pub ammo_in_mag: u32,
+}
+
+#[derive(Debug, Archive, Serialize, Deserialize)]
+pub struct ProjectileData {
+    pub id: u64,
+    pub pos: [f32; 3],
+    pub vel: [f32; 3],
+}
+
+#[derive(Debug, Archive, Serialize, Deserialize, Clone)]
+pub struct ImpactMarkData {
+    pub id: u64,
+    pub pos: [f32; 3],
+    pub normal: [f32; 3],
+}
+
+#[derive(Debug, Archive, Serialize, Deserialize)]
+pub struct WorldSnapshot {
+    pub players: Vec<ClientData>,
+    pub projectiles: Vec<ProjectileData>,
+    pub impact_marks: Vec<ImpactMarkData>,
 }
 
 #[derive(Debug, Default, Resource)]

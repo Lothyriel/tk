@@ -13,7 +13,7 @@ pub fn renet_config() -> ConnectionConfig {
     ConnectionConfig::test()
 }
 
-pub fn encode_message(
+pub fn encode(
     input: &impl for<'a> Serialize<HighSerializer<Vec<u8>, ArenaHandle<'a>, Error>>,
 ) -> Bytes {
     Bytes::from(to_bytes_in::<_, Error>(input, Vec::new()).unwrap())

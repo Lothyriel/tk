@@ -1,8 +1,11 @@
 use bevy::prelude::*;
 use bevy_renet2::prelude::{DefaultChannel, RenetClient, client_connected};
-use common::{ClientData, ClientInput, Lobby, PlayerId, PlayerVisualState, ServerMessage, data};
+use common::{
+    ImpactMarkData, Lobby, PlayerId, PlayerVisualState, ProjectileData, ServerMessage,
+    WorldSnapshot, data,
+};
 
-use crate::render::PlayerBodyVisual;
+use crate::render::{ImpactMarkVisual, ProjectileVisual, player_body_mesh};
 
 pub struct Plugin;
 
@@ -14,8 +17,8 @@ impl bevy::prelude::Plugin for Plugin {
     }
 }
 
-fn send_input(player_input: Res<ClientInput>, mut client: ResMut<RenetClient>) {
-    let input_message = data::encode_message(&*player_input);
+fn send_input(player_input: Res<common::ClientInput>, mut client: ResMut<RenetClient>) {
+    let input_message = data::encode(&*player_input);
 
     client.send_message(DefaultChannel::ReliableOrdered, input_message);
 }
@@ -35,8 +38,6 @@ fn recv_connectivity(
             ServerMessage::ClientConnected { id } => {
                 info!("Player {} connected.", id);
 
-                // this probably needs to change, shadows are weird
-                // (prob not considering the camera)
                 if id == player_id.0 {
                     commands
                         .get_entity(lobby.players[&id])
@@ -64,37 +65,134 @@ fn recv_connectivity(
     }
 }
 
-fn recv_players_pos(mut commands: Commands, mut client: ResMut<RenetClient>, lobby: ResMut<Lobby>) {
+fn recv_players_pos(
+    mut commands: Commands,
+    mut client: ResMut<RenetClient>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    lobby: Res<Lobby>,
+    projectile_visuals: Query<(Entity, &ProjectileVisual)>,
+    impact_visuals: Query<(Entity, &ImpactMarkVisual)>,
+) {
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
-        let players: Vec<ClientData> = data::decode(&message);
+        let snapshot: WorldSnapshot = data::decode(&message);
 
-        for ClientData {
-            id,
-            pos,
-            rot,
-            crouched,
-        } in players.iter()
-        {
-            if let Some(player_entity) = lobby.players.get(id) {
-                let transform = Transform {
-                    translation: (*pos).into(),
-                    rotation: rot.into(),
-                    ..Default::default()
-                };
-
-                commands
-                    .entity(*player_entity)
-                    .insert((transform, PlayerVisualState { crouched: *crouched }));
+        for player in snapshot.players.iter() {
+            if let Some(player_entity) = lobby.players.get(&player.id) {
+                commands.entity(*player_entity).insert((
+                    Transform {
+                        translation: player.pos.into(),
+                        rotation: (&player.rot).into(),
+                        ..Default::default()
+                    },
+                    PlayerVisualState {
+                        crouched: player.crouched,
+                        health: player.health,
+                        weapon: player.weapon,
+                        ammo_in_mag: player.ammo_in_mag,
+                    },
+                ));
             }
+        }
+
+        sync_projectile_visuals(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &projectile_visuals,
+            &snapshot.projectiles,
+        );
+        sync_impact_visuals(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &impact_visuals,
+            &snapshot.impact_marks,
+        );
+    }
+}
+
+fn sync_projectile_visuals(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    projectile_visuals: &Query<(Entity, &ProjectileVisual)>,
+    projectiles: &[ProjectileData],
+) {
+    let mut seen_ids = Vec::with_capacity(projectiles.len());
+
+    for projectile in projectiles {
+        seen_ids.push(projectile.id);
+
+        let mut existing = None;
+        for (entity, visual) in projectile_visuals.iter() {
+            if visual.id == projectile.id {
+                existing = Some(entity);
+                break;
+            }
+        }
+
+        let velocity: Vec3 = projectile.vel.into();
+        let mut transform = Transform::from_translation(projectile.pos.into());
+        if velocity.length_squared() > 0.0 {
+            transform.look_to(velocity.normalize(), Vec3::Y);
+        }
+        transform.scale = Vec3::new(0.03, 0.03, 0.45);
+
+        if let Some(entity) = existing {
+            commands.entity(entity).insert(transform);
+        } else {
+            commands.spawn((
+                ProjectileVisual { id: projectile.id },
+                Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(1.0, 0.7, 0.2),
+                    emissive: LinearRgba::rgb(8.0, 4.0, 0.5),
+                    ..default()
+                })),
+                transform,
+            ));
+        }
+    }
+
+    for (entity, visual) in projectile_visuals.iter() {
+        if !seen_ids.contains(&visual.id) {
+            commands.entity(entity).despawn();
         }
     }
 }
 
-fn player_body_mesh(mesh: Handle<Mesh>, material: Handle<StandardMaterial>) -> impl Bundle {
-    (
-        PlayerBodyVisual,
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-        Transform::from_xyz(0.0, -0.5, 0.0),
-    )
+fn sync_impact_visuals(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    impact_visuals: &Query<(Entity, &ImpactMarkVisual)>,
+    impacts: &[ImpactMarkData],
+) {
+    for impact in impacts {
+        let mut exists = false;
+
+        for (_, visual) in impact_visuals.iter() {
+            if visual.id == impact.id {
+                exists = true;
+                break;
+            }
+        }
+
+        if exists {
+            continue;
+        }
+
+        let normal: Vec3 = impact.normal.into();
+        let mut transform = Transform::from_translation(Vec3::from(impact.pos) + normal * 0.01);
+        transform.look_to(normal, Vec3::Y);
+        transform.scale = Vec3::new(0.18, 0.18, 0.01);
+
+        commands.spawn((
+            ImpactMarkVisual { id: impact.id },
+            Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+            MeshMaterial3d(materials.add(Color::srgb(0.08, 0.08, 0.08))),
+            transform,
+        ));
+    }
 }
