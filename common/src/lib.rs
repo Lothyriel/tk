@@ -99,6 +99,7 @@ impl WeaponKind {
                 model_scale: [0.18, 0.12, 0.9],
                 model_offset: [0.28, -0.18, -0.45],
                 model_color: [0.16, 0.16, 0.16],
+                barrel_offset: [0.28, -0.15, -0.92],
             },
             Self::Pistol => WeaponSpec {
                 kind: self,
@@ -112,6 +113,7 @@ impl WeaponKind {
                 model_scale: [0.12, 0.1, 0.35],
                 model_offset: [0.2, -0.18, -0.25],
                 model_color: [0.22, 0.22, 0.24],
+                barrel_offset: [0.2, -0.15, -0.72],
             },
         }
     }
@@ -130,6 +132,7 @@ pub struct WeaponSpec {
     pub model_scale: [f32; 3],
     pub model_offset: [f32; 3],
     pub model_color: [f32; 3],
+    pub barrel_offset: [f32; 3],
 }
 
 impl WeaponSpec {
@@ -191,6 +194,12 @@ pub struct ProjectileData {
     pub vel: [f32; 3],
 }
 
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+pub struct FiredProjectileData {
+    pub id: u64,
+    pub weapon: WeaponKind,
+}
+
 #[derive(Debug, Archive, Serialize, Deserialize, Clone)]
 pub struct ImpactMarkData {
     pub id: u64,
@@ -203,7 +212,7 @@ pub struct WorldSnapshot {
     pub players: Vec<ClientData>,
     pub projectiles: Vec<ProjectileData>,
     pub impact_marks: Vec<ImpactMarkData>,
-    pub fired_projectile_ids: Vec<u64>,
+    pub fired_projectiles: Vec<FiredProjectileData>,
 }
 
 #[derive(Debug, Default, Resource)]

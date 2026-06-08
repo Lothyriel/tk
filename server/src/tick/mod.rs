@@ -27,7 +27,7 @@ struct WorldState {
     next_projectile_id: u64,
     next_mark_id: u64,
     impact_marks: Vec<ImpactMarkData>,
-    fired_projectile_ids: Vec<u64>,
+    fired_projectiles: Vec<FiredProjectileData>,
 }
 
 #[derive(Debug, Component)]
@@ -235,16 +235,15 @@ fn weapons_tick(
         Entity,
         &ClientInput,
         &Transform,
-        &MovementState,
         &Health,
         &mut Arsenal,
     )>,
 ) {
     let now = time.elapsed_secs();
     let delta = time.delta_secs();
-    world_state.fired_projectile_ids.clear();
+    world_state.fired_projectiles.clear();
 
-    for (entity, input, transform, movement, health, mut arsenal) in query.iter_mut() {
+    for (entity, input, transform, health, mut arsenal) in query.iter_mut() {
         if health.current <= 0.0 {
             continue;
         }
@@ -294,8 +293,6 @@ fn weapons_tick(
         }
 
         if *ammo_for_weapon(&arsenal, active_weapon) == 0 {
-            arsenal.reload_timer = spec.reload_seconds;
-            arsenal.reload_weapon = Some(active_weapon);
             arsenal.last_fire_pressed_sequence = input.fire_pressed_sequence;
             continue;
         }
@@ -306,14 +303,8 @@ fn weapons_tick(
 
         let muzzle_rotation = Quat::from(&input.camera);
         let muzzle_dir = (muzzle_rotation * -Vec3::Z).normalize_or_zero();
-        let crouch_offset = if movement.crouched {
-            PLAYER_CROUCH_VIEW_OFFSET
-        } else {
-            0.0
-        };
-        let muzzle_origin = transform.translation
-            + Vec3::new(0.0, 0.55 + crouch_offset, 0.0)
-            + muzzle_dir * 0.7;
+        let barrel_offset = Vec3::from(spec.barrel_offset);
+        let muzzle_origin = transform.translation + muzzle_rotation * barrel_offset;
         let projectile_id = world_state.next_projectile_id;
 
         commands.spawn((
@@ -327,13 +318,11 @@ fn weapons_tick(
             Transform::from_translation(muzzle_origin),
         ));
 
-        world_state.fired_projectile_ids.push(projectile_id);
+        world_state.fired_projectiles.push(FiredProjectileData {
+            id: projectile_id,
+            weapon: active_weapon,
+        });
         world_state.next_projectile_id = world_state.next_projectile_id.wrapping_add(1);
-
-        if *ammo_for_weapon(&arsenal, active_weapon) == 0 {
-            arsenal.reload_timer = spec.reload_seconds;
-            arsenal.reload_weapon = Some(active_weapon);
-        }
     }
 }
 
@@ -457,7 +446,7 @@ fn send_world_snapshot(
         players,
         projectiles,
         impact_marks: world_state.impact_marks.clone(),
-        fired_projectile_ids: world_state.fired_projectile_ids.clone(),
+        fired_projectiles: world_state.fired_projectiles.clone(),
     };
 
     let sync_message = data::encode(&snapshot);

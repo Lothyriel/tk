@@ -114,16 +114,11 @@ fn recv_players_pos(
             }
         }
 
-        let local_weapon = snapshot
-            .players
-            .iter()
-            .find(|player| Some(player.id) == Some(player_id.0))
-            .map(|player| player.weapon)
-            .unwrap_or(WeaponKind::Rifle);
+        let _ = player_id;
 
-        for _projectile_id in snapshot.fired_projectile_ids.iter() {
+        for fired_projectile in snapshot.fired_projectiles.iter() {
             commands.spawn((
-                AudioPlayer::new(match local_weapon {
+                AudioPlayer::new(match fired_projectile.weapon {
                     WeaponKind::Rifle => weapon_audio.rifle.clone(),
                     WeaponKind::Pistol => weapon_audio.pistol.clone(),
                 }),
