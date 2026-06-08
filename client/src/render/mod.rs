@@ -23,6 +23,7 @@ impl bevy::prelude::Plugin for Plugin {
             Update,
             (
                 change_fov,
+                sync_local_player_rotation,
                 sync_local_view,
                 sync_player_visuals,
                 sync_local_alive_visibility,
@@ -36,6 +37,9 @@ impl bevy::prelude::Plugin for Plugin {
 
 #[derive(Debug, Component)]
 struct WorldModelCamera;
+
+#[derive(Debug, Component)]
+struct ViewModelCamera;
 
 #[derive(Debug, Component)]
 struct LocalView;
@@ -66,6 +70,9 @@ struct AmmoHud;
 struct WeaponViewModel {
     weapon: WeaponKind,
 }
+
+#[derive(Debug, Component)]
+struct WeaponMeshRoot;
 
 #[derive(Debug, Component)]
 struct BarrelLaser;
@@ -136,6 +143,7 @@ fn view_model_camera() -> impl Bundle {
     (
         LocalView,
         BaseLocalOffset(Vec3::ZERO),
+        ViewModelCamera,
         Camera3d::default(),
         Camera {
             order: 1,
@@ -143,7 +151,7 @@ fn view_model_camera() -> impl Bundle {
         },
         Transform::default(),
         Projection::from(PerspectiveProjection {
-            fov: 70.0_f32.to_radians(),
+            fov: 90.0_f32.to_radians(),
             ..default()
         }),
         RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
@@ -172,8 +180,8 @@ fn weapon_view_model(
     visibility: Visibility,
 ) -> impl Bundle {
     let spec = weapon.spec();
-    let translation = Vec3::from(spec.model_offset);
-    let barrel_tip = Vec3::from(spec.barrel_offset) - translation;
+    let model_translation = Vec3::from(spec.model_offset);
+    let barrel_tip = Vec3::from(spec.barrel_offset) - model_translation;
     let barrel_base = Vec3::new(0.0, 0.03, -0.02);
     let barrel_vector = barrel_tip - barrel_base;
     let barrel_length = barrel_vector.length().max(0.01);
@@ -183,59 +191,76 @@ fn weapon_view_model(
         WeaponKind::Rifle => 0.08,
         WeaponKind::Pistol => 0.06,
     };
+    let body_mesh = meshes.add(Cuboid::new(0.18, 0.12, 0.28));
+    let body_material = materials.add(Color::srgb(
+        spec.model_color[0],
+        spec.model_color[1],
+        spec.model_color[2],
+    ));
+    let grip_mesh = meshes.add(Cuboid::new(0.12, 0.22, 0.1));
+    let grip_material = materials.add(Color::srgb(0.1, 0.1, 0.1));
+    let barrel_mesh = meshes.add(Cuboid::new(barrel_width, barrel_width * 0.8, barrel_length));
+    let barrel_material = materials.add(Color::srgb(
+        spec.model_color[0] * 1.1,
+        spec.model_color[1] * 1.1,
+        spec.model_color[2] * 1.1,
+    ));
+    let muzzle_mesh = meshes.add(Cuboid::new(barrel_width * 0.85, barrel_width * 0.85, 0.04));
+    let muzzle_material = materials.add(Color::srgb(0.05, 0.05, 0.05));
+    let laser_mesh = meshes.add(Cuboid::new(0.008, 0.008, BARREL_LASER_LENGTH));
+    let laser_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.0, 0.0),
+        emissive: LinearRgba::rgb(18.0, 0.0, 0.0),
+        unlit: true,
+        ..default()
+    });
 
     (
         LocalView,
-        BaseLocalOffset(translation),
+        BaseLocalOffset(Vec3::ZERO),
         WeaponViewModel { weapon },
-        Transform::from_translation(translation),
+        Transform::default(),
         visibility,
         children![
-            weapon_part(
-                meshes.add(Cuboid::new(0.18, 0.12, 0.28)),
-                materials.add(Color::srgb(
-                    spec.model_color[0],
-                    spec.model_color[1],
-                    spec.model_color[2],
-                )),
-                Transform::from_translation(Vec3::new(0.0, -0.02, 0.02)),
-            ),
-            weapon_part(
-                meshes.add(Cuboid::new(0.12, 0.22, 0.1)),
-                materials.add(Color::srgb(0.1, 0.1, 0.1)),
-                Transform::from_translation(Vec3::new(0.0, -0.13, 0.08))
-                    .with_rotation(Quat::from_rotation_x(-0.35)),
-            ),
-            weapon_part(
-                meshes.add(Cuboid::new(barrel_width, barrel_width * 0.8, barrel_length)),
-                materials.add(Color::srgb(
-                    spec.model_color[0] * 1.1,
-                    spec.model_color[1] * 1.1,
-                    spec.model_color[2] * 1.1,
-                )),
-                Transform::from_translation(barrel_center).with_rotation(barrel_rotation),
-            ),
-            weapon_part(
-                meshes.add(Cuboid::new(barrel_width * 0.85, barrel_width * 0.85, 0.04)),
-                materials.add(Color::srgb(0.05, 0.05, 0.05)),
-                Transform::from_translation(barrel_tip).with_rotation(barrel_rotation),
+            (
+                WeaponMeshRoot,
+                Transform::from_translation(model_translation),
+                Visibility::Inherited,
+                children![
+                    weapon_part(
+                        body_mesh,
+                        body_material,
+                        Transform::from_translation(Vec3::new(0.0, -0.02, 0.02)),
+                    ),
+                    weapon_part(
+                        grip_mesh,
+                        grip_material,
+                        Transform::from_translation(Vec3::new(0.0, -0.13, 0.08))
+                            .with_rotation(Quat::from_rotation_x(-0.35)),
+                    ),
+                    weapon_part(
+                        barrel_mesh,
+                        barrel_material,
+                        Transform::from_translation(barrel_center).with_rotation(barrel_rotation),
+                    ),
+                    weapon_part(
+                        muzzle_mesh,
+                        muzzle_material,
+                        Transform::from_translation(barrel_tip).with_rotation(barrel_rotation),
+                    ),
+                    weapon_kind_extra(meshes, materials, weapon),
+                ],
             ),
             (
                 BarrelLaser,
-                Mesh3d(meshes.add(Cuboid::new(0.008, 0.008, BARREL_LASER_LENGTH))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(1.0, 0.0, 0.0),
-                    emissive: LinearRgba::rgb(18.0, 0.0, 0.0),
-                    unlit: true,
-                    ..default()
-                })),
+                Mesh3d(laser_mesh),
+                MeshMaterial3d(laser_material),
                 Transform::from_translation(
-                    barrel_tip + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5),
+                    Vec3::from(spec.barrel_offset) + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5),
                 ),
                 RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
                 NotShadowCaster,
             ),
-            weapon_kind_extra(meshes, materials, weapon),
         ],
     )
 }
@@ -351,22 +376,38 @@ fn spawn_lights(mut commands: Commands) {
 
 fn change_fov(
     input: Res<ButtonInput<KeyCode>>,
-    mut world_model_projection: Single<&mut Projection, With<WorldModelCamera>>,
+    mut projections: ParamSet<(
+        Single<&mut Projection, With<WorldModelCamera>>,
+        Single<&mut Projection, With<ViewModelCamera>>,
+    )>,
 ) {
-    let Projection::Perspective(perspective) = world_model_projection.as_mut() else {
+    let fov = {
+        let mut world_projection = projections.p0();
+        let Projection::Perspective(perspective) = world_projection.as_mut() else {
+            unreachable!(
+                "The `Projection` component was explicitly built with `Projection::Perspective`"
+            );
+        };
+
+        if input.pressed(KeyCode::ArrowUp) {
+            perspective.fov -= 1.0_f32.to_radians();
+            perspective.fov = perspective.fov.max(20.0_f32.to_radians());
+        }
+        if input.pressed(KeyCode::ArrowDown) {
+            perspective.fov += 1.0_f32.to_radians();
+            perspective.fov = perspective.fov.min(160.0_f32.to_radians());
+        }
+
+        perspective.fov
+    };
+
+    let mut view_projection = projections.p1();
+    let Projection::Perspective(view_model_perspective) = view_projection.as_mut() else {
         unreachable!(
             "The `Projection` component was explicitly built with `Projection::Perspective`"
         );
     };
-
-    if input.pressed(KeyCode::ArrowUp) {
-        perspective.fov -= 1.0_f32.to_radians();
-        perspective.fov = perspective.fov.max(20.0_f32.to_radians());
-    }
-    if input.pressed(KeyCode::ArrowDown) {
-        perspective.fov += 1.0_f32.to_radians();
-        perspective.fov = perspective.fov.min(160.0_f32.to_radians());
-    }
+    view_model_perspective.fov = fov;
 }
 
 fn sync_local_view(
@@ -390,6 +431,13 @@ fn sync_local_view(
         transform.rotation = rotation;
         transform.translation = base_offset.0 + Vec3::Y * vertical_offset;
     }
+}
+
+fn sync_local_player_rotation(
+    player_input: Res<ClientInput>,
+    mut player_transform: Single<&mut Transform, With<PlayerId>>,
+) {
+    player_transform.rotation = Quat::from_rotation_y(player_input.camera.yaw);
 }
 
 fn sync_player_visuals(
@@ -436,14 +484,25 @@ fn sync_local_alive_visibility(
 
 fn sync_view_weapon_visibility(
     player_state: Single<&PlayerVisualState, With<PlayerId>>,
-    mut query: Query<(&WeaponViewModel, &mut Visibility)>,
+    mut query: Query<(&WeaponViewModel, &Children, &mut Visibility)>,
+    mut mesh_roots: Query<&mut Visibility, (With<WeaponMeshRoot>, Without<WeaponViewModel>)>,
 ) {
-    for (weapon_view, mut visibility) in query.iter_mut() {
-        *visibility = if player_state.alive && weapon_view.weapon == player_state.weapon {
+    for (weapon_view, children, mut visibility) in query.iter_mut() {
+        let weapon_visibility = if player_state.alive && weapon_view.weapon == player_state.weapon {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
+
+        *visibility = weapon_visibility;
+
+        for child in children.iter() {
+            let Ok(mut child_visibility) = mesh_roots.get_mut(child) else {
+                continue;
+            };
+
+            *child_visibility = weapon_visibility;
+        }
     }
 }
 
@@ -467,8 +526,8 @@ fn sync_barrel_laser(
         };
 
         let spec = weapon_view.weapon.spec();
-        let barrel_tip = Vec3::from(spec.barrel_offset) - Vec3::from(spec.model_offset);
-        transform.translation = barrel_tip + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5);
+        transform.translation =
+            Vec3::from(spec.barrel_offset) + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5);
         *visibility = if player_state.alive && player_state.weapon == weapon_view.weapon {
             Visibility::Inherited
         } else {

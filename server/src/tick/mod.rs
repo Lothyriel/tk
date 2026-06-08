@@ -235,6 +235,7 @@ fn weapons_tick(
         Entity,
         &ClientInput,
         &Transform,
+        &MovementState,
         &Health,
         &mut Arsenal,
     )>,
@@ -243,7 +244,7 @@ fn weapons_tick(
     let delta = time.delta_secs();
     world_state.fired_projectiles.clear();
 
-    for (entity, input, transform, health, mut arsenal) in query.iter_mut() {
+    for (entity, input, transform, movement, health, mut arsenal) in query.iter_mut() {
         if health.current <= 0.0 {
             continue;
         }
@@ -304,7 +305,13 @@ fn weapons_tick(
         let muzzle_rotation = Quat::from(&input.camera);
         let muzzle_dir = (muzzle_rotation * -Vec3::Z).normalize_or_zero();
         let barrel_offset = Vec3::from(spec.barrel_offset);
-        let muzzle_origin = transform.translation + muzzle_rotation * barrel_offset;
+        let crouch_view_offset = if movement.crouched {
+            PLAYER_CROUCH_VIEW_OFFSET
+        } else {
+            0.0
+        };
+        let muzzle_origin =
+            transform.translation + Vec3::Y * crouch_view_offset + muzzle_rotation * barrel_offset;
         let projectile_id = world_state.next_projectile_id;
 
         commands.spawn((
