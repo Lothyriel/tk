@@ -1,5 +1,6 @@
 pub mod combat;
 pub mod data;
+pub mod humanoid;
 pub mod map;
 pub mod raid;
 
