@@ -5,13 +5,13 @@ use bevy::{
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
-use common::{CameraInput, ClientInput, WeaponKind};
+use common::{CameraInput, LocalInput, WeaponKind};
 
 pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ClientInput>()
+        app.init_resource::<LocalInput>()
             .init_resource::<InputSequencing>()
             .init_resource::<CameraSensitivity>()
             .add_systems(Startup, setup_cursor)
@@ -28,7 +28,7 @@ fn keyboard(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut sequencing: ResMut<InputSequencing>,
-    mut input: ResMut<ClientInput>,
+    mut input: ResMut<LocalInput>,
 ) {
     input.forward = keyboard.pressed(KeyCode::KeyW);
     input.left = keyboard.pressed(KeyCode::KeyA);
@@ -64,7 +64,7 @@ fn keyboard(
     input.camera.roll = (left - right) as f32 * MAX_ROLL_ANGLE;
 }
 
-fn weapon_switch(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientInput>) {
+fn weapon_switch(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<LocalInput>) {
     if keyboard.just_pressed(KeyCode::Digit1) {
         input.weapon = WeaponKind::Rifle;
     }
@@ -77,7 +77,7 @@ fn weapon_switch(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<ClientIn
 fn mouse(
     accumulated_mouse_motion: Res<AccumulatedMouseMotion>,
     sense: Res<CameraSensitivity>,
-    mut input: ResMut<ClientInput>,
+    mut input: ResMut<LocalInput>,
 ) {
     let delta = accumulated_mouse_motion.delta;
 

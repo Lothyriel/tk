@@ -35,18 +35,24 @@ impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         app.init_resource::<Lobby>()
             .add_plugins(RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule())
-            .add_systems(Update, panic_on_error_system);
+            .add_systems(Update, report_transport_errors);
     }
 }
 
-fn panic_on_error_system(mut renet_error: MessageReader<NetcodeTransportError>) {
-    if let Some(e) = renet_error.read().next() {
-        panic!("{}", e);
+fn report_transport_errors(mut renet_error: MessageReader<NetcodeTransportError>) {
+    for error in renet_error.read() {
+        warn!("Network transport: {error}");
     }
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize, Component, Resource)]
+#[derive(Debug, Archive, Serialize, Deserialize, Resource)]
 pub struct PlayerId(pub u64);
+
+#[derive(Debug, Component)]
+pub struct LocalPlayer;
+
+#[derive(Debug, Default, Resource, Deref, DerefMut)]
+pub struct LocalInput(pub ClientInput);
 
 #[derive(Debug, Archive, Serialize, Deserialize)]
 pub struct ClientData {
@@ -60,7 +66,7 @@ pub struct ClientData {
     pub ammo_in_mag: u32,
 }
 
-#[derive(Debug, Default, Archive, Serialize, Deserialize, Component, Resource)]
+#[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
 pub struct ClientInput {
     pub forward: bool,
     pub backward: bool,

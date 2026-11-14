@@ -3,7 +3,7 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    Client, ClientInput, Lobby, PlayerId, PlayerVisualState, WeaponKind, PLAYER_CROUCH_SCALE,
+    Client, LocalInput, LocalPlayer, Lobby, PlayerId, PlayerVisualState, WeaponKind, PLAYER_CROUCH_SCALE,
     PLAYER_CROUCH_VIEW_OFFSET,
 };
 
@@ -94,7 +94,7 @@ fn spawn_view_model(
     let player = commands
         .spawn((
             Client { id: player_id.0 },
-            PlayerId(player_id.0),
+            LocalPlayer,
             Transform::from_xyz(0.0, 1.0, 0.0),
             Visibility::default(),
             children![
@@ -366,7 +366,7 @@ fn spawn_lights(mut commands: Commands) {
     commands.spawn((
         PointLight {
             color: Color::from(tailwind::ROSE_300),
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             ..default()
         },
         Transform::from_xyz(-2.0, 4.0, -0.75),
@@ -411,8 +411,8 @@ fn change_fov(
 }
 
 fn sync_local_view(
-    player_input: Res<ClientInput>,
-    player_visual_state: Single<&PlayerVisualState, With<PlayerId>>,
+    player_input: Res<LocalInput>,
+    player_visual_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     mut query: Query<(&BaseLocalOffset, &mut Transform), With<LocalView>>,
 ) {
     let vertical_offset = if player_visual_state.crouched {
@@ -434,8 +434,8 @@ fn sync_local_view(
 }
 
 fn sync_local_player_rotation(
-    player_input: Res<ClientInput>,
-    mut player_transform: Single<&mut Transform, With<PlayerId>>,
+    player_input: Res<LocalInput>,
+    mut player_transform: Single<&mut Transform, With<LocalPlayer>>,
 ) {
     player_transform.rotation = Quat::from_rotation_y(player_input.camera.yaw);
 }
@@ -470,7 +470,7 @@ fn sync_player_visuals(
 }
 
 fn sync_local_alive_visibility(
-    player_state: Single<&PlayerVisualState, With<PlayerId>>,
+    player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     mut overlays: Query<&mut Visibility, Or<(With<Crosshair>, With<AmmoHud>)>>,
 ) {
     for mut visibility in overlays.iter_mut() {
@@ -483,7 +483,7 @@ fn sync_local_alive_visibility(
 }
 
 fn sync_view_weapon_visibility(
-    player_state: Single<&PlayerVisualState, With<PlayerId>>,
+    player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     mut query: Query<(&WeaponViewModel, &Children, &mut Visibility)>,
     mut mesh_roots: Query<&mut Visibility, (With<WeaponMeshRoot>, Without<WeaponViewModel>)>,
 ) {
@@ -507,7 +507,7 @@ fn sync_view_weapon_visibility(
 }
 
 fn sync_ammo_hud(
-    player_state: Single<&PlayerVisualState, With<PlayerId>>,
+    player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     mut query: Query<&mut Text, With<AmmoHud>>,
 ) {
     for mut text in query.iter_mut() {
@@ -516,7 +516,7 @@ fn sync_ammo_hud(
 }
 
 fn sync_barrel_laser(
-    player_state: Single<&PlayerVisualState, With<PlayerId>>,
+    player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     weapon_views: Query<&WeaponViewModel>,
     mut lasers: Query<(&ChildOf, &mut Transform, &mut Visibility), With<BarrelLaser>>,
 ) {
