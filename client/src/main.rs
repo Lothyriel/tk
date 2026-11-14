@@ -13,6 +13,7 @@ use common::*;
 
 mod hud;
 mod input;
+mod playtest;
 mod render;
 mod sync;
 
@@ -45,6 +46,9 @@ fn main() {
     )
     .add_plugins(ClientPlugin)
     .add_plugins(hud::Plugin);
+    if std::env::args().any(|argument| argument == "--playtest") {
+        app.add_plugins(playtest::Plugin);
+    }
     app.run();
 }
 
