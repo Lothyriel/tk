@@ -9,15 +9,15 @@ use bevy_renet2::{netcode::NetcodeTransportError, prelude::ClientId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 0;
+pub const PROTOCOL_ID: u64 = 1;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
 pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;
 pub const PLAYER_STEP_HEIGHT: f32 = 0.25;
-pub const PLAYER_CROUCH_SCALE: f32 =
-    (PLAYER_CROUCH_COLLIDER_HALF_HEIGHT + PLAYER_COLLIDER_RADIUS)
-        / (PLAYER_COLLIDER_HALF_HEIGHT + PLAYER_COLLIDER_RADIUS);
-pub const PLAYER_CROUCH_VIEW_OFFSET: f32 = -0.35;
+pub const PLAYER_CROUCH_SCALE: f32 = (PLAYER_CROUCH_COLLIDER_HALF_HEIGHT + PLAYER_COLLIDER_RADIUS)
+    / (PLAYER_COLLIDER_HALF_HEIGHT + PLAYER_COLLIDER_RADIUS);
+pub const PLAYER_CROUCH_VIEW_OFFSET: f32 = -0.18;
+pub const PLAYER_VIEW_HEIGHT: f32 = 0.55;
 pub const PLAYER_WALK_SPEED: f32 = 3.25;
 pub const PLAYER_RUN_SPEED: f32 = 5.5;
 pub const PLAYER_CROUCH_SPEED: f32 = 1.75;
@@ -27,7 +27,7 @@ pub const PLAYER_AIR_ACCELERATION: f32 = 4.0;
 pub const PLAYER_AIR_CONTROL: f32 = 0.2;
 pub const PLAYER_GRAVITY: f32 = 20.0;
 pub const PLAYER_JUMP_SPEED: f32 = 6.5;
-pub const PLAYER_MAX_HEALTH: f32 = 100.0;
+pub const PLAYER_MAX_HEALTH: f32 = 250.0;
 pub const PROJECTILE_LIFETIME: f32 = 3.0;
 pub const PROJECTILE_GRAVITY: f32 = 9.81;
 pub const PLAYER_RESPAWN_HEIGHT: f32 = 1.5;
@@ -57,7 +57,7 @@ pub struct LocalPlayer;
 #[derive(Debug, Default, Resource, Deref, DerefMut)]
 pub struct LocalInput(pub ClientInput);
 
-#[derive(Debug, Archive, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Archive, Serialize, Deserialize)]
 pub struct ClientData {
     pub id: ClientId,
     pub pos: [f32; 3],
@@ -67,10 +67,19 @@ pub struct ClientData {
     pub health: f32,
     pub weapon: WeaponKind,
     pub ammo_in_mag: u32,
+    pub reserve_ammo: u32,
+    pub reload_remaining: f32,
+    pub body: combat::BodyHealth,
+    pub armor: combat::ArmorState,
+    pub participant: raid::Participant,
+    pub bot: bool,
 }
 
 #[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
 pub struct ClientInput {
+    pub lobby_sequence: u32,
+    pub loadout: combat::Loadout,
+    pub interact: bool,
     pub forward: bool,
     pub backward: bool,
     pub left: bool,
@@ -78,7 +87,6 @@ pub struct ClientInput {
     pub run: bool,
     pub crouch: bool,
     pub jump: bool,
-    pub respawn_sequence: u32,
     pub fire: bool,
     pub fire_pressed_sequence: u32,
     pub reload_sequence: u32,
@@ -173,7 +181,7 @@ impl WeaponSpec {
     }
 }
 
-#[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
+#[derive(Debug, Default, Clone, Copy, Archive, Serialize, Deserialize, Component)]
 pub struct CameraInput {
     pub pitch: f32,
     pub yaw: f32,
@@ -241,6 +249,8 @@ pub struct ImpactMarkData {
 
 #[derive(Debug, Archive, Serialize, Deserialize)]
 pub struct WorldSnapshot {
+    pub sequence: u64,
+    pub raid: raid::RaidState,
     pub players: Vec<ClientData>,
     pub projectiles: Vec<ProjectileData>,
     pub impact_marks: Vec<ImpactMarkData>,
