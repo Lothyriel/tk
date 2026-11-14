@@ -119,7 +119,7 @@ fn recv_players_pos(
         for fired_projectile in snapshot.fired_projectiles.iter() {
             commands.spawn((
                 AudioPlayer::new(match fired_projectile.weapon {
-                    WeaponKind::Rifle => weapon_audio.rifle.clone(),
+                    WeaponKind::Rifle | WeaponKind::Smg => weapon_audio.rifle.clone(),
                     WeaponKind::Pistol => weapon_audio.pistol.clone(),
                 }),
                 PlaybackSettings::DESPAWN,

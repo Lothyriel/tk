@@ -37,7 +37,7 @@ struct Health {
 
 #[derive(Debug, Component)]
 struct Arsenal {
-    magazines: [u32; 2],
+    magazines: [u32; 3],
     active_weapon: WeaponKind,
     last_fire_pressed_sequence: u32,
     last_reload_sequence: u32,
@@ -53,6 +53,7 @@ impl Default for Arsenal {
             magazines: [
                 WeaponKind::Rifle.spec().magazine_size,
                 WeaponKind::Pistol.spec().magazine_size,
+                WeaponKind::Smg.spec().magazine_size,
             ],
             active_weapon: WeaponKind::Rifle,
             last_fire_pressed_sequence: 0,
@@ -113,6 +114,7 @@ fn respawn_tick(
         arsenal.magazines = [
             WeaponKind::Rifle.spec().magazine_size,
             WeaponKind::Pistol.spec().magazine_size,
+            WeaponKind::Smg.spec().magazine_size,
         ];
         arsenal.reload_timer = 0.0;
         arsenal.reload_weapon = None;
@@ -608,6 +610,7 @@ fn weapon_index(weapon: WeaponKind) -> usize {
     match weapon {
         WeaponKind::Rifle => 0,
         WeaponKind::Pistol => 1,
+        WeaponKind::Smg => 2,
     }
 }
 
