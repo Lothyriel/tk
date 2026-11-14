@@ -1,5 +1,7 @@
 pub mod combat;
 pub mod data;
+pub mod map;
+pub mod raid;
 
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_rapier3d::prelude::*;
