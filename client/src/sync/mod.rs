@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_renet2::prelude::{DefaultChannel, RenetClient, client_connected};
 use common::{
     ClientData, ImpactMarkData, Lobby, PlayerId, PlayerVisualState, ProjectileData, ServerMessage,
-    WeaponKind, WorldSnapshot, data,
+    WorldSnapshot, data,
 };
 
 use crate::ClientSystems;
@@ -33,8 +33,7 @@ pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WeaponAudio>()
-            .init_resource::<ClientSession>()
+        app.init_resource::<ClientSession>()
             .add_systems(
                 Update,
                 (recv_connectivity, recv_players_pos)
@@ -48,23 +47,6 @@ impl bevy::prelude::Plugin for Plugin {
                     .in_set(ClientSystems::Send)
                     .run_if(client_connected),
             );
-    }
-}
-
-#[derive(Debug, Resource)]
-struct WeaponAudio {
-    rifle: Handle<AudioSource>,
-    pistol: Handle<AudioSource>,
-}
-
-impl FromWorld for WeaponAudio {
-    fn from_world(world: &mut World) -> Self {
-        let asset_server = world.resource::<AssetServer>();
-
-        Self {
-            rifle: asset_server.load("sound/rifle-shot.ogg"),
-            pistol: asset_server.load("sound/pistol-shot.ogg"),
-        }
     }
 }
 
@@ -110,7 +92,6 @@ fn recv_players_pos(
     projectile_visuals: Query<(Entity, &ProjectileVisual)>,
     impact_visuals: Query<(Entity, &ImpactMarkVisual)>,
     player_id: Res<PlayerId>,
-    weapon_audio: Res<WeaponAudio>,
     mut session: ResMut<ClientSession>,
     time: Res<Time<Real>>,
 ) {
@@ -170,16 +151,6 @@ fn recv_players_pos(
                 },
             ));
         }
-    }
-
-    for fired_projectile in snapshot.fired_projectiles.iter() {
-        commands.spawn((
-            AudioPlayer::new(match fired_projectile.weapon {
-                WeaponKind::Rifle | WeaponKind::Smg => weapon_audio.rifle.clone(),
-                WeaponKind::Pistol => weapon_audio.pistol.clone(),
-            }),
-            PlaybackSettings::DESPAWN,
-        ));
     }
 
     sync_projectile_visuals(
