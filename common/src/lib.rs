@@ -1,3 +1,4 @@
+pub mod combat;
 pub mod data;
 
 use bevy::{platform::collections::HashMap, prelude::*};
@@ -88,9 +89,18 @@ pub enum WeaponKind {
     #[default]
     Rifle,
     Pistol,
+    Smg,
 }
 
 impl WeaponKind {
+    pub fn index(self) -> usize {
+        match self {
+            Self::Rifle => 0,
+            Self::Pistol => 1,
+            Self::Smg => 2,
+        }
+    }
+
     pub fn spec(self) -> WeaponSpec {
         match self {
             Self::Rifle => WeaponSpec {
@@ -120,6 +130,20 @@ impl WeaponKind {
                 model_offset: [0.2, -0.18, -0.25],
                 model_color: [0.22, 0.22, 0.24],
                 barrel_offset: [0.2, -0.15, -0.72],
+            },
+            Self::Smg => WeaponSpec {
+                kind: self,
+                name: "SMG",
+                magazine_size: 25,
+                rounds_per_minute: 850.0,
+                reload_seconds: 1.9,
+                muzzle_speed: 420.0,
+                damage: 23.0,
+                automatic: true,
+                model_scale: [0.16, 0.12, 0.55],
+                model_offset: [0.25, -0.18, -0.35],
+                model_color: [0.14, 0.25, 0.25],
+                barrel_offset: [0.25, -0.15, -0.78],
             },
         }
     }

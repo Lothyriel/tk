@@ -188,7 +188,7 @@ fn weapon_view_model(
     let barrel_center = barrel_base + barrel_vector * 0.5;
     let barrel_rotation = Quat::from_rotation_arc(Vec3::Z, barrel_vector.normalize_or_zero());
     let barrel_width = match weapon {
-        WeaponKind::Rifle => 0.08,
+        WeaponKind::Rifle | WeaponKind::Smg => 0.08,
         WeaponKind::Pistol => 0.06,
     };
     let body_mesh = meshes.add(Cuboid::new(0.18, 0.12, 0.28));
@@ -271,7 +271,7 @@ fn weapon_kind_extra(
     weapon: WeaponKind,
 ) -> impl Bundle {
     match weapon {
-        WeaponKind::Rifle => weapon_part(
+        WeaponKind::Rifle | WeaponKind::Smg => weapon_part(
             meshes.add(Cuboid::new(0.12, 0.1, 0.34)),
             materials.add(Color::srgb(0.18, 0.12, 0.08)),
             Transform::from_translation(Vec3::new(0.0, -0.03, 0.25))
