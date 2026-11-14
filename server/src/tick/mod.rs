@@ -6,6 +6,8 @@ use bevy_renet2::prelude::{DefaultChannel, RenetServer, ServerEvent};
 use common::{combat::*, raid::*, *};
 
 mod bots;
+mod metrics;
+mod physical;
 mod raid;
 mod simulation;
 use bots::{Bot, bot_tick};
@@ -19,6 +21,9 @@ impl bevy::prelude::Plugin for Plugin {
         app.insert_resource(Time::<Fixed>::from_hz(128.0))
             .init_resource::<WorldState>()
             .init_resource::<RaidState>()
+            .init_resource::<metrics::TickMetrics>()
+            .add_systems(FixedFirst, metrics::begin)
+            .add_systems(FixedLast, metrics::end)
             .add_systems(Startup, spawn_world_colliders)
             .add_systems(
                 FixedUpdate,
@@ -28,6 +33,7 @@ impl bevy::prelude::Plugin for Plugin {
                     expire_input,
                     lobby_tick,
                     bot_tick,
+                    physical::physical_tick,
                     physx_tick,
                     weapons_tick,
                     sync_actor_colliders,
@@ -41,6 +47,7 @@ impl bevy::prelude::Plugin for Plugin {
                     projectiles_tick,
                     objectives_tick,
                     sync_ground_state,
+                    physical::expire_pieces,
                     send_world_snapshot,
                 )
                     .chain()
@@ -57,6 +64,7 @@ struct WorldState {
     fired_projectiles: Vec<FiredProjectileData>,
     snapshot_elapsed: f32,
     snapshot_sequence: u64,
+    next_piece_id: u64,
 }
 
 impl WorldState {
@@ -113,6 +121,7 @@ fn character_bundle(id: u64, position: Vec3) -> impl Bundle {
         BodyHealth::default(),
         LastInput::default(),
         Collider::capsule_y(PLAYER_COLLIDER_HALF_HEIGHT, PLAYER_COLLIDER_RADIUS),
+        CollisionGroups::new(Group::GROUP_3, Group::GROUP_1 | Group::GROUP_3),
         KinematicCharacterController {
             autostep: Some(CharacterAutostep {
                 max_height: CharacterLength::Absolute(PLAYER_STEP_HEIGHT),
@@ -123,6 +132,7 @@ fn character_bundle(id: u64, position: Vec3) -> impl Bundle {
             ..default()
         },
         MovementState::default(),
+        common::humanoid::PoseState::default(),
         Transform::from_translation(position),
     )
 }
@@ -270,8 +280,10 @@ fn send_world_snapshot(
         &Arsenal,
         &Participant,
         Has<Bot>,
+        &common::humanoid::PoseState,
     )>,
     projectiles: Query<(&Projectile, &Transform)>,
+    pieces: Query<(&physical::PhysicsPiece, &Transform)>,
 ) {
     state.snapshot_elapsed += time.delta_secs();
     if state.snapshot_elapsed < 1.0 / 30.0 {
@@ -282,7 +294,7 @@ fn send_world_snapshot(
     let players = players
         .iter()
         .map(
-            |(t, client, movement, body, armor, arsenal, participant, bot)| ClientData {
+            |(t, client, movement, body, armor, arsenal, participant, bot, pose)| ClientData {
                 id: client.id,
                 pos: t.translation.into(),
                 rot: t.rotation.into(),
@@ -299,6 +311,7 @@ fn send_world_snapshot(
                 armor: armor.clone(),
                 participant: participant.clone(),
                 bot,
+                pose: pose.clone(),
             },
         )
         .collect();
@@ -310,15 +323,42 @@ fn send_world_snapshot(
             vel: p.velocity.into(),
         })
         .collect();
+    state
+        .fired_projectiles
+        .retain(|shot| time.elapsed_secs() - shot.time < 0.5);
     let snapshot = WorldSnapshot {
         sequence: state.snapshot_sequence,
         raid: raid.clone(),
         players,
         projectiles,
         impact_marks: state.impact_marks.clone(),
-        fired_projectiles: std::mem::take(&mut state.fired_projectiles),
+        fired_projectiles: state.fired_projectiles.clone(),
+        physics_pieces: pieces
+            .iter()
+            .map(|(piece, t)| PhysicsPieceData {
+                id: piece.id,
+                owner: piece.owner,
+                segment: piece.segment,
+                pose: common::humanoid::SegmentPose {
+                    position: t.translation.into(),
+                    rotation: t.rotation.to_array(),
+                },
+                detached: piece.detached,
+                bot: piece.bot,
+            })
+            .collect(),
+        simulation_time: time.elapsed_secs(),
     };
-    server.broadcast_message(DefaultChannel::Unreliable, data::encode(&snapshot));
+    let bytes = data::encode(&snapshot);
+    if state.snapshot_sequence % 150 == 0 {
+        info!(
+            "TK PERF snapshot_bytes={} actors={} pieces={}",
+            bytes.len(),
+            snapshot.players.len(),
+            snapshot.physics_pieces.len()
+        );
+    }
+    server.broadcast_message(DefaultChannel::Unreliable, bytes);
 }
 
 fn set_crouched_state(
@@ -344,25 +384,48 @@ fn set_crouched_state(
 }
 
 fn can_stand_up(entity: Entity, context: &RapierContext<'_>, translation: Vec3) -> bool {
-    let shape = Collider::capsule_y(PLAYER_COLLIDER_HALF_HEIGHT, PLAYER_COLLIDER_RADIUS);
-    context
-        .cast_shape(
-            translation
-                + Vec3::Y * (PLAYER_COLLIDER_HALF_HEIGHT - PLAYER_CROUCH_COLLIDER_HALF_HEIGHT),
-            Quat::IDENTITY,
-            Vec3::ZERO,
-            &shape,
-            ShapeCastOptions {
-                max_time_of_impact: 0.0,
-                stop_at_penetration: true,
-                compute_impact_geometry_on_penetration: false,
-                target_distance: 0.0,
-            },
-            QueryFilter::new()
-                .exclude_collider(entity)
-                .exclude_sensors(),
-        )
-        .is_none()
+    can_occupy_character(
+        entity,
+        context,
+        translation + Vec3::Y * (PLAYER_COLLIDER_HALF_HEIGHT - PLAYER_CROUCH_COLLIDER_HALF_HEIGHT),
+        false,
+    )
+}
+
+fn can_occupy_character(
+    entity: Entity,
+    context: &RapierContext<'_>,
+    center: Vec3,
+    crouched: bool,
+) -> bool {
+    // The controller's contact skin must not turn a touching floor into blocked headroom.
+    // Use overlap, not a zero-length sweep (which can miss initial intersections).
+    let shape = Collider::capsule_y(
+        if crouched {
+            PLAYER_CROUCH_COLLIDER_HALF_HEIGHT
+        } else {
+            PLAYER_COLLIDER_HALF_HEIGHT
+        },
+        PLAYER_COLLIDER_RADIUS - 0.015,
+    );
+    let mut clear = true;
+    context.intersect_shape(
+        center,
+        Quat::IDENTITY,
+        &shape,
+        QueryFilter::new()
+            .groups(CollisionGroups::new(
+                Group::ALL,
+                Group::GROUP_1 | Group::GROUP_3,
+            ))
+            .exclude_collider(entity)
+            .exclude_sensors(),
+        |_, _| {
+            clear = false;
+            false
+        },
+    );
+    clear
 }
 
 #[cfg(test)]

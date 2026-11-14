@@ -1,19 +1,21 @@
 // Keep Bevy's access filters visible in the system signature.
 #![allow(clippy::type_complexity)]
 use crate::{ClientSystems, sync::ClientSession};
-use bevy::{
-    camera::visibility::RenderLayers, color::palettes::tailwind, light::NotShadowCaster, prelude::*,
-};
+use bevy::{camera::visibility::RenderLayers, light::NotShadowCaster, prelude::*};
 use common::{
-    Client, Lobby, LocalInput, LocalPlayer, PLAYER_CROUCH_SCALE, PLAYER_CROUCH_VIEW_OFFSET,
-    PLAYER_VIEW_HEIGHT, PlayerId, PlayerVisualState, WeaponKind,
+    Client, Lobby, LocalInput, LocalPlayer, PLAYER_CROUCH_VIEW_OFFSET, PLAYER_VIEW_HEIGHT,
+    PlayerId, PlayerVisualState, WeaponKind,
 };
 use common::{combat::SurfaceKind, map::*, raid::EXTRACTION_RADIUS};
+pub(crate) mod actors;
+pub(crate) mod feedback;
 
 pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(actors::Plugin);
+        app.add_plugins(feedback::Plugin);
         let startup_systems = (
             spawn_view_model,
             spawn_world_model,
@@ -28,7 +30,6 @@ impl bevy::prelude::Plugin for Plugin {
                 change_fov,
                 sync_local_player_rotation,
                 sync_local_view,
-                sync_player_visuals,
                 sync_local_alive_visibility,
                 sync_view_weapon_visibility,
                 sync_ammo_hud,
@@ -44,7 +45,7 @@ impl bevy::prelude::Plugin for Plugin {
 struct WorldModelCamera;
 
 #[derive(Debug, Component)]
-struct ViewModelCamera;
+pub(crate) struct ViewModelCamera;
 
 #[derive(Debug, Component)]
 struct LocalView;
@@ -83,9 +84,6 @@ struct WeaponMeshRoot;
 struct BarrelLaser;
 
 #[derive(Component)]
-struct ViewArm;
-
-#[derive(Component)]
 struct LootVisual(usize);
 
 #[derive(Resource)]
@@ -105,9 +103,6 @@ fn spawn_view_model(
     mut lobby: ResMut<Lobby>,
     player_id: Res<PlayerId>,
 ) {
-    let arm = meshes.add(Cuboid::new(0.055, 0.055, 0.34));
-    let arm_material = materials.add(Color::from(tailwind::TEAL_200));
-
     let player = commands
         .spawn((
             Client { id: player_id.0 },
@@ -117,7 +112,6 @@ fn spawn_view_model(
             children![
                 world_camera(),
                 view_model_camera(),
-                player_right_arm(arm, arm_material),
                 weapon_view_model(
                     &mut meshes,
                     &mut materials,
@@ -154,6 +148,11 @@ fn world_camera() -> impl Bundle {
         BaseLocalOffset(Vec3::ZERO),
         WorldModelCamera,
         Camera3d::default(),
+        Msaa::Off,
+        bevy::pbr::ScreenSpaceAmbientOcclusion {
+            radius: 0.35,
+            ..default()
+        },
         IsDefaultUiCamera,
         Transform::default(),
         Projection::from(PerspectiveProjection {
@@ -169,6 +168,7 @@ fn view_model_camera() -> impl Bundle {
         BaseLocalOffset(Vec3::ZERO),
         ViewModelCamera,
         Camera3d::default(),
+        Msaa::Off,
         Camera {
             order: 1,
             clear_color: ClearColorConfig::None,
@@ -183,26 +183,6 @@ fn view_model_camera() -> impl Bundle {
     )
 }
 
-fn player_right_arm(arm: Handle<Mesh>, arm_material: Handle<StandardMaterial>) -> impl Bundle {
-    let translation = Vec3::new(0.34, -0.2, -0.08);
-
-    (
-        ViewArm,
-        LocalView,
-        BaseLocalOffset(translation),
-        Mesh3d(arm),
-        MeshMaterial3d(arm_material),
-        Transform::from_translation(translation).with_rotation(Quat::from_euler(
-            EulerRot::XYZ,
-            -0.25,
-            0.18,
-            -0.55,
-        )),
-        RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
-        NotShadowCaster,
-    )
-}
-
 fn weapon_view_model(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
@@ -210,9 +190,9 @@ fn weapon_view_model(
     visibility: Visibility,
 ) -> impl Bundle {
     let spec = weapon.spec();
-    let model_translation = Vec3::from(spec.model_offset);
+    let model_translation = view_model_translation(weapon);
     let barrel_tip = Vec3::from(spec.barrel_offset) - model_translation;
-    let barrel_base = Vec3::new(0.0, 0.03, -0.02);
+    let barrel_base = Vec3::new(0.0, -0.03, -0.02);
     let barrel_vector = barrel_tip - barrel_base;
     let barrel_length = barrel_vector.length().max(0.01);
     let barrel_center = barrel_base + barrel_vector * 0.5;
@@ -237,6 +217,25 @@ fn weapon_view_model(
     ));
     let muzzle_mesh = meshes.add(Cuboid::new(barrel_width * 0.85, barrel_width * 0.85, 0.04));
     let muzzle_material = materials.add(Color::srgb(0.05, 0.05, 0.05));
+    let hand_material = materials.add(Color::srgb(0.11, 0.14, 0.10));
+    let sleeve_material = materials.add(Color::srgb(0.12, 0.31, 0.32));
+    let mut hand_mesh = Mesh::from(Cuboid::new(0.085, 0.065, 0.12));
+    for x in [-0.03, -0.01, 0.01, 0.03] {
+        hand_mesh
+            .merge(
+                &Mesh::from(Cuboid::new(0.018, 0.055, 0.06))
+                    .translated_by(Vec3::new(x, -0.025, -0.065)),
+            )
+            .expect("finger attributes");
+    }
+    let hand_mesh = meshes.add(hand_mesh);
+    let flash_mesh = meshes.add(Cuboid::new(0.11, 0.11, 0.17));
+    let flash_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.75, 0.1),
+        emissive: LinearRgba::rgb(14.0, 6.0, 0.5),
+        unlit: true,
+        ..default()
+    });
     let laser_mesh = meshes.add(Cuboid::new(0.008, 0.008, BARREL_LASER_LENGTH));
     let laser_material = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.0, 0.0),
@@ -275,10 +274,78 @@ fn weapon_view_model(
                     ),
                     weapon_part(
                         muzzle_mesh,
-                        muzzle_material,
+                        muzzle_material.clone(),
                         Transform::from_translation(barrel_tip).with_rotation(barrel_rotation),
                     ),
                     weapon_kind_extra(meshes, materials, weapon),
+                    (
+                        feedback::Flash,
+                        Visibility::Hidden,
+                        weapon_part(
+                            flash_mesh,
+                            flash_material,
+                            Transform::from_translation(
+                                barrel_tip + barrel_vector.normalize_or_zero() * 0.08
+                            )
+                        )
+                    ),
+                    (
+                        feedback::Bolt,
+                        weapon_part(
+                            meshes.add(Cuboid::new(0.04, 0.04, 0.13)),
+                            muzzle_material.clone(),
+                            Transform::from_xyz(0.11, 0.035, 0.01)
+                        )
+                    ),
+                    (
+                        feedback::Magazine,
+                        weapon_part(
+                            meshes.add(Cuboid::new(
+                                if weapon == WeaponKind::Pistol {
+                                    0.065
+                                } else {
+                                    0.09
+                                },
+                                0.24,
+                                if weapon == WeaponKind::Smg {
+                                    0.07
+                                } else {
+                                    0.11
+                                }
+                            )),
+                            muzzle_material.clone(),
+                            Transform::from_xyz(0.0, -0.14, 0.0)
+                        )
+                    ),
+                    weapon_part(
+                        hand_mesh.clone(),
+                        hand_material.clone(),
+                        Transform::from_xyz(0.025, -0.13, 0.10)
+                    ),
+                    (
+                        feedback::SupportHand,
+                        weapon_part(
+                            hand_mesh,
+                            hand_material.clone(),
+                            Transform::from_xyz(-0.07, -0.06, -0.22)
+                        ),
+                        children![weapon_part(
+                            meshes.add(Cuboid::new(0.085, 0.08, 0.30)),
+                            sleeve_material.clone(),
+                            Transform::from_xyz(-0.08, -0.03, 0.18)
+                                .with_rotation(Quat::from_euler(EulerRot::XYZ, -0.2, -0.4, 0.3))
+                        )],
+                    ),
+                    weapon_part(
+                        meshes.add(Cuboid::new(0.10, 0.09, 0.30)),
+                        sleeve_material,
+                        Transform::from_xyz(0.06, -0.13, 0.22).with_rotation(Quat::from_euler(
+                            EulerRot::XYZ,
+                            -0.3,
+                            0.2,
+                            -0.2
+                        ))
+                    ),
                 ],
             ),
             (
@@ -294,6 +361,19 @@ fn weapon_view_model(
             ),
         ],
     )
+}
+
+fn view_model_translation(weapon: WeaponKind) -> Vec3 {
+    Vec3::from(weapon.spec().model_offset)
+        + Vec3::new(
+            0.0,
+            0.06,
+            if weapon == WeaponKind::Pistol {
+                -0.30
+            } else {
+                -0.20
+            },
+        )
 }
 
 fn weapon_kind_extra(
@@ -383,18 +463,60 @@ fn spawn_world_model(
         };
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::from_size(Vec3::from(block.half_size) * 2.0))),
-            MeshMaterial3d(materials.add(color)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: color,
+                perceptual_roughness: if matches!(block.surface, SurfaceKind::Wood) {
+                    0.88
+                } else {
+                    0.98
+                },
+                ..default()
+            })),
             Transform::from_translation(Vec3::from(block.center)),
         ));
+        if matches!(block.surface, SurfaceKind::Wood) {
+            let seam = meshes.add(Cuboid::new(0.014, block.half_size[1] * 1.98, 0.006));
+            let seam_material = materials.add(Color::srgb(0.17, 0.09, 0.035));
+            for plank in -4..=4 {
+                commands.spawn((
+                    Mesh3d(seam.clone()),
+                    MeshMaterial3d(seam_material.clone()),
+                    Transform::from_xyz(
+                        block.center[0] + plank as f32 * block.half_size[0] * 0.22,
+                        block.center[1],
+                        block.center[2] + block.half_size[2] + 0.004,
+                    ),
+                ));
+            }
+        }
     }
     let full = materials.add(Color::srgb(1.0, 0.38, 0.045));
     let empty = materials.add(Color::srgb(0.27, 0.25, 0.22));
     for (i, position) in LOOT_POSITIONS.into_iter().enumerate() {
+        let band_mesh = meshes.add(Cuboid::new(1.12, 0.06, 1.12));
+        let band_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.16, 0.19, 0.17),
+            metallic: 0.7,
+            perceptual_roughness: 0.45,
+            ..default()
+        });
         commands.spawn((
             LootVisual(i),
             Mesh3d(meshes.add(Cuboid::new(1.1, 0.9, 1.1))),
             MeshMaterial3d(full.clone()),
             Transform::from_translation(Vec3::from(position)),
+            children![
+                (
+                    Mesh3d(band_mesh.clone()),
+                    MeshMaterial3d(band_material.clone()),
+                    Transform::from_xyz(0.0, -0.27, 0.0)
+                ),
+                (
+                    Mesh3d(band_mesh),
+                    MeshMaterial3d(band_material),
+                    Transform::from_xyz(0.0, 0.27, 0.0)
+                )
+            ],
         ));
     }
     commands.insert_resource(LootMaterials { full, empty });
@@ -419,12 +541,14 @@ fn spawn_world_model(
 
 fn spawn_lights(mut commands: Commands) {
     commands.insert_resource(GlobalAmbientLight {
-        brightness: 300.0,
+        brightness: 190.0,
+        color: Color::srgb(0.65, 0.78, 1.0),
         ..default()
     });
     commands.spawn((
         DirectionalLight {
             illuminance: 12000.0,
+            color: Color::srgb(1.0, 0.89, 0.72),
             shadow_maps_enabled: true,
             ..default()
         },
@@ -499,38 +623,9 @@ fn sync_local_player_rotation(
     player_transform.rotation = Quat::from_rotation_y(player_input.camera.yaw);
 }
 
-fn sync_player_visuals(
-    parents: Query<&ChildOf, With<PlayerBodyVisual>>,
-    player_states: Query<&PlayerVisualState>,
-    mut query: Query<(Entity, &mut Transform, &mut Visibility), With<PlayerBodyVisual>>,
-) {
-    for (entity, mut transform, mut visibility) in query.iter_mut() {
-        let Ok(parent) = parents.get(entity) else {
-            continue;
-        };
-        let Ok(visual_state) = player_states.get(parent.0) else {
-            continue;
-        };
-
-        *visibility = if visual_state.alive {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-
-        if visual_state.crouched {
-            transform.translation.y = 0.0;
-            transform.scale = Vec3::new(1.0, PLAYER_CROUCH_SCALE, 1.0);
-        } else {
-            transform.translation.y = 0.0;
-            transform.scale = Vec3::ONE;
-        }
-    }
-}
-
 fn sync_local_alive_visibility(
     player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
-    mut overlays: Query<&mut Visibility, Or<(With<Crosshair>, With<AmmoHud>, With<ViewArm>)>>,
+    mut overlays: Query<&mut Visibility, Or<(With<Crosshair>, With<AmmoHud>)>>,
 ) {
     for mut visibility in overlays.iter_mut() {
         *visibility = if player_state.alive {
@@ -543,15 +638,21 @@ fn sync_local_alive_visibility(
 
 fn sync_view_weapon_visibility(
     player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
+    session: Res<ClientSession>,
+    id: Res<PlayerId>,
     mut query: Query<(&WeaponViewModel, &Children, &mut Visibility)>,
     mut mesh_roots: Query<&mut Visibility, (With<WeaponMeshRoot>, Without<WeaponViewModel>)>,
 ) {
+    let usable = session
+        .local(id.0)
+        .is_none_or(|p| p.body.anatomy.capacity(common::combat::Region::RightArm) > 0.0);
     for (weapon_view, children, mut visibility) in query.iter_mut() {
-        let weapon_visibility = if player_state.alive && weapon_view.weapon == player_state.weapon {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
+        let weapon_visibility =
+            if player_state.alive && usable && weapon_view.weapon == player_state.weapon {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
 
         *visibility = weapon_visibility;
 
@@ -596,60 +697,11 @@ fn sync_barrel_laser(
 }
 
 pub fn player_body_mesh(
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    bot: bool,
+    _meshes: &mut Assets<Mesh>,
+    _materials: &mut Assets<StandardMaterial>,
+    _bot: bool,
 ) -> impl Bundle {
-    let material = materials.add(if bot {
-        Color::srgb(0.75, 0.13, 0.1)
-    } else {
-        Color::srgb(0.1, 0.55, 0.65)
-    });
-    let head = materials.add(Color::srgb(0.75, 0.61, 0.45));
-    let part = |mesh: Handle<Mesh>, material: Handle<StandardMaterial>, translation: Vec3| {
-        (
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::from_translation(translation),
-        )
-    };
-    (
-        PlayerBodyVisual,
-        Transform::default(),
-        Visibility::Inherited,
-        children![
-            part(
-                meshes.add(Cuboid::new(0.46, 0.65, 0.35)),
-                material.clone(),
-                Vec3::new(0.0, 0.1, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.38, 0.35, 0.35)),
-                head,
-                Vec3::new(0.0, 0.6, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.12, 0.55, 0.18)),
-                material.clone(),
-                Vec3::new(-0.29, 0.05, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.12, 0.55, 0.18)),
-                material.clone(),
-                Vec3::new(0.29, 0.05, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.18, 0.5, 0.22)),
-                material.clone(),
-                Vec3::new(-0.13, -0.55, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.18, 0.5, 0.22)),
-                material,
-                Vec3::new(0.13, -0.55, 0.0)
-            ),
-        ],
-    )
+    actors::body()
 }
 
 fn sync_loot_visuals(
@@ -663,5 +715,24 @@ fn sync_loot_visuals(
         } else {
             materials.empty.clone()
         };
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+    #[test]
+    fn both_grips_remain_inside_the_default_first_person_view() {
+        for weapon in [WeaponKind::Rifle, WeaponKind::Smg, WeaponKind::Pistol] {
+            for grip in [
+                Vec3::new(0.025, -0.13, 0.10),
+                Vec3::new(-0.07, -0.06, -0.22),
+            ] {
+                let p = view_model_translation(weapon) + grip;
+                assert!(p.z < 0.0);
+                assert!(p.y.abs() / (-p.z) < 0.8, "{weapon:?}: {p:?}");
+                assert!(p.x.abs() / (-p.z) < 1.5);
+            }
+        }
     }
 }

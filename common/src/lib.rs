@@ -10,7 +10,7 @@ use bevy_renet2::{netcode::NetcodeTransportError, prelude::ClientId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 1;
+pub const PROTOCOL_ID: u64 = 2;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
 pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;
@@ -74,6 +74,7 @@ pub struct ClientData {
     pub armor: combat::ArmorState,
     pub participant: raid::Participant,
     pub bot: bool,
+    pub pose: humanoid::PoseState,
 }
 
 #[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
@@ -239,6 +240,20 @@ pub struct ProjectileData {
 pub struct FiredProjectileData {
     pub id: u64,
     pub weapon: WeaponKind,
+    pub shooter: u64,
+    pub time: f32,
+    pub muzzle: [f32; 3],
+    pub direction: [f32; 3],
+}
+
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+pub struct PhysicsPieceData {
+    pub id: u64,
+    pub owner: u64,
+    pub segment: humanoid::Segment,
+    pub pose: humanoid::SegmentPose,
+    pub detached: bool,
+    pub bot: bool,
 }
 
 #[derive(Debug, Archive, Serialize, Deserialize, Clone)]
@@ -256,6 +271,8 @@ pub struct WorldSnapshot {
     pub projectiles: Vec<ProjectileData>,
     pub impact_marks: Vec<ImpactMarkData>,
     pub fired_projectiles: Vec<FiredProjectileData>,
+    pub physics_pieces: Vec<PhysicsPieceData>,
+    pub simulation_time: f32,
 }
 
 #[derive(Debug, Default, Resource)]

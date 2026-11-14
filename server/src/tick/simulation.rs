@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
+use common::humanoid::*;
 use common::{combat::*, raid::*, *};
 
 use super::{Projectile, WorldState, can_stand_up, set_crouched_state};
@@ -12,6 +13,7 @@ pub(super) fn physx_tick(
         Entity,
         &ClientInput,
         &BodyHealth,
+        &PoseState,
         &Participant,
         &mut MovementState,
         &mut Collider,
@@ -28,6 +30,7 @@ pub(super) fn physx_tick(
         entity,
         input,
         body,
+        pose,
         player,
         mut movement,
         mut collider,
@@ -39,6 +42,13 @@ pub(super) fn physx_tick(
         if raid.phase != RaidPhase::Active || player.status != RaidStatus::Active || !body.alive() {
             movement.velocity = Vec3::ZERO;
             controller.translation = None;
+            continue;
+        }
+        if matches!(pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering) {
+            movement.velocity.x *= 0.92;
+            movement.velocity.z *= 0.92;
+            movement.velocity.y -= PLAYER_GRAVITY * delta;
+            controller.translation = Some(movement.velocity * delta);
             continue;
         }
         if input.crouch && !movement.crouched {
@@ -56,7 +66,7 @@ pub(super) fn physx_tick(
         let horizontal = Vec3::new(movement.velocity.x, 0.0, movement.velocity.z);
         let speed = if movement.crouched {
             PLAYER_CROUCH_SPEED
-        } else if input.run {
+        } else if input.run && body.anatomy.vigor > 10.0 && body.anatomy.speed() > 0.6 {
             PLAYER_RUN_SPEED
         } else {
             PLAYER_WALK_SPEED
@@ -81,10 +91,19 @@ pub(super) fn physx_tick(
                 * control;
         movement.velocity.x = horizontal.x;
         movement.velocity.z = horizontal.z;
+        if pose.mode == PhysicalMode::Stumbling {
+            let impulse = Vec3::from(pose.impulse);
+            movement.velocity.x += impulse.x * delta * 3.0;
+            movement.velocity.z += impulse.z * delta * 3.0;
+        }
         if grounded {
             movement.velocity.y = movement.velocity.y.max(0.0);
-            if input.jump && !movement.jump_queued {
-                movement.velocity.y = PLAYER_JUMP_SPEED;
+            if input.jump
+                && !movement.jump_queued
+                && body.anatomy.speed() > 0.4
+                && body.anatomy.vigor > 10.0
+            {
+                movement.velocity.y = PLAYER_JUMP_SPEED * body.anatomy.speed().sqrt();
                 movement.grounded = false;
                 movement.jump_queued = true;
             }
@@ -111,6 +130,8 @@ pub(super) fn weapons_tick(
         &Transform,
         &MovementState,
         &BodyHealth,
+        &Client,
+        &PoseState,
         &Participant,
         &mut Arsenal,
     )>,
@@ -118,12 +139,23 @@ pub(super) fn weapons_tick(
     let Ok(context) = context.single() else {
         return;
     };
-    for (entity, input, transform, movement, body, player, mut arsenal) in &mut query {
+    for (entity, input, transform, movement, body, client, pose, player, mut arsenal) in &mut query
+    {
         if raid.phase != RaidPhase::Active || player.status != RaidStatus::Active || !body.alive() {
             arsenal.synchronize_sequences(input);
+            arsenal.reload_remaining = 0.0;
             continue;
         }
-        let Some(weapon) = arsenal.step(input, time.delta_secs(), time.elapsed_secs()) else {
+        if matches!(pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering)
+            || body.anatomy.capacity(Region::RightArm) <= 0.0
+        {
+            arsenal.synchronize_sequences(input);
+            arsenal.reload_remaining = 0.0;
+            continue;
+        }
+        let handling = 0.45 + body.anatomy.handling() * 0.55;
+        let Some(weapon) = arsenal.step(input, time.delta_secs() * handling, time.elapsed_secs())
+        else {
             continue;
         };
         let rotation = Quat::from(&input.camera);
@@ -146,6 +178,10 @@ pub(super) fn weapons_tick(
                 barrel.length(),
                 true,
                 QueryFilter::new()
+                    .groups(CollisionGroups::new(
+                        Group::ALL,
+                        Group::GROUP_1 | Group::GROUP_3,
+                    ))
                     .exclude_collider(entity)
                     .exclude_sensors(),
             )
@@ -164,9 +200,14 @@ pub(super) fn weapons_tick(
             },
             Transform::from_translation(if obstructed { eye } else { muzzle }),
         ));
-        world_state
-            .fired_projectiles
-            .push(FiredProjectileData { id, weapon });
+        world_state.fired_projectiles.push(FiredProjectileData {
+            id,
+            weapon,
+            shooter: client.id,
+            time: time.elapsed_secs(),
+            muzzle: muzzle.into(),
+            direction: direction.into(),
+        });
     }
 }
 
@@ -178,15 +219,20 @@ pub(super) fn projectiles_tick(
     mut projectiles: Query<(Entity, &mut Projectile, &mut Transform)>,
     mut players: Query<
         (
+            Entity,
             &mut BodyHealth,
             &mut ArmorState,
             &mut MovementState,
             &Transform,
             &Participant,
+            Option<&mut PoseState>,
+            Option<&Client>,
+            Has<super::Bot>,
         ),
         Without<Projectile>,
     >,
     surfaces: Query<(&SurfaceKind, &Collider, &Transform), Without<Projectile>>,
+    physics_pieces: Query<(), With<super::physical::PhysicsPiece>>,
 ) {
     let Ok(context) = context.single() else {
         return;
@@ -205,35 +251,92 @@ pub(super) fn projectiles_tick(
             }
             let predicate = |hit_entity, _: &_| {
                 !projectile.penetrated.contains(&hit_entity)
-                    && players.get(hit_entity).map_or(true, |(body, _, _, _, p)| {
-                        body.alive() && p.status == RaidStatus::Active
-                    })
+                    && players.get(hit_entity).is_err()
+                    && physics_pieces.get(hit_entity).is_err()
             };
             let filter = QueryFilter::new()
                 .exclude_collider(projectile.owner_entity)
                 .exclude_sensors()
                 .predicate(&predicate);
-            let Some((hit_entity, hit)) =
-                context.cast_ray_and_get_normal(start, direction, remaining, true, filter)
-            else {
-                break;
-            };
-            if let Ok((mut body, mut armor, mut movement, player_transform, _)) =
-                players.get_mut(hit_entity)
-            {
-                let mut point = player_transform.rotation.inverse()
-                    * (hit.point - player_transform.translation);
-                if movement.crouched {
-                    point.y /= PLAYER_CROUCH_SCALE;
+            let wall = context.cast_ray_and_get_normal(start, direction, remaining, true, filter);
+            let max = wall.as_ref().map_or(remaining, |(_, h)| h.time_of_impact);
+            let mut nearest = None;
+            for (target, body, _, movement, t, p, pose, _, _) in &players {
+                if target == projectile.owner_entity
+                    || !body.alive()
+                    || p.status != RaidStatus::Active
+                {
+                    continue;
                 }
-                let part = BodyPart::at_local_point(point);
-                body.hit(part, projectile.damage, projectile.penetration, &mut armor);
-                if !body.alive() {
-                    movement.velocity = Vec3::ZERO;
+                let fallback = PoseState {
+                    crouch: if movement.crouched { 1.0 } else { 0.0 },
+                    ..default()
+                };
+                let pose = evaluate_pose(
+                    pose.as_deref().unwrap_or(&fallback),
+                    body.anatomy.capacity(Region::LeftLeg),
+                    body.anatomy.capacity(Region::RightLeg),
+                );
+                let inv = t.rotation.inverse();
+                let local = inv * (start - t.translation);
+                if let Some((segment, distance, _)) =
+                    ray_segments(local, inv * direction, max, &pose, body.anatomy.missing)
+                        .first()
+                        .copied()
+                {
+                    if nearest
+                        .as_ref()
+                        .is_none_or(|(_, _, d): &(Entity, Segment, f32)| distance < *d)
+                    {
+                        nearest = Some((target, segment, distance));
+                    }
+                }
+            }
+            if let Some((target, segment, _)) = nearest {
+                let (_, mut body, mut armor, movement, t, _, mut pose, client, bot) =
+                    players.get_mut(target).unwrap();
+                let fallback = PoseState {
+                    crouch: if movement.crouched { 1.0 } else { 0.0 },
+                    ..default()
+                };
+                let rig = evaluate_pose(
+                    pose.as_deref().unwrap_or(&fallback),
+                    body.anatomy.capacity(Region::LeftLeg),
+                    body.anatomy.capacity(Region::RightLeg),
+                );
+                let inv = t.rotation.inverse();
+                let mask = body.hit_anatomy(
+                    segment,
+                    projectile.damage,
+                    projectile.penetration,
+                    &mut armor,
+                    inv * (start - t.translation),
+                    inv * direction,
+                    max,
+                    &rig,
+                );
+                if let Some(pose) = pose.as_deref_mut() {
+                    pose.impulse =
+                        (Vec3::from(pose.impulse) + direction * projectile.damage * 0.028).into();
+                }
+                if mask != 0 {
+                    super::physical::spawn_fragments(
+                        &mut commands,
+                        &mut world_state,
+                        mask,
+                        &rig,
+                        t,
+                        movement.velocity + direction * 3.0,
+                        client.map_or(0, |c| c.id),
+                        bot,
+                    );
                 }
                 stopped = true;
                 break;
             }
+            let Some((hit_entity, hit)) = wall else {
+                break;
+            };
             world_state.impact(hit.point, hit.normal);
             let Ok((surface, collider, surface_transform)) = surfaces.get(hit_entity) else {
                 stopped = true;
@@ -282,9 +385,19 @@ pub(super) fn projectiles_tick(
 }
 
 pub(super) fn sync_ground_state(
-    mut query: Query<(&mut MovementState, &KinematicCharacterControllerOutput)>,
+    mut query: Query<(
+        &mut MovementState,
+        &KinematicCharacterControllerOutput,
+        &mut PoseState,
+    )>,
 ) {
-    for (mut movement, output) in &mut query {
+    for (mut movement, output, mut pose) in &mut query {
+        if output.grounded && !movement.grounded && movement.velocity.y < -2.0 {
+            pose.landing = (-movement.velocity.y / 10.0).min(1.0);
+            if movement.velocity.y < -9.0 {
+                pose.impulse = [3.0, 0.0, 0.0];
+            }
+        }
         movement.grounded = output.grounded;
         if output.grounded && movement.velocity.y < 0.0 {
             movement.velocity.y = 0.0;
