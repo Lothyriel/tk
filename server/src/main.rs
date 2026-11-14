@@ -42,7 +42,10 @@ impl bevy::prelude::Plugin for ServerPlugin {
 }
 
 fn renet_init() -> (RenetServer, NetcodeServerTransport) {
-    let public_addr = (Ipv4Addr::UNSPECIFIED, DEFAULT_PORT).into();
+    let port = std::env::var("TK_PORT")
+        .map(|value| value.parse::<u16>().expect("Valid TK_PORT"))
+        .unwrap_or(DEFAULT_PORT);
+    let public_addr = (Ipv4Addr::UNSPECIFIED, port).into();
 
     info!("Starting server on: {:?}", public_addr);
 

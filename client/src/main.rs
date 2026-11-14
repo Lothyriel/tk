@@ -11,18 +11,49 @@ use bevy_renet2::{
 };
 use common::*;
 
+mod hud;
 mod input;
 mod render;
 mod sync;
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins.set(AssetPlugin {
-            file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../assets").into(),
-            ..default()
-        }))
-        .add_plugins(ClientPlugin)
-        .run();
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(AssetPlugin {
+                file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../assets").into(),
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "TK | Extraction Alpha".into(),
+                    resolution: (1280, 800).into(),
+                    ..default()
+                }),
+                ..default()
+            }),
+    )
+    .configure_sets(
+        Update,
+        (
+            ClientSystems::Receive,
+            ClientSystems::Input,
+            ClientSystems::Send,
+            ClientSystems::Present,
+        )
+            .chain(),
+    )
+    .add_plugins(ClientPlugin)
+    .add_plugins(hud::Plugin);
+    app.run();
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+enum ClientSystems {
+    Receive,
+    Input,
+    Send,
+    Present,
 }
 
 struct ClientPlugin;
@@ -57,11 +88,14 @@ fn renet_init() -> (RenetClient, NetcodeClientTransport, u64) {
         .parse()
         .expect("Valid SERVER_ADDR");
 
-    let server_socket = SocketAddr::new(server_addr, DEFAULT_PORT);
+    let port = std::env::var("TK_PORT")
+        .map(|value| value.parse::<u16>().expect("Valid TK_PORT"))
+        .unwrap_or(DEFAULT_PORT);
+    let server_socket = SocketAddr::new(server_addr, port);
 
     info!("Connecting on {}", server_socket);
 
-    let client_id = rand::random();
+    let client_id = rand::random::<u64>() & ((1_u64 << 63) - 1);
 
     let authentication = ClientAuthentication::Unsecure {
         client_id,

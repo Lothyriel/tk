@@ -1,11 +1,14 @@
+// Keep Bevy's access filters visible in the system signature.
+#![allow(clippy::type_complexity)]
+use crate::{ClientSystems, sync::ClientSession};
 use bevy::{
-    camera::visibility::RenderLayers, color::palettes::tailwind, light::NotShadowCaster,
-    prelude::*,
+    camera::visibility::RenderLayers, color::palettes::tailwind, light::NotShadowCaster, prelude::*,
 };
 use common::{
-    Client, LocalInput, LocalPlayer, Lobby, PlayerId, PlayerVisualState, WeaponKind, PLAYER_CROUCH_SCALE,
-    PLAYER_CROUCH_VIEW_OFFSET,
+    Client, Lobby, LocalInput, LocalPlayer, PLAYER_CROUCH_SCALE, PLAYER_CROUCH_VIEW_OFFSET,
+    PLAYER_VIEW_HEIGHT, PlayerId, PlayerVisualState, WeaponKind,
 };
+use common::{combat::SurfaceKind, map::*, raid::EXTRACTION_RADIUS};
 
 pub struct Plugin;
 
@@ -30,7 +33,9 @@ impl bevy::prelude::Plugin for Plugin {
                 sync_view_weapon_visibility,
                 sync_ammo_hud,
                 sync_barrel_laser,
-            ),
+                sync_loot_visuals,
+            )
+                .in_set(ClientSystems::Present),
         );
     }
 }
@@ -77,6 +82,18 @@ struct WeaponMeshRoot;
 #[derive(Debug, Component)]
 struct BarrelLaser;
 
+#[derive(Component)]
+struct ViewArm;
+
+#[derive(Component)]
+struct LootVisual(usize);
+
+#[derive(Resource)]
+struct LootMaterials {
+    full: Handle<StandardMaterial>,
+    empty: Handle<StandardMaterial>,
+}
+
 const DEFAULT_RENDER_LAYER: usize = 0;
 const VIEW_MODEL_RENDER_LAYER: usize = 1;
 const BARREL_LASER_LENGTH: f32 = 25.0;
@@ -113,6 +130,12 @@ fn spawn_view_model(
                     WeaponKind::Pistol,
                     Visibility::Hidden,
                 ),
+                weapon_view_model(
+                    &mut meshes,
+                    &mut materials,
+                    WeaponKind::Smg,
+                    Visibility::Hidden
+                ),
             ],
             PlayerVisualState {
                 alive: true,
@@ -131,6 +154,7 @@ fn world_camera() -> impl Bundle {
         BaseLocalOffset(Vec3::ZERO),
         WorldModelCamera,
         Camera3d::default(),
+        IsDefaultUiCamera,
         Transform::default(),
         Projection::from(PerspectiveProjection {
             fov: 90.0_f32.to_radians(),
@@ -147,6 +171,7 @@ fn view_model_camera() -> impl Bundle {
         Camera3d::default(),
         Camera {
             order: 1,
+            clear_color: ClearColorConfig::None,
             ..default()
         },
         Transform::default(),
@@ -162,12 +187,17 @@ fn player_right_arm(arm: Handle<Mesh>, arm_material: Handle<StandardMaterial>) -
     let translation = Vec3::new(0.34, -0.2, -0.08);
 
     (
+        ViewArm,
         LocalView,
         BaseLocalOffset(translation),
         Mesh3d(arm),
         MeshMaterial3d(arm_material),
-        Transform::from_translation(translation)
-            .with_rotation(Quat::from_euler(EulerRot::XYZ, -0.25, 0.18, -0.55)),
+        Transform::from_translation(translation).with_rotation(Quat::from_euler(
+            EulerRot::XYZ,
+            -0.25,
+            0.18,
+            -0.55,
+        )),
         RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
         NotShadowCaster,
     )
@@ -256,7 +286,8 @@ fn weapon_view_model(
                 Mesh3d(laser_mesh),
                 MeshMaterial3d(laser_material),
                 Transform::from_translation(
-                    Vec3::from(spec.barrel_offset) + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5),
+                    Vec3::from(spec.barrel_offset)
+                        + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5),
                 ),
                 RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
                 NotShadowCaster,
@@ -343,33 +374,61 @@ fn spawn_world_model(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let floor = meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(10.0)));
-    let cube = meshes.add(Cuboid::new(2.0, 0.5, 1.0));
-    let material = materials.add(Color::WHITE);
-
-    commands.spawn((Mesh3d(floor), MeshMaterial3d(material.clone())));
-
+    commands.insert_resource(ClearColor(Color::srgb(0.18, 0.27, 0.35)));
+    for (i, block) in BLOCKS.iter().enumerate() {
+        let color = match block.surface {
+            SurfaceKind::Wood => Color::srgb(0.48, 0.27, 0.1),
+            SurfaceKind::Concrete if i == 0 => Color::srgb(0.2, 0.24, 0.25),
+            SurfaceKind::Concrete => Color::srgb(0.43, 0.49, 0.53),
+        };
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::from_size(Vec3::from(block.half_size) * 2.0))),
+            MeshMaterial3d(materials.add(color)),
+            Transform::from_translation(Vec3::from(block.center)),
+        ));
+    }
+    let full = materials.add(Color::srgb(1.0, 0.38, 0.045));
+    let empty = materials.add(Color::srgb(0.27, 0.25, 0.22));
+    for (i, position) in LOOT_POSITIONS.into_iter().enumerate() {
+        commands.spawn((
+            LootVisual(i),
+            Mesh3d(meshes.add(Cuboid::new(1.1, 0.9, 1.1))),
+            MeshMaterial3d(full.clone()),
+            Transform::from_translation(Vec3::from(position)),
+        ));
+    }
+    commands.insert_resource(LootMaterials { full, empty });
+    let green = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.05, 0.9, 0.35),
+        emissive: LinearRgba::rgb(0.0, 2.0, 0.3),
+        ..default()
+    });
     commands.spawn((
-        Mesh3d(cube.clone()),
-        MeshMaterial3d(material.clone()),
-        Transform::from_xyz(0.0, 0.25, -3.0),
+        Mesh3d(meshes.add(Cylinder::new(EXTRACTION_RADIUS, 0.04))),
+        MeshMaterial3d(green.clone()),
+        Transform::from_translation(Vec3::from(EXTRACTION_CENTER)),
     ));
-
-    commands.spawn((
-        Mesh3d(cube),
-        MeshMaterial3d(material),
-        Transform::from_xyz(0.75, 1.75, 0.0),
-    ));
+    for x in [-EXTRACTION_RADIUS, EXTRACTION_RADIUS] {
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(0.16, 4.0, 0.16))),
+            MeshMaterial3d(green.clone()),
+            Transform::from_xyz(x, 2.1, EXTRACTION_CENTER[2]),
+        ));
+    }
 }
 
 fn spawn_lights(mut commands: Commands) {
+    commands.insert_resource(GlobalAmbientLight {
+        brightness: 300.0,
+        ..default()
+    });
     commands.spawn((
-        PointLight {
-            color: Color::from(tailwind::ROSE_300),
+        DirectionalLight {
+            illuminance: 12000.0,
             shadow_maps_enabled: true,
             ..default()
         },
-        Transform::from_xyz(-2.0, 4.0, -0.75),
+        Transform::from_xyz(-10.0, 15.0, 8.0).looking_at(Vec3::ZERO, Vec3::Y),
         RenderLayers::from_layers(&[DEFAULT_RENDER_LAYER, VIEW_MODEL_RENDER_LAYER]),
     ));
 }
@@ -429,7 +488,7 @@ fn sync_local_view(
 
     for (base_offset, mut transform) in query.iter_mut() {
         transform.rotation = rotation;
-        transform.translation = base_offset.0 + Vec3::Y * vertical_offset;
+        transform.translation = base_offset.0 + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset);
     }
 }
 
@@ -460,10 +519,10 @@ fn sync_player_visuals(
         };
 
         if visual_state.crouched {
-            transform.translation.y = -0.5 * PLAYER_CROUCH_SCALE;
+            transform.translation.y = 0.0;
             transform.scale = Vec3::new(1.0, PLAYER_CROUCH_SCALE, 1.0);
         } else {
-            transform.translation.y = -0.5;
+            transform.translation.y = 0.0;
             transform.scale = Vec3::ONE;
         }
     }
@@ -471,7 +530,7 @@ fn sync_player_visuals(
 
 fn sync_local_alive_visibility(
     player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
-    mut overlays: Query<&mut Visibility, Or<(With<Crosshair>, With<AmmoHud>)>>,
+    mut overlays: Query<&mut Visibility, Or<(With<Crosshair>, With<AmmoHud>, With<ViewArm>)>>,
 ) {
     for mut visibility in overlays.iter_mut() {
         *visibility = if player_state.alive {
@@ -537,13 +596,72 @@ fn sync_barrel_laser(
 }
 
 pub fn player_body_mesh(
-    mesh: Handle<Mesh>,
-    material: Handle<StandardMaterial>,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    bot: bool,
 ) -> impl Bundle {
+    let material = materials.add(if bot {
+        Color::srgb(0.75, 0.13, 0.1)
+    } else {
+        Color::srgb(0.1, 0.55, 0.65)
+    });
+    let head = materials.add(Color::srgb(0.75, 0.61, 0.45));
+    let part = |mesh: Handle<Mesh>, material: Handle<StandardMaterial>, translation: Vec3| {
+        (
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            Transform::from_translation(translation),
+        )
+    };
     (
         PlayerBodyVisual,
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-        Transform::from_xyz(0.0, -0.5, 0.0),
+        Transform::default(),
+        Visibility::Inherited,
+        children![
+            part(
+                meshes.add(Cuboid::new(0.46, 0.65, 0.35)),
+                material.clone(),
+                Vec3::new(0.0, 0.1, 0.0)
+            ),
+            part(
+                meshes.add(Cuboid::new(0.38, 0.35, 0.35)),
+                head,
+                Vec3::new(0.0, 0.6, 0.0)
+            ),
+            part(
+                meshes.add(Cuboid::new(0.12, 0.55, 0.18)),
+                material.clone(),
+                Vec3::new(-0.29, 0.05, 0.0)
+            ),
+            part(
+                meshes.add(Cuboid::new(0.12, 0.55, 0.18)),
+                material.clone(),
+                Vec3::new(0.29, 0.05, 0.0)
+            ),
+            part(
+                meshes.add(Cuboid::new(0.18, 0.5, 0.22)),
+                material.clone(),
+                Vec3::new(-0.13, -0.55, 0.0)
+            ),
+            part(
+                meshes.add(Cuboid::new(0.18, 0.5, 0.22)),
+                material,
+                Vec3::new(0.13, -0.55, 0.0)
+            ),
+        ],
     )
+}
+
+fn sync_loot_visuals(
+    session: Res<ClientSession>,
+    materials: Res<LootMaterials>,
+    mut crates: Query<(&LootVisual, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    for (visual, mut material) in &mut crates {
+        material.0 = if session.raid.loot_available[visual.0] {
+            materials.full.clone()
+        } else {
+            materials.empty.clone()
+        };
+    }
 }

@@ -1,134 +1,296 @@
-use std::f32::consts::FRAC_PI_2;
-
 use bevy::{
     input::mouse::AccumulatedMouseMotion,
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
-use common::{CameraInput, LocalInput, WeaponKind};
+use common::{combat::*, raid::*, *};
+
+use crate::{ClientSystems, sync::ClientSession};
 
 pub struct Plugin;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub(crate) struct InputCapture;
+
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LocalInput>()
-            .init_resource::<InputSequencing>()
-            .init_resource::<CameraSensitivity>()
-            .add_systems(Startup, setup_cursor)
-            .add_systems(Update, (keyboard, mouse, weapon_switch));
+        app.init_resource::<LocalInput>().add_systems(
+            Update,
+            (cursor_control, keyboard, mouse)
+                .chain()
+                .in_set(InputCapture)
+                .in_set(ClientSystems::Input),
+        );
     }
 }
 
-fn setup_cursor(mut q: Single<&mut CursorOptions, With<PrimaryWindow>>) {
-    q.visible = false;
-    q.grab_mode = CursorGrabMode::Locked;
+fn cursor_control(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    session: Res<ClientSession>,
+    id: Res<PlayerId>,
+    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut was_active: Local<bool>,
+) {
+    let active = session.playing(id.0);
+    if active && !*was_active {
+        cursor.grab_mode = CursorGrabMode::Locked;
+    }
+    if !active {
+        cursor.grab_mode = CursorGrabMode::None;
+    }
+    if active && keyboard.just_pressed(KeyCode::Escape) {
+        cursor.grab_mode = if cursor.grab_mode == CursorGrabMode::None {
+            CursorGrabMode::Locked
+        } else {
+            CursorGrabMode::None
+        };
+    }
+    cursor.visible = cursor.grab_mode == CursorGrabMode::None;
+    *was_active = active;
 }
 
 fn keyboard(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    mut sequencing: ResMut<InputSequencing>,
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    session: Res<ClientSession>,
+    id: Res<PlayerId>,
+    time: Res<Time<Real>>,
+    window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
 ) {
-    input.forward = keyboard.pressed(KeyCode::KeyW);
-    input.left = keyboard.pressed(KeyCode::KeyA);
-    input.backward = keyboard.pressed(KeyCode::KeyS);
-    input.right = keyboard.pressed(KeyCode::KeyD);
-    input.run = keyboard.pressed(KeyCode::ShiftLeft);
-    input.crouch = keyboard.pressed(KeyCode::ControlLeft);
-
-    input.jump = keyboard.pressed(KeyCode::Space);
-    input.fire = mouse.pressed(MouseButton::Left);
-
-    if mouse.just_pressed(MouseButton::Left) {
-        sequencing.fire_pressed_sequence = sequencing.fire_pressed_sequence.wrapping_add(1);
+    let active = session.playing(id.0)
+        && window.0.focused
+        && window.1.grab_mode != CursorGrabMode::None
+        && time.elapsed_secs_f64() - session.last_received < 2.0;
+    input.forward = active && keys.pressed(KeyCode::KeyW);
+    input.backward = active && keys.pressed(KeyCode::KeyS);
+    input.left = active && keys.pressed(KeyCode::KeyA);
+    input.right = active && keys.pressed(KeyCode::KeyD);
+    input.run = active && keys.pressed(KeyCode::ShiftLeft);
+    input.crouch = active && keys.pressed(KeyCode::ControlLeft);
+    input.jump = active && keys.pressed(KeyCode::Space);
+    input.interact = active && keys.pressed(KeyCode::KeyF);
+    input.fire = active && buttons.pressed(MouseButton::Left);
+    if active && buttons.just_pressed(MouseButton::Left) {
+        input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
     }
-
-    if keyboard.just_pressed(KeyCode::KeyR) {
-        sequencing.reload_sequence = sequencing.reload_sequence.wrapping_add(1);
+    if active && keys.just_pressed(KeyCode::KeyR) {
+        input.reload_sequence = input.reload_sequence.wrapping_add(1);
     }
-
-    if keyboard.just_pressed(KeyCode::Space) {
-        sequencing.respawn_sequence = sequencing.respawn_sequence.wrapping_add(1);
+    input.camera.roll = if active {
+        (keys.pressed(KeyCode::KeyQ) as i8 - keys.pressed(KeyCode::KeyE) as i8) as f32 * 0.3
+    } else {
+        0.0
+    };
+    if keys.just_pressed(KeyCode::Enter) {
+        input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
     }
-
-    input.respawn_sequence = sequencing.respawn_sequence;
-    input.fire_pressed_sequence = sequencing.fire_pressed_sequence;
-    input.reload_sequence = sequencing.reload_sequence;
-
-    const MAX_ROLL_ANGLE: f32 = 0.3;
-
-    let left = keyboard.pressed(KeyCode::KeyQ) as i8;
-    let right = keyboard.pressed(KeyCode::KeyE) as i8;
-
-    input.camera.roll = (left - right) as f32 * MAX_ROLL_ANGLE;
-}
-
-fn weapon_switch(keyboard: Res<ButtonInput<KeyCode>>, mut input: ResMut<LocalInput>) {
-    if keyboard.just_pressed(KeyCode::Digit1) {
-        input.weapon = WeaponKind::Rifle;
-    }
-
-    if keyboard.just_pressed(KeyCode::Digit2) {
-        input.weapon = WeaponKind::Pistol;
+    if let Some(local) = session.local(id.0) {
+        if keys.just_pressed(KeyCode::Enter)
+            && session.raid.phase == RaidPhase::Lobby
+            && !local.participant.ready
+        {
+            input.weapon = input.loadout.primary;
+        }
+        if active && keys.just_pressed(KeyCode::Digit1) {
+            input.weapon = local.participant.loadout.primary;
+        }
+        if active && keys.just_pressed(KeyCode::Digit2) {
+            input.weapon = WeaponKind::Pistol;
+        }
+        if session.raid.phase == RaidPhase::Lobby && !local.participant.ready {
+            if keys.just_pressed(KeyCode::KeyG) {
+                input.loadout.primary = if input.loadout.primary == WeaponKind::Rifle {
+                    WeaponKind::Smg
+                } else {
+                    WeaponKind::Rifle
+                };
+                input.weapon = input.loadout.primary;
+            }
+            if keys.just_pressed(KeyCode::KeyB) {
+                input.loadout.ammo = if input.loadout.ammo == AmmoKind::Ball {
+                    AmmoKind::Ap
+                } else {
+                    AmmoKind::Ball
+                };
+            }
+            if keys.just_pressed(KeyCode::KeyH) {
+                input.loadout.armor = match input.loadout.armor {
+                    ArmorKind::None => ArmorKind::Light,
+                    ArmorKind::Light => ArmorKind::Heavy,
+                    ArmorKind::Heavy => ArmorKind::None,
+                };
+            }
+            if keys.just_pressed(KeyCode::KeyJ) {
+                input.loadout.helmet = !input.loadout.helmet;
+            }
+        }
     }
 }
 
 fn mouse(
-    accumulated_mouse_motion: Res<AccumulatedMouseMotion>,
-    sense: Res<CameraSensitivity>,
+    motion: Res<AccumulatedMouseMotion>,
+    cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
 ) {
-    let delta = accumulated_mouse_motion.delta;
-
-    if delta == Vec2::ZERO {
+    if cursor.grab_mode == CursorGrabMode::None {
         return;
     }
-
-    // Note that we are not multiplying by delta_time here.
-    // The reason is that for mouse movement, we already get the full movement that happened since the last frame.
-    // This means that if we multiply by delta_time, we will get a smaller rotation than intended by the user.
-    // This situation is reversed when reading e.g. analog input from a gamepad however, where the same rules
-    // as for keyboard input apply. Such an input should be multiplied by delta_time to get the intended rotation
-    // independent of the framerate.
-    let delta_yaw = -delta.x * sense.x;
-    let delta_pitch = -delta.y * sense.y;
-
-    let CameraInput { yaw, pitch, roll } = input.camera;
-    let yaw = yaw + delta_yaw;
-
-    // If the pitch was +- 1/2 pi, the camera would look straight up or down.
-    // When the user wants to move the camera back to the horizon, which way should the camera face?
-    // The camera has no way of knowing what direction was "forward" before landing in that extreme position,
-    // so the direction picked will for all intents and purposes be arbitrary.
-    // Another issue is that for mathematical reasons, the yaw will effectively be flipped when the pitch is at the extremes.
-    // To not run into these issues, we clamp the pitch to a safe range.
-    const PITCH_LIMIT: f32 = FRAC_PI_2 - 0.01;
-
-    let pitch = (pitch + delta_pitch).clamp(-PITCH_LIMIT, PITCH_LIMIT);
-
-    input.camera = CameraInput { yaw, pitch, roll };
+    input.camera.yaw -= motion.delta.x * 0.003;
+    input.camera.pitch = (input.camera.pitch - motion.delta.y * 0.002).clamp(-1.56, 1.56);
 }
 
-#[derive(Debug, Resource, Deref)]
-pub struct CameraSensitivity(Vec2);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, Default, Resource)]
-struct InputSequencing {
-    respawn_sequence: u32,
-    fire_pressed_sequence: u32,
-    reload_sequence: u32,
-}
+    fn input_app() -> App {
+        let mut app = App::new();
+        let mut session = ClientSession::default();
+        session.players.push(ClientData { id: 7, ..default() });
+        app.insert_resource(session)
+            .insert_resource(PlayerId(7))
+            .init_resource::<LocalInput>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<Time<Real>>()
+            .add_systems(Update, keyboard);
+        app.world_mut().spawn((
+            PrimaryWindow,
+            Window {
+                focused: true,
+                ..default()
+            },
+            CursorOptions {
+                grab_mode: CursorGrabMode::Locked,
+                ..default()
+            },
+        ));
+        app
+    }
 
-impl Default for CameraSensitivity {
-    fn default() -> Self {
-        Self(
-            // These factors are just arbitrary mouse sensitivity values.
-            // It's often nicer to have a faster horizontal sensitivity than vertical.
-            // We use a component for them so that we can make them user-configurable at runtime
-            // for accessibility reasons.
-            // It also allows you to inspect them in an editor if you `Reflect` the component.
-            Vec2::new(0.003, 0.002),
-        )
+    #[test]
+    fn lobby_keys_select_equipment_and_ready_without_enabling_combat() {
+        let mut app = input_app();
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            for key in [
+                KeyCode::KeyG,
+                KeyCode::KeyB,
+                KeyCode::KeyH,
+                KeyCode::KeyJ,
+                KeyCode::Enter,
+                KeyCode::KeyW,
+                KeyCode::KeyF,
+            ] {
+                keys.press(key);
+            }
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        let input = app.world().resource::<LocalInput>();
+        assert_eq!(input.loadout.primary, WeaponKind::Smg);
+        assert_eq!(input.loadout.ammo, AmmoKind::Ap);
+        assert_eq!(input.loadout.armor, ArmorKind::Heavy);
+        assert!(!input.loadout.helmet);
+        assert_eq!(input.weapon, WeaponKind::Smg);
+        assert_eq!(input.lobby_sequence, 1);
+        assert!(!input.forward);
+        assert!(!input.fire);
+        assert!(!input.interact);
+        let selected = input.loadout;
+        app.world_mut().resource_mut::<ClientSession>().players[0]
+            .participant
+            .ready = true;
+        app.update();
+        assert_eq!(app.world().resource::<LocalInput>().loadout, selected);
+    }
+
+    #[test]
+    fn raid_keys_control_weapons_and_escape_releases_held_actions() {
+        let mut app = input_app();
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            for key in [
+                KeyCode::KeyW,
+                KeyCode::KeyF,
+                KeyCode::KeyR,
+                KeyCode::Digit2,
+                KeyCode::Space,
+            ] {
+                keys.press(key);
+            }
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        let input = app.world().resource::<LocalInput>();
+        assert!(input.forward && input.fire && input.interact && input.jump);
+        assert_eq!(input.weapon, WeaponKind::Pistol);
+        assert_eq!(input.fire_pressed_sequence, 1);
+        assert_eq!(input.reload_sequence, 1);
+        let entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<Window>>()
+            .single(app.world())
+            .unwrap();
+        app.world_mut()
+            .get_mut::<CursorOptions>(entity)
+            .unwrap()
+            .grab_mode = CursorGrabMode::None;
+        app.update();
+        let input = app.world().resource::<LocalInput>();
+        assert!(!input.forward && !input.fire && !input.interact && !input.jump);
+        assert_eq!(input.fire_pressed_sequence, 1);
+        assert_eq!(input.reload_sequence, 1);
+    }
+
+    #[test]
+    fn cursor_automatically_tracks_raid_and_escape_toggles_capture() {
+        let mut app = input_app();
+        app.add_systems(Update, cursor_control.before(keyboard));
+        app.update();
+        let entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<Window>>()
+            .single(app.world())
+            .unwrap();
+        assert_eq!(
+            app.world().get::<CursorOptions>(entity).unwrap().grab_mode,
+            CursorGrabMode::None
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+        app.update();
+        assert_eq!(
+            app.world().get::<CursorOptions>(entity).unwrap().grab_mode,
+            CursorGrabMode::Locked
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+        assert_eq!(
+            app.world().get::<CursorOptions>(entity).unwrap().grab_mode,
+            CursorGrabMode::None
+        );
+        assert!(app.world().get::<CursorOptions>(entity).unwrap().visible);
+        app.world_mut().resource_mut::<ClientSession>().raid.phase = RaidPhase::Debrief;
+        app.update();
+        assert_eq!(
+            app.world().get::<CursorOptions>(entity).unwrap().grab_mode,
+            CursorGrabMode::None
+        );
     }
 }
