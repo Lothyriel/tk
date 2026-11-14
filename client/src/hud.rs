@@ -20,14 +20,14 @@ fn setup(mut commands: Commands) {
     commands.spawn((
         RaidHud,
         Text::new("TK / EXTRACTION ALPHA\nConnecting to server..."),
-        TextFont::from_font_size(19.0),
+        TextFont::from_font_size(16.0),
         TextColor(Color::srgb(0.9, 0.97, 1.0)),
         BackgroundColor(Color::srgba(0.015, 0.025, 0.04, 0.88)),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(18.0),
             left: Val::Px(18.0),
-            max_width: Val::Px(680.0),
+            max_width: Val::Px(510.0),
             padding: UiRect::all(Val::Px(18.0)),
             ..default()
         },
@@ -130,6 +130,13 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
             if nearest.is_finite() {
                 text.push_str(&format!("Nearest orange crate: {:.1}m [F]\n", nearest));
             }
+            let a = &body.anatomy;
+            if a.capacity(Region::RightArm) <= 0.0 {
+                text.push_str("TRIGGER ARM DISABLED: firing and reload unavailable\n");
+            }
+            text.push_str(&format!("L/R arm {:.0}/{:.0} | L/R leg {:.0}/{:.0} | Abdomen {:.0}\nBlood {:.0}% (-{:.2}/s) Vigor {:.0}% | {:?}\nInjury {:?} / {:?} | Handling {:.0}% | Support {:.0}/{:.0}%\n",
+                a.regions[3],a.regions[4],a.regions[5],a.regions[6],a.regions[2],a.blood,a.bleed_rate(),a.vigor,local.pose.mode,
+                a.last_region,a.last_organ,a.handling()*100.0,local.pose.left_support*100.0,local.pose.right_support*100.0));
             if exit <= EXTRACTION_RADIUS {
                 text.push_str(if p.carried == 0 {
                     "EXIT: collect loot before extracting"
