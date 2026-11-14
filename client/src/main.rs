@@ -18,7 +18,7 @@ mod sync;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(AssetPlugin {
-            file_path: "../assets".into(),
+            file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../assets").into(),
             ..default()
         }))
         .add_plugins(ClientPlugin)
@@ -53,7 +53,7 @@ fn renet_init() -> (RenetClient, NetcodeClientTransport, u64) {
         .unwrap();
 
     let server_addr = std::env::var("SERVER_ADDR")
-        .expect("Missing SERVER_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1".into())
         .parse()
         .expect("Valid SERVER_ADDR");
 
