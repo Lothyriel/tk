@@ -55,6 +55,7 @@ fn renet_init() -> (RenetServer, NetcodeServerTransport) {
     let server_config = ServerSetupConfig {
         current_time,
         max_clients: 32,
+        max_token_lifetime: 30,
         protocol_id: PROTOCOL_ID,
         socket_addresses: vec![vec![public_addr]],
         authentication: ServerAuthentication::Unsecure,

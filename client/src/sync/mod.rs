@@ -33,8 +33,8 @@ impl FromWorld for WeaponAudio {
     }
 }
 
-fn send_input(player_input: Res<common::ClientInput>, mut client: ResMut<RenetClient>) {
-    let input_message = data::encode(&*player_input);
+fn send_input(player_input: Res<common::LocalInput>, mut client: ResMut<RenetClient>) {
+    let input_message = data::encode(&**player_input);
 
     client.send_message(DefaultChannel::ReliableOrdered, input_message);
 }

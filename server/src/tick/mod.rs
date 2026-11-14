@@ -576,7 +576,7 @@ fn can_stand_up(entity: Entity, rapier_context: &RapierContext<'_>, translation:
             shape_position,
             Quat::IDENTITY,
             Vec3::ZERO,
-            (&standing_shape).into(),
+            &standing_shape,
             ShapeCastOptions {
                 max_time_of_impact: 0.0,
                 stop_at_penetration: true,
