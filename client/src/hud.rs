@@ -136,7 +136,7 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
             }
             let loadout = if p.ready { &p.loadout } else { pending };
             text.push_str(&format!(
-                "\n\n[G] Primary: {}  +  Pistol\n[B] Ammo: {:?} (AP trades damage for penetration)\n[H] Vest: {:?}    [J] Helmet: {}\n\n[Enter] {}\n",
+                "\n\n[G] Primary: {}  +  Pistol\n[B] Ammo: {:?} (AP trades damage for penetration)\n[H] Vest: {:?}    [J] Helmet: {}\n[V] Configure weapon parts / magazines\n\n[Enter] {}\n",
                 loadout.primary.spec().name, loadout.ammo, loadout.armor,
                 if loadout.helmet { "ON" } else { "OFF" },
                 if p.ready { "READY - press again to cancel" } else { "Ready / deploy (solo supported)" },
@@ -183,12 +183,20 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
                 text.push_str(&format!("Nearest orange crate: {:.1}m [F]\n", nearest));
             }
             text.push_str(&format!(
-                "Selector {:?} [B] | Chamber {} | {:?} {:?} | Inspect [I]\n",
+                "Selector {:?} [B] | Chamber {} | Magazine {} | {:?} {:?} | Inspect [I]\n",
                 local.mechanics.mode,
                 if local.mechanics.chambered {
                     "loaded"
                 } else {
                     "empty"
+                },
+                if local.mechanics.magazine_inserted {
+                    local
+                        .ammo_in_mag
+                        .saturating_sub(u32::from(local.mechanics.chambered))
+                        .to_string()
+                } else {
+                    "absent".into()
                 },
                 local.mechanics.kind,
                 local.mechanics.phase
@@ -231,6 +239,30 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raid_hud_distinguishes_chamber_inserted_rounds_and_detached_magazine() {
+        let mut session = ClientSession::default();
+        session.raid.phase = RaidPhase::Active;
+        let mut local = ClientData {
+            id: 7,
+            ammo_in_mag: 31,
+            ..default()
+        };
+        local.participant.begin();
+        local.mechanics.chambered = true;
+        local.mechanics.magazine_inserted = true;
+        session.players.push(local);
+        assert!(
+            describe(&session, &Loadout::default(), 7, "").contains("Chamber loaded | Magazine 30")
+        );
+        session.players[0].mechanics.magazine_inserted = false;
+        session.players[0].ammo_in_mag = 1;
+        assert!(
+            describe(&session, &Loadout::default(), 7, "")
+                .contains("Chamber loaded | Magazine absent")
+        );
+    }
 
     #[test]
     fn performance_overlay_formats_smoothed_fps_and_frame_time() {

@@ -63,6 +63,9 @@ pub struct Configuration {
     pub instance: WeaponInstanceId,
     pub revision: u64,
     pub weapon: WeaponConfiguration,
+    /// Definitions of the owned physical pool, not ammunition counts or a
+    /// second inventory. Stable through reloads; bounded by retained magazines.
+    pub magazines: Vec<crate::catalog::DefinitionId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +90,30 @@ fn configuration_bounds(weapon: &WeaponConfiguration) -> bool {
 }
 
 impl Configuration {
+    pub fn kit(&self, catalog: &Catalog) -> Result<crate::catalog::WeaponKit, ConfigurationError> {
+        let mut reserves = self.magazines.clone();
+        let inserted = self
+            .weapon
+            .components
+            .iter()
+            .find(|part| {
+                catalog
+                    .component(part.definition)
+                    .is_some_and(|part| part.kind == crate::catalog::ComponentKind::Magazine)
+            })
+            .ok_or(ConfigurationError::Bounds)?
+            .definition;
+        let index = reserves
+            .iter()
+            .position(|definition| *definition == inserted)
+            .ok_or(ConfigurationError::Bounds)?;
+        reserves.remove(index);
+        Ok(crate::catalog::WeaponKit {
+            weapon: self.weapon.clone(),
+            reserves,
+        })
+    }
+
     /// Size is checked before aligned allocation/checked archive decoding.
     /// Semantic limits are checked before invoking the assembly resolver.
     pub fn decode(bytes: &[u8]) -> Result<Self, ConfigurationError> {
@@ -103,6 +130,8 @@ impl Configuration {
             || self.handle == 0
             || self.instance.0 == 0
             || !configuration_bounds(&self.weapon)
+            || self.magazines.is_empty()
+            || self.magazines.len() > crate::catalog::MAX_RETAINED_MAGAZINES
         {
             return Err(ConfigurationError::Bounds);
         }
@@ -248,6 +277,13 @@ impl ConfigurationCache {
             .flatten()
     }
 
+    pub fn latest(&self, owner: u64, slot: EquipmentSlot) -> Option<&CachedConfiguration> {
+        self.entries
+            .values()
+            .rev()
+            .find(|entry| entry.packet.owner == owner && entry.packet.slot == slot)
+    }
+
     /// A handle is not sufficient on its own: the snapshot must refer to the
     /// same actor, physical instance, slot and definition as the cached tree.
     pub fn matches(&self, epoch: u64, actor: &crate::ClientData) -> bool {
@@ -275,6 +311,7 @@ impl ConfigurationCache {
             return Err(ConfigurationError::Catalog);
         }
         packet.weapon.components.sort_by_key(|node| node.node);
+        packet.magazines.sort();
         if let Some(existing) = self.entries.get(&packet.handle) {
             return if existing.packet == packet {
                 Ok(false)
@@ -285,7 +322,9 @@ impl ConfigurationCache {
         for existing in self.entries.values().map(|entry| &entry.packet) {
             if existing.instance == packet.instance
                 && (existing.weapon.definition != packet.weapon.definition
-                    || existing.revision == packet.revision && existing.weapon != packet.weapon)
+                    || existing.revision == packet.revision
+                        && (existing.weapon != packet.weapon
+                            || existing.magazines != packet.magazines))
             {
                 return Err(ConfigurationError::Conflict);
             }
@@ -295,6 +334,10 @@ impl ConfigurationCache {
         }
         let resolved = catalog
             .resolve(&packet.weapon)
+            .map_err(ConfigurationError::Invalid)?;
+        packet
+            .kit(catalog)?
+            .resolve(catalog)
             .map_err(ConfigurationError::Invalid)?;
         // The complete tree and all derived properties become visible together.
         self.entries
@@ -363,7 +406,20 @@ impl ConfigurationPublisher {
                     .components
                     .iter()
                     .all(|node| weapon.components.contains(node))
-            {
+                && existing.magazines.len() == instance.mechanics.magazines().len()
+                && existing.magazines.iter().all(|definition| {
+                    existing
+                        .magazines
+                        .iter()
+                        .filter(|other| *other == definition)
+                        .count()
+                        == instance
+                            .mechanics
+                            .magazines()
+                            .iter()
+                            .filter(|m| m.definition == *definition)
+                            .count()
+                }) {
                 Ok(existing.handle)
             } else {
                 Err(ConfigurationError::Conflict)
@@ -374,6 +430,13 @@ impl ConfigurationPublisher {
         }
         let mut weapon = instance.configuration.clone();
         weapon.components.sort_by_key(|node| node.node);
+        let mut magazines: Vec<_> = instance
+            .mechanics
+            .magazines()
+            .iter()
+            .map(|m| m.definition)
+            .collect();
+        magazines.sort();
         let packet = Configuration {
             epoch: self.epoch,
             handle: self.entries.len() as u32 + 1,
@@ -383,6 +446,7 @@ impl ConfigurationPublisher {
             instance: instance.id,
             revision: instance.revision,
             weapon,
+            magazines,
         };
         packet.bounds()?;
         if data::encode(&packet).len() > MAX_CONFIGURATION_BYTES {
