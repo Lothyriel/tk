@@ -60,3 +60,17 @@ The same seeded server fixture produces identical shot times/directions with
 oracles tolerate 1e-6 rad across those render rates. Presentation tests cover
 duplicate/out-of-order state, continuous correction and convergence after delay.
 The native raid/action review is the separate rendered/network acceptance.
+
+## Delivery evidence
+
+Revision `0ef7fdf` passed the full central gate (30 Python and 242 Rust tests,
+format/check/Clippy) and both binaries built. The final native run
+`target/tar25-bounded-native/` passed with two rendered clients, real UDP and
+every third peer snapshot dropped, including raid, injuries, recovery and final
+anatomy/piece-ID convergence. Static ADS/empty/remote frames retain the sight
+aperture and equipped assembly. These paths are local artifacts.
+
+Normal-speed artistic review of single shots, short bursts and sustained fire
+is still required by TAR-25. Screenshots and deterministic fixtures do not close
+that temporal criterion. The technical implementation can be integrated while
+the card remains open for that review.
