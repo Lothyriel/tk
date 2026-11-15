@@ -63,11 +63,11 @@ Failure/ordering: stop at the first failed command and return its exit code; nev
 | --- | --- | --- | --- |
 | DEV-01 | P1 | T1 | Verified |
 | DEV-02 | P1 | T3 | Pending |
-| DEV-03 | P1 | T2 | Pending |
-| DEV-04 | P1 | T2 | Pending |
-| DEV-05 | P1 | T2 | Pending |
-| DEV-06 | P1 | T2 | Pending |
-| DEV-07 | P1 | T2 | Pending |
-| DEV-08 | P1 | T2 | Pending |
+| DEV-03 | P1 | T2 | Verified |
+| DEV-04 | P1 | T2 | Verified |
+| DEV-05 | P1 | T2 | Verified |
+| DEV-06 | P1 | T2 | Verified |
+| DEV-07 | P1 | T2 | Verified |
+| DEV-08 | P1 | T2 | Verified |
 | DEV-09 | P1 | T4 | Pending |
 | DEV-10 | P1 | T4 | Pending |
