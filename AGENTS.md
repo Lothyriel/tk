@@ -33,6 +33,7 @@ This is a three-crate Rust workspace; root `Cargo.toml` owns shared dependency v
 ## Always-on safety and verification rules
 
 - Preserve unrelated local/staged work. Never reset/discard it or include it without authorization. Stage explicit paths/hunks; preserve normal Git hooks and identity.
+- Integrate branches by rebasing the topic branch onto the target, then fast-forwarding the target to the rebased commit. Never create merge commits or use a non-fast-forward merge.
 - Derive tests from acceptance criteria. Do not weaken, delete or skip tests just to pass. Commit verified coherent tasks with related tests and task/spec status updates together.
 - **Physics/gameplay iteration is headless-first. Do not open the game or run rendered harnesses by default. Video capture is opt-in, not a normal test artifact.** Use assertions, numerical measurements and logs; see `tk-verification` for exceptions and fixture details.
 - The single verification entry point is `python scripts/verify.py`: default/quick runs tooling plus common/server tests; `--mode full` runs workspace formatting/check/Clippy/tests; `--mode docs` runs diff/tooling checks without Cargo. None launches the game or records video. Use the smallest relevant gate during iteration and full code checks once before delivery; zero matched tests is not evidence.
