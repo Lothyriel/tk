@@ -961,11 +961,7 @@ fn animate(
             .get(&p.id)
             .and_then(|r| r.action)
             .unwrap_or_else(|| {
-                common::weapon_animation::reload_action(
-                    displayed,
-                    cache.poses[&p.id].reload_fraction,
-                    p.pose.reload_empty,
-                )
+                common::weapon_animation::manipulation::action(displayed, &p.mechanics)
             });
         let mut request = if displayed == p.weapon {
             ConfiguredWeapon {

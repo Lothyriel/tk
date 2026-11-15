@@ -1,9 +1,11 @@
 //! Configuration-aware anatomical pose used before hit testing and physics
 //! handoff. Physical/fallen poses remain owned by the articulated body.
 use super::*;
+#[cfg(test)]
+use crate::weapon_animation::reload_action;
 use crate::{
     catalog::{MechanicalSnapshot, ResolvedWeapon},
-    weapon_animation::{reload_action, WeaponAction},
+    weapon_animation::WeaponAction,
 };
 use handling::{HandlingError, HandlingSolution};
 
@@ -139,17 +141,8 @@ pub fn evaluate(
     if cover.is_some_and(|v| !v.is_finite() || !(0.0..=0.10).contains(&v)) {
         return Err(HandlingError::InvalidInput);
     }
-    let action = action.unwrap_or_else(|| {
-        reload_action(
-            spec.class,
-            if mechanics.reloading() {
-                mechanics.fraction
-            } else {
-                0.0
-            },
-            mechanics.kind == Some(crate::catalog::ManipulationKind::EmptyReload),
-        )
-    });
+    let action = action
+        .unwrap_or_else(|| crate::weapon_animation::manipulation::action(spec.class, mechanics));
     let mut segments = evaluate_pose_with_action(state, legs[0], legs[1], Some(action));
     if state.physical.is_some()
         || !matches!(state.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)

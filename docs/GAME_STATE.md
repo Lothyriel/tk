@@ -104,6 +104,12 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | Up / Down arrow | Narrow / widen the field of view |
 | F8 / F9 | Toggle weapon socket/pivot debug overlay / cycle inspection LOD while enabled |
 
+Inspect now presents both sides of the equipped assembly while preserving its
+ammunition and grips. Equip/unequip presentation follows the server's action
+clock and slot marker. Hip/inspect framing uses the actual configured bounds
+without changing FOV. In-game handling review remains pending; see the
+[handling contract](weapons/handling.md).
+
 ### Configure a weapon
 
 In the lobby, press **V**. Choose primary or sidearm, edit the draft and click

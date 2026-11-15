@@ -245,16 +245,16 @@ pub(super) struct Response {
     pub flash: f32,
     last: Option<u64>,
     weapon: Option<WeaponKind>,
-    swap: f32,
     pub(super) displayed: Option<WeaponKind>,
     pub(super) action: Option<WeaponAction>,
-    /// The lowered outgoing weapon outlives the authoritative slot switch for
-    /// a few frames. Its magazine/bolt must not read the incoming slot's state.
+    /// Mechanical state of the displayed slot, including unequip before the
+    /// authoritative handoff and equip after it.
     pub(super) displayed_mechanics: common::catalog::MechanicalSnapshot,
     sway: Vec2,
     previous_look: Option<(Vec2, f32)>,
     look_rate: Vec2,
     travel: Vec3,
+    inertia: Vec3,
     motion_phase: f32,
     landing: f32,
     pub(super) ads: f32,
@@ -266,10 +266,6 @@ impl Response {
         self.velocity += (-self.recoil * 180.0 - self.velocity * 23.0) * dt;
         self.recoil = (self.recoil + self.velocity * dt).clamp(0.0, 0.11);
         self.flash = (self.flash - dt).max(0.0);
-        self.swap = (self.swap - dt * 4.0).max(0.0);
-        if self.swap <= 0.5 {
-            self.displayed = self.weapon;
-        }
     }
     fn shot(&mut self, shot: &FiredProjectileData) {
         if self.last.is_some_and(|id| id >= shot.id) {
@@ -399,17 +395,16 @@ pub(super) fn advance(
             (now - session.last_received).max(0.0) as f32,
             rate,
         );
-        if response.weapon != Some(player.weapon) {
-            response.swap = 1.0;
-            if response.displayed.is_none() {
-                response.displayed = Some(player.weapon);
-            }
+        let changed_weapon = response.weapon != Some(player.weapon);
+        if changed_weapon {
             response.weapon = Some(player.weapon);
             response.flash = 0.0;
         }
+        // The server changes slots at the end of unequip. Delaying that marker
+        // with another client timer borrows the wrong instance/mechanical state.
+        response.displayed = Some(player.weapon);
         if player.alive && !response.was_alive {
-            response.swap = 0.5;
-            response.displayed = Some(player.weapon);
+            response.action = None;
         }
         response.was_alive = player.alive;
         if !player.alive {
@@ -419,32 +414,24 @@ pub(super) fn advance(
             response.angular = Default::default();
         }
         let w = response.displayed.unwrap_or(player.weapon);
-        if w == player.weapon {
-            response.displayed_mechanics = player.mechanics;
-        } else {
-            let mechanics = &mut response.displayed_mechanics;
-            mechanics.magazine = mechanics.inserted_magazine().unwrap_or_default();
-            mechanics.reload_target = Default::default();
-            mechanics.kind = None;
-            mechanics.phase = None;
-            mechanics.fraction = 0.0;
-        }
+        response.displayed_mechanics = player.mechanics;
         let mechanics = response.displayed_mechanics;
-        let fraction = if mechanics.reloading() {
-            mechanics.fraction
-        } else {
-            0.0
-        };
-        let target = reload_action(
-            w,
-            fraction,
-            mechanics.kind == Some(common::catalog::ManipulationKind::EmptyReload),
-        );
+        let target = common::weapon_animation::manipulation::action(w, &mechanics);
+        if changed_weapon {
+            // At handoff the incoming assembly begins in its own lowered pose,
+            // never in the outgoing weapon's partially completed reload pose.
+            response.action = Some(target);
+        }
         let alpha = 1.0 - (-time.delta_secs().min(0.05) * 32.0).exp();
         let action = response.action.get_or_insert(target);
         action.root.translation += ((target.root.translation - action.root.translation) * alpha)
             .clamp_length_max(1.2 * time.delta_secs().min(0.05));
-        action.root.rotation = action.root.rotation.slerp(target.root.rotation, alpha);
+        let angle = action.root.rotation.angle_between(target.root.rotation);
+        let rotation_alpha = alpha.min(5.0 * time.delta_secs().min(0.05) / angle.max(1e-6));
+        action.root.rotation = action
+            .root
+            .rotation
+            .slerp(target.root.rotation, rotation_alpha);
         action.support.translation = action
             .support
             .translation
@@ -511,6 +498,11 @@ pub(super) fn advance(
             player.pose.velocity.into(),
             1.0 - (-time.delta_secs() * 6.0).exp(),
         );
+        let inertia = (Vec3::from(player.pose.velocity) - response.travel)
+            * Vec3::new(-0.003, -0.002, -0.004);
+        response.inertia = response
+            .inertia
+            .lerp(inertia, 1.0 - (-time.delta_secs() * 10.0).exp());
         let speed = Vec2::new(response.travel.x, response.travel.z).length();
         let rate = common::humanoid::stride_phase_rate(speed, player.pose.crouch);
         response.motion_phase =
@@ -537,15 +529,28 @@ pub(super) fn advance(
             )
             && player.mechanics.kind.is_none()
             && player.mechanics.equipped
-            && response.swap <= 0.05
+            && !common::weapon_animation::manipulation::lowering(&mechanics)
             && player
                 .body
                 .anatomy
                 .capacity(common::combat::Region::RightArm)
                 > 0.0
             && !(local_input.as_ref().is_some_and(|i| local && i.run) && speed > 0.5);
-        let target = if usable { requested } else { 0.0 };
-        response.ads += (target - response.ads) * (1.0 - (-time.delta_secs() * 14.0).exp());
+        // Complete the external action's return before closing the stock onto
+        // the sight line. Blending full ADS over a still-canted inspection pulls
+        // the hands across the camera even when each individual layer is smooth.
+        let action_return = response.action.map_or(1.0, |a| {
+            common::weapon_animation::ease(
+                1.0 - (a.root.rotation.angle_between(Quat::IDENTITY) / 0.35).min(1.0),
+            )
+        });
+        let target = if usable {
+            requested * action_return
+        } else {
+            0.0
+        };
+        let aim_step = (target - response.ads) * (1.0 - (-time.delta_secs() * 14.0).exp());
+        response.ads += aim_step.clamp(-2.0 * time.delta_secs(), 2.0 * time.delta_secs());
     }
     for shot in &session.shots {
         let response = feedback.responses.entry(shot.shooter).or_default();
@@ -622,11 +627,6 @@ pub(super) fn animate_local(
     let action = response
         .action
         .unwrap_or_else(|| reload_action(displayed, 0.0, false));
-    let swap_drop = if response.swap > 0.5 {
-        (1.0 - response.swap) * 2.0
-    } else {
-        response.swap * 2.0
-    };
     let physical_drop = if matches!(p.pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering) {
         if p.pose.mode == PhysicalMode::Recovering {
             1.0 - common::weapon_animation::ease((p.pose.mode_time - 0.75) / 0.25)
@@ -643,28 +643,38 @@ pub(super) fn animate_local(
         let base = *t;
         t.translation += locomotion_offset(phase, speed, response.ads)
             + action.root.translation
-            + Vec3::new(response.sway.x * 0.2, -swap_drop * 0.34, response.recoil);
-        t.translation +=
-            (Vec3::from(p.pose.velocity) - response.travel) * Vec3::new(-0.003, -0.002, -0.004);
+            + Vec3::new(response.sway.x * 0.2, 0.0, response.recoil);
+        t.translation += response.inertia;
         t.translation.y -= response.landing * 0.025 * motion_weight;
         t.rotation *=
             Quat::from_rotation_x((response.travel.y * 0.008).clamp(-0.05, 0.05) * motion_weight);
         let injury = (1.0 - p.body.anatomy.handling()) * (time.elapsed_secs() * 3.7).sin() * 0.035;
-        t.rotation *= Quat::from_rotation_x(response.sway.y * motion_weight + swap_drop * 0.6);
+        t.rotation *= Quat::from_rotation_x(response.sway.y * motion_weight);
         t.rotation *= Quat::from_rotation_y(response.sway.x * motion_weight);
         t.rotation *= Quat::from_rotation_z((injury - response.sway.x * 0.5) * motion_weight);
-        if displayed == WeaponKind::Pistol {
+        {
             let aspect = if let Projection::Perspective(p) = &**projection {
                 p.aspect_ratio
             } else {
                 1.0
             };
-            let offset = super::weapons::framed_offset(displayed, aspect).lerp(
+            let mut offset = super::weapons::framed_offset(displayed, aspect).lerp(
                 common::weapon_animation::ads_offset(displayed),
                 common::weapon_animation::ease(response.ads),
             );
-            // Cant about the receiver, not the eye. Rotating the 60cm child
-            // offset swept the pistol out of the right edge during reload.
+            if displayed != WeaponKind::Pistol {
+                let spec = session
+                    .configurations
+                    .cache
+                    .get(session.configurations.cache.epoch(), p.configuration)
+                    .map_or_else(|| displayed.spec(), |entry| &entry.resolved);
+                offset = spec.assembly.hip_from_root.translation.lerp(
+                    spec.assembly.ads_from_root.translation,
+                    common::weapon_animation::ease(response.ads),
+                );
+            }
+            // Cant about the receiver, not the eye. The complete configured
+            // hierarchy follows this rigid layer, including both grip contacts.
             t.translation = base.translation
                 + base.rotation * (t.translation - base.translation)
                 + t.rotation * (offset - action.root.rotation * offset);
@@ -930,14 +940,15 @@ fn frame_local_pistol(
                     .map(|p| to_eye.transform_point3(pose.transform_point(p)))
             })
             .collect();
-        let lowering = response.swap > 0.05
-            || session.local(id.0).is_none_or(|p| {
-                !p.alive
-                    || !matches!(
-                        p.pose.mode,
-                        PhysicalMode::Standing | PhysicalMode::Stumbling
-                    )
-            });
+        let lowering =
+            common::weapon_animation::manipulation::lowering(&response.displayed_mechanics)
+                || session.local(id.0).is_none_or(|p| {
+                    !p.alive
+                        || !matches!(
+                            p.pose.mode,
+                            PhysicalMode::Standing | PhysicalMode::Stumbling
+                        )
+                });
         let correction = if lowering {
             response.frame_offset * (-time.delta_secs() * 14.0).exp()
         } else {
@@ -1683,7 +1694,8 @@ mod tests {
         );
     }
     #[test]
-    fn swap_holsters_before_revealing_new_model_and_reload_interrupt_blends_from_current_pose() {
+    fn authoritative_slot_marker_reveals_lowered_model_and_reload_interrupt_blends_from_current_pose()
+     {
         let mut app = App::new();
         let mut session = ClientSession::default();
         session.players.push(ClientData {
@@ -1724,12 +1736,41 @@ mod tests {
             after.root.translation.length() > 0.01,
             "interruption must not snap straight to idle"
         );
+        app.world_mut().resource_mut::<ClientSession>().players[0]
+            .mechanics
+            .kind = Some(common::catalog::ManipulationKind::Unequip);
+        app.world_mut().resource_mut::<ClientSession>().players[0]
+            .mechanics
+            .fraction = 0.8;
+        for _ in 0..60 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().resource::<Feedback>().responses[&7].displayed,
+            Some(WeaponKind::Pistol),
+            "elapsed client time cannot advance the authoritative slot marker"
+        );
         app.world_mut().resource_mut::<ClientSession>().players[0].weapon = WeaponKind::Rifle;
         app.world_mut().resource_mut::<ClientSession>().players[0].weapon_id = WeaponId::M4A1;
+        app.world_mut().resource_mut::<ClientSession>().players[0]
+            .mechanics
+            .kind = Some(common::catalog::ManipulationKind::Equip);
+        app.world_mut().resource_mut::<ClientSession>().players[0]
+            .mechanics
+            .fraction = 0.0;
         app.update();
         assert_eq!(
             app.world().resource::<Feedback>().responses[&7].displayed,
-            Some(WeaponKind::Pistol)
+            Some(WeaponKind::Rifle)
+        );
+        assert!(
+            app.world().resource::<Feedback>().responses[&7]
+                .action
+                .unwrap()
+                .root
+                .translation
+                .y
+                < -0.33
         );
         for _ in 0..16 {
             app.update();

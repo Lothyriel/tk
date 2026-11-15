@@ -115,7 +115,17 @@ pub(super) fn prepare(
         // Preview and publication share the solver and cached assets. A failed
         // preview still publishes the request so the assembler reports the
         // rejection and retains its previously accepted hierarchy/pose.
+        let inspecting =
+            response.displayed_mechanics.kind == Some(common::catalog::ManipulationKind::Inspect);
+        let lowering =
+            common::weapon_animation::manipulation::lowering(&response.displayed_mechanics)
+                || !player.alive
+                || !matches!(
+                    player.pose.mode,
+                    PhysicalMode::Standing | PhysicalMode::Stumbling
+                );
         if (displayed == WeaponKind::Pistol
+            || (!response.displayed_mechanics.reloading() && !lowering)
             || (response.ads > 0.0
                 && visual
                     .assembly
@@ -123,12 +133,18 @@ pub(super) fn prepare(
                     .contains_key(&common::catalog::AnchorKind::Sight)))
             && let Ok((points, solved_root)) = assets.preview(visual, &input)
         {
-            if displayed != WeaponKind::Pistol {
+            if displayed != WeaponKind::Pistol
+                && !inspecting
+                && response.ads > 0.0
+                && let Some(sight) = visual
+                    .assembly
+                    .anchors
+                    .get(&common::catalog::AnchorKind::Sight)
+            {
                 // A shorter stock moves the solved weapon relative to its fixed
                 // shoulder pocket. Frame the entire rigid rig from that accepted
                 // pose, otherwise the receiver/rear iron crosses the near plane.
                 // This preserves all palm/stock contacts and authored eye relief.
-                let sight = visual.assembly.anchors[&common::catalog::AnchorKind::Sight];
                 let offset = input.preferred_root.transform_point(sight.translation)
                     - solved_root.transform_point(sight.translation);
                 let correction = view.rotation
@@ -136,6 +152,8 @@ pub(super) fn prepare(
                     * offset
                     * common::weapon_animation::ease(response.ads);
                 view.translation += correction;
+                response.frame_offset *= (-time.delta_secs() * 14.0).exp();
+                view.translation += eye.rotation * response.frame_offset;
                 commands.entity(entity).insert((request, input));
                 continue;
             }
@@ -144,12 +162,6 @@ pub(super) fn prepare(
                 .into_iter()
                 .map(|p| to_eye.transform_point3(p))
                 .collect();
-            let lowering = response.swap > 0.05
-                || !player.alive
-                || !matches!(
-                    player.pose.mode,
-                    PhysicalMode::Standing | PhysicalMode::Stumbling
-                );
             let correction = if lowering {
                 response.frame_offset * (-time.delta_secs() * 14.0).exp()
             } else {
@@ -157,6 +169,11 @@ pub(super) fn prepare(
             };
             response.frame_offset = correction;
             view.translation += eye.rotation * correction;
+        } else if response.frame_offset.length_squared() > 1e-10 {
+            // Retain the current camera correction through interrupted inspect,
+            // then return smoothly instead of snapping on the cancellation frame.
+            response.frame_offset *= (-time.delta_secs() * 14.0).exp();
+            view.translation += eye.rotation * response.frame_offset;
         }
         commands.entity(entity).insert((request, input));
     }

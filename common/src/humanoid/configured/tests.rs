@@ -5,6 +5,60 @@ use crate::{
 };
 
 #[test]
+fn configured_handling_tracks_preserve_anatomy_and_grips_at_authoritative_fractions() {
+    for weapon in [WeaponKind::Rifle, WeaponKind::Smg, WeaponKind::Pistol] {
+        for kind in [
+            ManipulationKind::Inspect,
+            ManipulationKind::Unequip,
+            ManipulationKind::Equip,
+        ] {
+            let mut previous: Option<Transform> = None;
+            for step in 0..=280 {
+                let mechanics = MechanicalSnapshot {
+                    kind: Some(kind),
+                    fraction: step as f32 / 280.0,
+                    ..default()
+                };
+                let state = PoseState {
+                    weapon,
+                    ..default()
+                };
+                let rig = evaluate(
+                    &state,
+                    [1.0; 2],
+                    weapon.spec(),
+                    &mechanics,
+                    None,
+                    Some(0.058),
+                )
+                .unwrap_or_else(|e| panic!("{weapon:?} {kind:?} step={step}: {e:?}"));
+                let root = rig.weapon.unwrap().root;
+                for (hand, anchor) in [
+                    (Segment::LeftHand, AnchorKind::SupportGrip),
+                    (Segment::RightHand, AnchorKind::TriggerGrip),
+                ] {
+                    assert!(
+                        rig.segments[hand.index()].transform().translation.distance(
+                            root.transform_point(
+                                weapon.spec().assembly.anchors[&anchor].translation
+                            )
+                        ) < 2e-6
+                    );
+                }
+                if let Some(previous) = previous {
+                    assert!(
+                        root.translation.distance(previous.translation) < 0.02,
+                        "{weapon:?} {kind:?} step={step}: discontinuous solver"
+                    );
+                    assert!(root.rotation.angle_between(previous.rotation) < 0.03);
+                }
+                previous = Some(root);
+            }
+        }
+    }
+}
+
+#[test]
 fn configured_stock_stance_keeps_both_hands_and_shoulder_contact_through_ads() {
     for weapon in [WeaponKind::Rifle, WeaponKind::Smg] {
         let spec = weapon.spec();
