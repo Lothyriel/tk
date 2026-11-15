@@ -194,3 +194,8 @@ After changing behavior:
 - run `cargo check`
 - run `cargo test`
 - if networking or app boot changed, verify the relevant binary still starts (`cargo run --bin client` or `cargo run --bin server`)
+
+## Game state documentation
+
+- For every request to implement or change the project, load the `game-state` skill. After the implementation and before the final response, follow the skill to update [the game state guide](docs/GAME_STATE.md) and its Mermaid diagram. Review both even when the change appears unrelated to gameplay.
+- Skip the skill and its updates when the user explicitly opts out. A request to pause game-state updates for the session applies to subsequent requests in that session until the user asks to resume. A one-request opt-out expires with that request.
