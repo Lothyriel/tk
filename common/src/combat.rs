@@ -434,6 +434,27 @@ impl Arsenal {
         let reload = fresh_sequence(&mut self.last_reload, input.reload_sequence);
         let inspect = fresh_sequence(&mut self.last_inspect, input.inspect_sequence);
         let selector = fresh_sequence(&mut self.last_selector, input.selector_sequence);
+        // Intent cancels inspect even when the requested shot/reload cannot
+        // complete (safe, cooldown, full magazine). Consume blocked inspect
+        // sequences so releasing ADS/sprint never starts a delayed inspection.
+        let interrupts_inspect = input.aim
+            || input.run
+            || input.fire
+            || pressed
+            || reload
+            || input.weapon != self.active;
+        if interrupts_inspect
+            && self
+                .current()
+                .mechanics()
+                .action()
+                .is_some_and(|action| action.kind == crate::catalog::ManipulationKind::Inspect)
+        {
+            self.equipped_mut(self.active)
+                .unwrap()
+                .mechanics_mut()
+                .cancel();
+        }
         if self.pending_slot.is_none()
             && self.equipped(input.weapon).is_some()
             && self.active != input.weapon
@@ -441,7 +462,7 @@ impl Arsenal {
                 .equipped_mut(self.active)
                 .unwrap()
                 .mechanics_mut()
-                .start_unequip(0.2)
+                .start_unequip(crate::catalog::HandlingTiming::UNEQUIP)
         {
             self.pending_slot = Some(input.weapon);
         }
@@ -453,7 +474,7 @@ impl Arsenal {
             self.equipped_mut(self.active)
                 .unwrap()
                 .mechanics_mut()
-                .start_equip(0.35);
+                .start_equip(crate::catalog::HandlingTiming::EQUIP);
         }
         if self.pending_slot.is_none() {
             let weapon = self.equipped_mut(self.active).unwrap();
@@ -464,8 +485,10 @@ impl Arsenal {
             if reload {
                 weapon.mechanics_mut().start_reload(duration);
             }
-            if inspect {
-                weapon.mechanics_mut().start_inspect(1.5);
+            if inspect && !interrupts_inspect {
+                weapon
+                    .mechanics_mut()
+                    .start_inspect(crate::catalog::HandlingTiming::INSPECT);
             }
         }
         let snapshot = self.current().mechanics().snapshot();

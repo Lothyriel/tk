@@ -344,6 +344,122 @@ fn mechanics_arsenal_deduplicates_actions_and_semi_edges_across_reordering() {
 }
 
 #[test]
+fn inspect_priorities_cancel_and_consume_conflicting_commands_without_changing_ammunition() {
+    use crate::catalog::{FireMode, ManipulationKind};
+    for conflict in [
+        ClientInput {
+            aim: true,
+            ..Default::default()
+        },
+        ClientInput {
+            run: true,
+            ..Default::default()
+        },
+        ClientInput {
+            fire: true,
+            ..Default::default()
+        },
+        ClientInput {
+            fire_pressed_sequence: 1,
+            ..Default::default()
+        },
+        ClientInput {
+            reload_sequence: 1,
+            ..Default::default()
+        },
+        ClientInput {
+            weapon: EquipmentSlot::Sidearm,
+            ..Default::default()
+        },
+    ] {
+        for already_inspecting in [false, true] {
+            let mut arsenal = Arsenal::new(Loadout::default());
+            // Safe-mode intent must still yield inspect, without manufacturing
+            // a shot solely to drive the presentation cancellation.
+            while arsenal.current().mechanics().mode() != FireMode::Safe {
+                arsenal
+                    .equipped_mut(arsenal.active)
+                    .unwrap()
+                    .mechanics_mut()
+                    .cycle_selector();
+            }
+            let before: Vec<_> = arsenal
+                .equipment
+                .iter()
+                .map(|(_, w)| {
+                    (
+                        w.instance().id,
+                        w.mechanics().total_rounds(),
+                        w.mechanics().magazines().to_vec(),
+                    )
+                })
+                .collect();
+            if already_inspecting {
+                arsenal.step(
+                    &ClientInput {
+                        inspect_sequence: 1,
+                        ..Default::default()
+                    },
+                    0.0,
+                    0.0,
+                );
+                assert_eq!(
+                    arsenal.current().mechanics().action().unwrap().kind,
+                    ManipulationKind::Inspect
+                );
+            }
+            let mut input = ClientInput {
+                aim: conflict.aim,
+                run: conflict.run,
+                fire: conflict.fire,
+                fire_pressed_sequence: conflict.fire_pressed_sequence,
+                reload_sequence: conflict.reload_sequence,
+                weapon: conflict.weapon,
+                inspect_sequence: 2,
+                ..Default::default()
+            };
+            assert!(arsenal.step(&input, 0.0, 0.0).is_none());
+            assert!(arsenal
+                .current()
+                .mechanics()
+                .action()
+                .is_none_or(|a| a.kind != ManipulationKind::Inspect));
+            input.aim = false;
+            input.run = false;
+            input.fire = false;
+            // Complete a switch or tactical reload, keeping the same consumed
+            // command numbers. Inspect must not jump ahead of either action.
+            for tick in 1..=300 {
+                assert!(arsenal.step(&input, 0.01, tick as f32 * 0.01).is_none());
+                assert!(arsenal
+                    .current()
+                    .mechanics()
+                    .action()
+                    .is_none_or(|a| a.kind != ManipulationKind::Inspect));
+            }
+            let after: Vec<_> = arsenal
+                .equipment
+                .iter()
+                .map(|(_, w)| {
+                    (
+                        w.instance().id,
+                        w.mechanics().total_rounds(),
+                        w.mechanics().magazines().to_vec(),
+                    )
+                })
+                .collect();
+            assert_eq!(after, before);
+            input.inspect_sequence = 3;
+            arsenal.step(&input, 0.0, 3.0);
+            assert_eq!(
+                arsenal.current().mechanics().action().unwrap().kind,
+                ManipulationKind::Inspect
+            );
+        }
+    }
+}
+
+#[test]
 fn mechanics_switch_cancel_at_each_stage_keeps_both_physical_pools() {
     for cancel_at in [0.0_f32, 0.19, 0.2, 0.3, 0.55] {
         let mut arsenal = Arsenal::new(Loadout::default());
