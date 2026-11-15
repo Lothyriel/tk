@@ -61,16 +61,24 @@ impl ViewAssets<'_> {
         else {
             unreachable!("palm positions")
         };
-        for (arm, visible) in [
-            (solution.support, input.visible_hands[2]),
-            (solution.trigger, input.visible_hands[5]),
+        for (arm, visible, weights) in [
+            (
+                solution.support,
+                input.visible_hands[2],
+                input.support_fingers,
+            ),
+            (solution.trigger, input.visible_hands[5], [0.0; 2]),
         ] {
             if visible {
-                points.extend(
-                    vertices
-                        .iter()
-                        .map(|p| arm.wrist.transform_point(Vec3::from(*p))),
-                );
+                points.extend(vertices.iter().enumerate().map(|(i, p)| {
+                    arm.wrist
+                        .transform_point(super::super::super::weapons::grasp::position(
+                            palm,
+                            i,
+                            Vec3::from(*p),
+                            &weights,
+                        ))
+                }));
             }
         }
         Ok((points, solution.root))
@@ -230,6 +238,16 @@ pub(crate) fn action(
         max_adjustment: 0.35,
         motions,
         support_blends,
+        support_clearance: if spec.definition == common::WeaponId::M4A1 {
+            m4a1::support_clearance(&action)
+        } else {
+            Vec3::ZERO
+        },
+        support_fingers: if spec.definition == common::WeaponId::M4A1 {
+            super::super::super::weapons::grasp::weights(&action)
+        } else {
+            [0.0; 2]
+        },
         hidden_parts,
         visible_hands: [true; 6],
     }

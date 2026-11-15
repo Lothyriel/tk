@@ -79,6 +79,7 @@ struct DetailVisual {
 
 #[derive(Resource)]
 struct VoxelAssets {
+    grasp: Handle<Mesh>,
     intact: Vec<Handle<Mesh>>,
     wounded: Vec<Handle<Mesh>>,
     inside: Vec<Handle<Mesh>>,
@@ -152,6 +153,7 @@ fn assets(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.insert_resource(VoxelAssets {
+        grasp: meshes.add(super::weapons::grasp::mesh()),
         intact: SEGMENTS
             .iter()
             .map(|s| meshes.add(voxel_mesh(*s, false, false)))
@@ -261,7 +263,7 @@ fn build_actors(
         let bot = session.local(client.id).is_some_and(|p| p.bot);
         commands.entity(entity).with_children(|c| {
             for segment in SEGMENTS {
-                c.spawn((
+                let mut surface = c.spawn((
                     BoneVisual {
                         owner: client.id,
                         segment,
@@ -271,6 +273,12 @@ fn build_actors(
                     MeshMaterial3d(surface(&assets, segment, bot)),
                     Transform::default(),
                 ));
+                if segment == Segment::LeftHand {
+                    surface.insert((
+                        super::weapons::grasp::component([0.0; 2]),
+                        super::weapons::grasp::bounds(),
+                    ));
+                }
                 c.spawn((
                     BoneVisual {
                         owner: client.id,
@@ -496,6 +504,7 @@ struct ActorVisuals<'w, 's> {
             &'static mut Transform,
             &'static mut Mesh3d,
             &'static mut Visibility,
+            Option<&'static mut bevy::mesh::morph::MeshMorphWeights>,
         ),
         (
             Without<EquipmentVisual>,
@@ -814,7 +823,7 @@ fn animate(
         }
         rigs.insert(p.id, rig);
     }
-    for (bone, mut t, mut mesh, mut visible) in &mut bones {
+    for (bone, mut t, mut mesh, mut visible, fingers) in &mut bones {
         let Some(p) = session.local(bone.owner) else {
             continue;
         };
@@ -855,6 +864,20 @@ fn animate(
         } else {
             assets.intact[bone.segment.index()].clone()
         };
+        if let Some(mut fingers) = fingers {
+            let action = feedback
+                .responses
+                .get(&p.id)
+                .filter(|r| r.displayed == Some(WeaponKind::Rifle) && !wound && present)
+                .and_then(|r| r.action);
+            let weights = if let Some(action) = action {
+                mesh.0 = assets.grasp.clone();
+                super::weapons::grasp::weights(&action)
+            } else {
+                [0.0; 2]
+            };
+            *fingers = super::weapons::grasp::component(weights);
+        }
     }
     for (gear, mut t, mut visible) in &mut gear {
         let Some(p) = session.local(gear.owner) else {

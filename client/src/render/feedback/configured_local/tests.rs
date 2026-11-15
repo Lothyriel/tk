@@ -113,6 +113,7 @@ fn configured_local_mixed_reload_uses_owned_incoming_mesh_before_insertion_witho
                 }
                 f.step();
                 f.assert_contacts();
+                f.assert_support_clears_magwell();
                 assert_eq!(weapon.mechanics().total_rounds(), total);
                 let world = f.app.world();
                 let player = &world.resource::<ClientSession>().players[0];
@@ -224,6 +225,7 @@ fn configured_local_switch_during_reload_keeps_outgoing_magazine_location() {
             player.pose.weapon = WeaponKind::Pistol;
         }
         f.step();
+        f.assert_support_clears_magwell();
         let world = f.app.world();
         assert_eq!(
             world.resource::<Feedback>().responses[&7].displayed,
@@ -561,9 +563,29 @@ impl Fixture {
                 rest_support
                     .lerp(mag.translation(), action.magazine_grip)
                     .lerp(control.translation(), action.control_grip)
+                    + root.rotation()
+                        * if player.weapon == WeaponKind::Rifle {
+                            common::weapon_animation::m4a1::support_clearance(&action)
+                        } else {
+                            Vec3::ZERO
+                        }
             ) < 3e-6
         );
         assert!(trigger.translation().distance(rest_trigger) < 3e-6);
+    }
+
+    fn assert_support_clears_magwell(&self) {
+        let world = self.app.world();
+        let lower = named(&self.app, self.root, "lower");
+        let palm = named(&self.app, self.root, "configured-support-palm");
+        crate::render::weapons::grasp::assert_magwell_clear(
+            world,
+            palm,
+            lower,
+            world.resource::<ClientSession>().players[0]
+                .mechanics
+                .fraction,
+        );
     }
 
     fn assert_magazine_below_viewport(&self) {

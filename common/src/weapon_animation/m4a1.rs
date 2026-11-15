@@ -9,6 +9,13 @@ pub const RETRIEVE: f32 = 0.44;
 const ALIGNED: f32 = 0.60;
 const SEATED: f32 = 0.66;
 
+/// Approach/release outside the receiver rather than cutting a straight line
+/// through the magwell. Full contact has no offset from the authored socket.
+pub fn support_clearance(action: &WeaponAction) -> Vec3 {
+    let contact = action.magazine_grip.max(action.control_grip);
+    Vec3::NEG_X * (0.11 * ramp(contact, 0.0, 0.08) * (1.0 - ramp(contact, 0.88, 1.0)))
+}
+
 /// Outgoing and incoming are different physical objects even with equal
 /// definitions. Replace the displayed object only in the hidden retention gap.
 pub fn magazine(mechanics: &MechanicalSnapshot) -> Option<MagazineSnapshot> {
