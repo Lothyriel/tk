@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod combat;
 pub mod data;
 pub mod humanoid;
@@ -98,7 +99,10 @@ pub struct ClientInput {
     pub camera: CameraInput,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+/// Presentation/mechanism family, not a catalog identity or equipment slot.
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize, serde::Deserialize,
+)]
 pub enum WeaponKind {
     #[default]
     Rifle,
@@ -115,78 +119,17 @@ impl WeaponKind {
         }
     }
 
-    pub fn spec(self) -> WeaponSpec {
+    /// Transitional base selection for legacy callers during the ID migration.
+    pub fn definition(self) -> catalog::WeaponId {
         match self {
-            Self::Rifle => WeaponSpec {
-                kind: self,
-                catalog_key: "m4a1",
-                name: "M4A1",
-                magazine_size: 30,
-                rounds_per_minute: 600.0,
-                reload_seconds: 2.4,
-                muzzle_speed: 715.0,
-                damage: 34.0,
-                automatic: true,
-                model_scale: [0.18, 0.12, 0.9],
-                model_offset: [0.28, -0.18, -0.45],
-                model_color: [0.16, 0.16, 0.16],
-                barrel_offset: [0.28, -0.15, -0.92],
-            },
-            Self::Pistol => WeaponSpec {
-                kind: self,
-                catalog_key: "m1911",
-                name: "Pistol",
-                magazine_size: 17,
-                rounds_per_minute: 400.0,
-                reload_seconds: 1.5,
-                muzzle_speed: 375.0,
-                damage: 26.0,
-                automatic: false,
-                model_scale: [0.12, 0.1, 0.35],
-                model_offset: [0.2, -0.18, -0.25],
-                model_color: [0.22, 0.22, 0.24],
-                barrel_offset: [0.2, -0.15, -0.72],
-            },
-            Self::Smg => WeaponSpec {
-                kind: self,
-                catalog_key: "mp5",
-                name: "SMG",
-                magazine_size: 25,
-                rounds_per_minute: 850.0,
-                reload_seconds: 1.9,
-                muzzle_speed: 420.0,
-                damage: 23.0,
-                automatic: true,
-                model_scale: [0.16, 0.12, 0.55],
-                model_offset: [0.25, -0.18, -0.35],
-                model_color: [0.14, 0.25, 0.25],
-                barrel_offset: [0.25, -0.15, -0.78],
-            },
+            Self::Rifle => catalog::WeaponId::M4A1,
+            Self::Pistol => catalog::WeaponId::M1911,
+            Self::Smg => catalog::WeaponId::MP5,
         }
     }
-}
 
-#[derive(Debug, Clone, Copy)]
-pub struct WeaponSpec {
-    pub kind: WeaponKind,
-    /// Identity of the current base model, distinct from its presentation class.
-    pub catalog_key: &'static str,
-    pub name: &'static str,
-    pub magazine_size: u32,
-    pub rounds_per_minute: f32,
-    pub reload_seconds: f32,
-    pub muzzle_speed: f32,
-    pub damage: f32,
-    pub automatic: bool,
-    pub model_scale: [f32; 3],
-    pub model_offset: [f32; 3],
-    pub model_color: [f32; 3],
-    pub barrel_offset: [f32; 3],
-}
-
-impl WeaponSpec {
-    pub fn seconds_per_shot(self) -> f32 {
-        60.0 / self.rounds_per_minute
+    pub fn spec(self) -> &'static catalog::ResolvedWeapon {
+        self.definition().spec()
     }
 }
 
