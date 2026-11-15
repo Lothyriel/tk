@@ -833,7 +833,9 @@ fn animate(
             });
         if weapon.part == 3 {
             *t = t.mul_transform(action.magazine);
-            if !action.magazine_visible {
+            if !action.magazine_visible
+                || (!p.mechanics.magazine_inserted && !p.mechanics.reloading())
+            {
                 *visible = Visibility::Hidden;
             }
         }
@@ -849,7 +851,7 @@ fn animate(
                     displayed,
                     &action,
                     r.recoil,
-                    p.reload_remaining > 0.0,
+                    p.mechanics.reloading(),
                 );
                 *t = t.mul_transform(bolt);
             }

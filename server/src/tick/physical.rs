@@ -225,7 +225,8 @@ pub(super) fn physical_tick(
             && body.alive()
             && input.aim
             && matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
-            && arsenal.reload_remaining <= 0.0
+            && arsenal.current().mechanics().action().is_none()
+            && arsenal.current().mechanics().equipped()
             && arsenal.active == input.weapon
             && body.anatomy.capacity(Region::RightArm) > 0.0
             && !(input.run && Vec2::new(pose.velocity[0], pose.velocity[2]).length() > 0.5);
@@ -274,12 +275,13 @@ pub(super) fn physical_tick(
             1.0 - body.anatomy.capacity(Region::LeftArm),
             1.0 - body.anatomy.capacity(Region::RightArm),
         ];
-        pose.reload_fraction = if arsenal.reload_remaining > 0.0 {
-            1.0 - arsenal.reload_remaining / arsenal.current().spec().reload_seconds
+        let mechanics = arsenal.current().mechanics().snapshot();
+        pose.reload_fraction = if mechanics.reloading() {
+            mechanics.fraction
         } else {
             0.0
         };
-        pose.reload_empty = arsenal.current().rounds() == 0;
+        pose.reload_empty = mechanics.kind == Some(common::catalog::ManipulationKind::EmptyReload);
         pose.velocity = local.into();
         pose.grounded = movement.grounded;
         pose.crouch = if movement.crouched { 1.0 } else { 0.0 };

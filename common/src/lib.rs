@@ -13,7 +13,7 @@ pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 9;
+pub const PROTOCOL_ID: u64 = 10;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
 pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;
@@ -77,6 +77,7 @@ pub struct ClientData {
     pub ammo_in_mag: u32,
     pub reserve_ammo: u32,
     pub reload_remaining: f32,
+    pub mechanics: catalog::MechanicalSnapshot,
     pub body: combat::BodyHealth,
     pub armor: combat::ArmorState,
     pub participant: raid::Participant,
@@ -100,6 +101,8 @@ pub struct ClientInput {
     pub aim: bool,
     pub fire_pressed_sequence: u32,
     pub reload_sequence: u32,
+    pub inspect_sequence: u32,
+    pub selector_sequence: u32,
     pub weapon: EquipmentSlot,
     pub camera: CameraInput,
 }

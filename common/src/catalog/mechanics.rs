@@ -100,7 +100,63 @@ pub struct MechanicalState {
     action_sequence: u64,
 }
 
+/// Compact dynamic state; no magazine pool or attachment tree per snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Archive, Serialize, Deserialize)]
+pub struct MechanicalSnapshot {
+    pub action_id: u64,
+    pub fraction: f32,
+    pub remaining: f32,
+    pub kind: Option<ManipulationKind>,
+    pub phase: Option<ManipulationPhase>,
+    pub chambered: bool,
+    pub bolt_open: bool,
+    pub magazine_inserted: bool,
+    pub mode: FireMode,
+    pub equipped: bool,
+}
+
+impl Default for MechanicalSnapshot {
+    fn default() -> Self {
+        Self {
+            action_id: 0,
+            fraction: 0.0,
+            remaining: 0.0,
+            kind: None,
+            phase: None,
+            chambered: true,
+            bolt_open: false,
+            magazine_inserted: true,
+            mode: FireMode::Auto,
+            equipped: true,
+        }
+    }
+}
+
+impl MechanicalSnapshot {
+    pub fn reloading(self) -> bool {
+        matches!(
+            self.kind,
+            Some(ManipulationKind::TacticalReload | ManipulationKind::EmptyReload)
+        )
+    }
+}
+
 impl MechanicalState {
+    pub fn snapshot(&self) -> MechanicalSnapshot {
+        MechanicalSnapshot {
+            action_id: self.action_sequence,
+            fraction: self.action.as_ref().map_or(0.0, Manipulation::fraction),
+            remaining: self.action.as_ref().map_or(0.0, Manipulation::remaining),
+            kind: self.action.as_ref().map(|a| a.kind),
+            phase: self.action.as_ref().map(|a| a.phase),
+            chambered: self.chamber.is_some(),
+            bolt_open: self.bolt_open,
+            magazine_inserted: self.inserted.is_some(),
+            mode: self.mode,
+            equipped: self.equipped,
+        }
+    }
+
     /// Initial total is four magazine capacities: one round moves from the
     /// inserted magazine into the chamber. It is never granted as a free +1.
     pub fn new(
@@ -135,11 +191,22 @@ impl MechanicalState {
             })
             .collect();
         magazines[0].rounds -= 1;
+        Self::with_magazines(catalog, spec, magazines, Some(ids[0]), Some(spec.ammo))
+    }
+
+    /// Restore/construct an owned pool. Every ID denotes one physical magazine.
+    pub fn with_magazines(
+        catalog: &Catalog,
+        spec: &ResolvedWeapon,
+        magazines: Vec<MagazineInstance>,
+        inserted: Option<MagazineInstanceId>,
+        chamber: Option<DefinitionId>,
+    ) -> Result<Self, CatalogError> {
         let state = Self {
-            inserted: Some(magazines[0].id),
+            inserted,
             magazines,
-            chamber: Some(spec.ammo),
-            bolt_open: false,
+            chamber,
+            bolt_open: chamber.is_none(),
             equipped: true,
             mode: if spec.automatic {
                 FireMode::Auto
@@ -152,6 +219,69 @@ impl MechanicalState {
         };
         state.validate(catalog, spec)?;
         Ok(state)
+    }
+
+    pub(super) fn select_magazine(&mut self, definition: DefinitionId) -> Result<(), CatalogError> {
+        if self.action.is_some() {
+            return Err(error(
+                CATALOG_FILE,
+                "mechanics.action",
+                "cannot reconfigure during manipulation",
+            ));
+        }
+        if self.inserted().is_some_and(|m| m.definition == definition) {
+            return Ok(());
+        }
+        let id = self
+            .magazines
+            .iter()
+            .filter(|m| m.definition == definition)
+            .max_by_key(|m| (m.rounds, std::cmp::Reverse(m.id)))
+            .map(|m| m.id)
+            .ok_or_else(|| {
+                error(
+                    CATALOG_FILE,
+                    "mechanics.magazine",
+                    "requested physical magazine is not owned",
+                )
+            })?;
+        self.inserted = Some(id);
+        Ok(())
+    }
+
+    /// Explicit setup/restore adapter for existing fixtures. Distributes reserve
+    /// across physical magazines; never used by the reload transition.
+    pub(super) fn set_ammunition(&mut self, loaded: u32, reserve: u32) -> Result<(), CatalogError> {
+        let id = self.inserted.unwrap_or(self.magazines[0].id);
+        let current = self.magazines.iter().find(|m| m.id == id).unwrap();
+        let capacity: u32 = self
+            .magazines
+            .iter()
+            .filter(|m| m.id != id)
+            .map(|m| m.capacity)
+            .sum();
+        if loaded > current.capacity || reserve > capacity {
+            return Err(error(
+                CATALOG_FILE,
+                "mechanics.ammunition",
+                "exceeds physical magazine capacity",
+            ));
+        }
+        self.chamber = (loaded > 0).then_some(current.ammo);
+        self.bolt_open = loaded == 0;
+        self.inserted = Some(id);
+        let mut rest = reserve;
+        for magazine in &mut self.magazines {
+            magazine.rounds = if magazine.id == id {
+                loaded.saturating_sub(1)
+            } else {
+                let count = rest.min(magazine.capacity);
+                rest -= count;
+                count
+            };
+        }
+        self.cancel();
+        Ok(())
     }
 
     /// Validate restored state before exposing it to simulation. A decoded

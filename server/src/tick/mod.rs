@@ -231,8 +231,11 @@ fn recv_players_input(
     }
 }
 
-fn expire_input(time: Res<Time>, mut players: Query<(&mut ClientInput, &LastInput), Without<Bot>>) {
-    for (mut input, last) in &mut players {
+fn expire_input(
+    time: Res<Time>,
+    mut players: Query<(&mut ClientInput, &LastInput, &mut Arsenal), Without<Bot>>,
+) {
+    for (mut input, last, mut arsenal) in &mut players {
         if time.elapsed_secs() - last.received_at > 0.5 {
             input.forward = false;
             input.backward = false;
@@ -243,6 +246,8 @@ fn expire_input(time: Res<Time>, mut players: Query<(&mut ClientInput, &LastInpu
             input.fire = false;
             input.aim = false;
             input.interact = false;
+            arsenal.cancel_actions();
+            arsenal.synchronize_sequences(&input);
         }
     }
 }
@@ -361,6 +366,7 @@ fn send_world_snapshot(
                 ammo_in_mag: arsenal.current().rounds(),
                 reserve_ammo: arsenal.current().reserve(),
                 reload_remaining: arsenal.reload_remaining,
+                mechanics: arsenal.current().mechanics().snapshot(),
                 body: body.clone(),
                 armor: armor.clone(),
                 participant: participant.clone(),

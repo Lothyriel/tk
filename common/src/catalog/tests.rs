@@ -153,15 +153,22 @@ fn catalog_instances_of_new_variant_have_independent_ammunition_and_stable_round
     let second = EquippedWeapon::new(&catalog, WeaponInstanceId(7002), configuration).unwrap();
     assert!(first.fire());
     assert_eq!((first.rounds(), second.rounds()), (29, 30));
-    first.reload();
-    assert_eq!((first.rounds(), first.reserve()), (30, 89));
+    assert!(first.mechanics_mut().start_reload(2.0));
+    first.advance(2.1);
+    assert_eq!((first.rounds(), first.reserve()), (31, 88));
     assert_eq!((second.rounds(), second.reserve()), (30, 90));
     assert_eq!(first.spec().class, WeaponClass::Rifle);
     assert_eq!(catalog.weapon(WeaponId::M4A1).unwrap().catalog_key, "m4a1");
     let restored: WeaponInstance = crate::data::decode(&crate::data::encode(first.instance()));
     assert_eq!(restored.id, first.instance().id);
     assert_eq!(restored.configuration, first.instance().configuration);
-    assert_eq!((restored.magazine, restored.reserve), (30, 89));
+    assert_eq!(
+        (
+            restored.mechanics.loaded_rounds(),
+            restored.mechanics.reserve_rounds()
+        ),
+        (31, 88)
+    );
     for slot in [EquipmentSlot::Primary, EquipmentSlot::Sidearm] {
         assert_eq!(
             crate::data::decode::<EquipmentSlot>(&crate::data::encode(&slot)),

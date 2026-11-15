@@ -182,6 +182,17 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
             if nearest.is_finite() {
                 text.push_str(&format!("Nearest orange crate: {:.1}m [F]\n", nearest));
             }
+            text.push_str(&format!(
+                "Selector {:?} [B] | Chamber {} | {:?} {:?} | Inspect [I]\n",
+                local.mechanics.mode,
+                if local.mechanics.chambered {
+                    "loaded"
+                } else {
+                    "empty"
+                },
+                local.mechanics.kind,
+                local.mechanics.phase
+            ));
             let a = &body.anatomy;
             if a.capacity(Region::RightArm) <= 0.0 {
                 text.push_str("TRIGGER ARM DISABLED: firing and reload unavailable\n");

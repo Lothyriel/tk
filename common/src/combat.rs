@@ -218,11 +218,14 @@ impl SurfaceKind {
 pub struct Arsenal {
     equipment: Vec<(EquipmentSlot, EquippedWeapon)>,
     pub active: EquipmentSlot,
+    /// Derived compatibility value for HUD; never drives mechanical commits.
     pub reload_remaining: f32,
     pub loadout: Loadout,
-    reload_weapon: Option<WeaponInstanceId>,
+    pending_slot: Option<EquipmentSlot>,
     last_reload: u32,
     last_trigger: u32,
+    last_inspect: u32,
+    last_selector: u32,
     last_shot_at: f32,
 }
 
@@ -258,10 +261,12 @@ impl Arsenal {
                 });
             }
             let id = WeaponInstanceId(NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed));
-            equipment.push((
-                slot,
-                EquippedWeapon::new(catalog, id, catalog.configuration(definition)?)?,
-            ));
+            let mut weapon = EquippedWeapon::new(catalog, id, catalog.configuration(definition)?)?;
+            if slot != EquipmentSlot::Primary {
+                weapon.mechanics_mut().start_unequip(0.01);
+                weapon.advance(0.01);
+            }
+            equipment.push((slot, weapon));
         }
         let Some((_, primary)) = equipment
             .iter()
@@ -279,9 +284,11 @@ impl Arsenal {
             active: EquipmentSlot::Primary,
             reload_remaining: 0.0,
             loadout,
-            reload_weapon: None,
+            pending_slot: None,
             last_reload: 0,
             last_trigger: 0,
+            last_inspect: 0,
+            last_selector: 0,
             last_shot_at: f32::NEG_INFINITY,
         })
     }
@@ -313,11 +320,11 @@ impl Arsenal {
         expected_revision: u64,
         configuration: crate::catalog::WeaponConfiguration,
     ) -> Result<u64, CatalogError> {
-        if self.reload_remaining > 0.0 {
+        if self.current().mechanics().action().is_some() {
             return Err(CatalogError {
                 file: crate::catalog::CATALOG_FILE.into(),
                 field: "equipment.reload".into(),
-                message: "cannot reconfigure during reload".into(),
+                message: "cannot reconfigure during reload/manipulation".into(),
             });
         }
         let weapon = self.equipped_mut(slot).ok_or_else(|| CatalogError {
@@ -330,57 +337,91 @@ impl Arsenal {
 
     /// Returns an authorized shot, never a client-authoritative projectile.
     pub fn step(&mut self, input: &ClientInput, delta: f32, now: f32) -> Option<WeaponId> {
-        let pressed = input.fire_pressed_sequence != self.last_trigger;
-        self.last_trigger = input.fire_pressed_sequence;
-        if self.equipped(input.weapon).is_some() && self.active != input.weapon {
-            self.active = input.weapon;
-            self.reload_remaining = 0.0;
-            self.reload_weapon = None;
+        let pressed = fresh_sequence(&mut self.last_trigger, input.fire_pressed_sequence);
+        let reload = fresh_sequence(&mut self.last_reload, input.reload_sequence);
+        let inspect = fresh_sequence(&mut self.last_inspect, input.inspect_sequence);
+        let selector = fresh_sequence(&mut self.last_selector, input.selector_sequence);
+        if self.pending_slot.is_none()
+            && self.equipped(input.weapon).is_some()
+            && self.active != input.weapon
+            && self
+                .equipped_mut(self.active)
+                .unwrap()
+                .mechanics_mut()
+                .start_unequip(0.2)
+        {
+            self.pending_slot = Some(input.weapon);
         }
-        if self.reload_remaining > 0.0 {
-            self.reload_remaining = (self.reload_remaining - delta).max(0.0);
-            if self.reload_remaining == 0.0 {
-                if let Some(id) = self.reload_weapon.take() {
-                    if let Some((_, weapon)) = self
-                        .equipment
-                        .iter_mut()
-                        .find(|(_, w)| w.instance().id == id)
-                    {
-                        weapon.reload();
-                    }
-                }
+        self.equipped_mut(self.active).unwrap().advance(delta);
+        if !self.current().mechanics().equipped() && self.current().mechanics().action().is_none() {
+            if let Some(slot) = self.pending_slot.take() {
+                self.active = slot;
+            }
+            self.equipped_mut(self.active)
+                .unwrap()
+                .mechanics_mut()
+                .start_equip(0.35);
+        }
+        if self.pending_slot.is_none() {
+            let weapon = self.equipped_mut(self.active).unwrap();
+            let duration = weapon.spec().reload_seconds;
+            if selector {
+                weapon.mechanics_mut().cycle_selector();
+            }
+            if reload {
+                weapon.mechanics_mut().start_reload(duration);
+            }
+            if inspect {
+                weapon.mechanics_mut().start_inspect(1.5);
             }
         }
-        if input.reload_sequence != self.last_reload {
-            self.last_reload = input.reload_sequence;
-            let weapon = self.current();
-            if self.reload_remaining == 0.0
-                && weapon.rounds() < weapon.spec().magazine_size
-                && weapon.reserve() > 0
-            {
-                let (duration, id) = (weapon.spec().reload_seconds, weapon.instance().id);
-                self.reload_remaining = duration;
-                self.reload_weapon = Some(id);
-            }
-        }
-        let spec = self.current().spec();
-        let wants_fire = if spec.automatic { input.fire } else { pressed };
-        if !wants_fire
-            || self.reload_remaining > 0.0
-            || self.current().rounds() == 0
-            || now - self.last_shot_at < spec.seconds_per_shot()
+        let snapshot = self.current().mechanics().snapshot();
+        self.reload_remaining = if snapshot.reloading() {
+            snapshot.remaining
+        } else {
+            0.0
+        };
+        let definition = self.current().spec().definition;
+        if self.pending_slot.is_some()
+            || now - self.last_shot_at < self.current().spec().seconds_per_shot()
         {
             return None;
         }
-        let definition = spec.definition;
-        self.equipped_mut(self.active).unwrap().fire();
+        if !self
+            .equipped_mut(self.active)
+            .unwrap()
+            .mechanics_mut()
+            .fire(input.fire, pressed)
+        {
+            return None;
+        }
         self.last_shot_at = now;
         Some(definition)
+    }
+
+    pub fn cancel_actions(&mut self) {
+        for (_, weapon) in &mut self.equipment {
+            weapon.mechanics_mut().cancel();
+        }
+        self.pending_slot = None;
+        self.reload_remaining = 0.0;
     }
 
     pub fn synchronize_sequences(&mut self, input: &ClientInput) {
         self.last_reload = input.reload_sequence;
         self.last_trigger = input.fire_pressed_sequence;
+        self.last_inspect = input.inspect_sequence;
+        self.last_selector = input.selector_sequence;
+    }
+}
+
+fn fresh_sequence(last: &mut u32, incoming: u32) -> bool {
+    let distance = incoming.wrapping_sub(*last);
+    if distance != 0 && distance < (1 << 31) {
+        *last = incoming;
+        true
+    } else {
+        false
     }
 }
 

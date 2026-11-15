@@ -424,12 +424,16 @@ pub(super) fn advance(
             response.recoil_yaw_velocity = 0.0;
         }
         let w = response.displayed.unwrap_or(player.weapon);
-        let fraction = if player.reload_remaining > 0.0 && w == player.weapon {
-            1.0 - player.reload_remaining / player.weapon_id.spec().reload_seconds
+        let fraction = if player.mechanics.reloading() && w == player.weapon {
+            player.mechanics.fraction
         } else {
             0.0
         };
-        let target = reload_action(w, fraction, player.ammo_in_mag == 0);
+        let target = reload_action(
+            w,
+            fraction,
+            player.mechanics.kind == Some(common::catalog::ManipulationKind::EmptyReload),
+        );
         let alpha = 1.0 - (-time.delta_secs().min(0.05) * 32.0).exp();
         let action = response.action.get_or_insert(target);
         action.root.translation += ((target.root.translation - action.root.translation) * alpha)
@@ -511,7 +515,8 @@ pub(super) fn advance(
                 player.pose.mode,
                 PhysicalMode::Standing | PhysicalMode::Stumbling
             )
-            && player.reload_remaining <= 0.0
+            && player.mechanics.kind.is_none()
+            && player.mechanics.equipped
             && response.swap <= 0.05
             && player
                 .body
@@ -710,9 +715,10 @@ pub(super) fn animate_local(
                 displayed,
                 &action,
                 response.recoil,
-                p.reload_remaining > 0.0,
+                p.mechanics.reloading(),
             );
-            if displayed == WeaponKind::Pistol && p.ammo_in_mag == 0 && p.reload_remaining == 0.0 {
+            if displayed == WeaponKind::Pistol && p.mechanics.bolt_open && !p.mechanics.reloading()
+            {
                 t.translation.z = WeaponRig::for_weapon(displayed).bolt_travel;
             }
             *visibility = Visibility::Inherited;
@@ -723,7 +729,9 @@ pub(super) fn animate_local(
         }
         if mag.is_some() {
             *t = action.magazine;
-            *visibility = if action.magazine_visible {
+            *visibility = if action.magazine_visible
+                && (p.mechanics.magazine_inserted || p.mechanics.reloading())
+            {
                 Visibility::Inherited
             } else {
                 Visibility::Hidden
@@ -1010,6 +1018,29 @@ fn pistol_frame_correction(points: &[Vec3], projection: &PerspectiveProjection, 
 
 #[cfg(test)]
 mod tests {
+    fn reload_snapshot(
+        weapon: common::WeaponKind,
+        fraction: f32,
+        empty: bool,
+    ) -> common::catalog::MechanicalSnapshot {
+        use common::catalog::*;
+        let mut state = MechanicalState::new(
+            catalog(),
+            weapon.spec(),
+            [1, 2, 3, 4].map(MagazineInstanceId),
+        )
+        .unwrap();
+        for _ in 0..if empty {
+            weapon.spec().magazine_size
+        } else {
+            5
+        } {
+            assert!(state.fire(true, true));
+        }
+        assert!(state.start_reload(10.0));
+        state.advance(fraction * 10.0);
+        state.snapshot()
+    }
     use super::*;
 
     #[test]
@@ -1218,6 +1249,11 @@ mod tests {
                         } else {
                             0.0
                         };
+                        session.players[0].mechanics = if i < 180 {
+                            reload_snapshot(weapon, fraction, empty)
+                        } else {
+                            default()
+                        };
                     }
                     app.world_mut().resource_mut::<LocalInput>().aim = i > 180;
                     app.world_mut().resource_mut::<LocalInput>().weapon =
@@ -1343,6 +1379,11 @@ mod tests {
                             weapon.spec().reload_seconds * (1.0 - fraction)
                         } else {
                             0.0
+                        },
+                        mechanics: if fraction > 0.0 {
+                            reload_snapshot(weapon, fraction, true)
+                        } else {
+                            default()
                         },
                         ..default()
                     });
@@ -1655,6 +1696,7 @@ mod tests {
             weapon_slot: EquipmentSlot::Sidearm,
             ammo_in_mag: 12,
             reload_remaining: 0.75,
+            mechanics: reload_snapshot(WeaponKind::Pistol, 0.5, false),
             ..default()
         });
         app.init_resource::<Time>()
@@ -1669,6 +1711,7 @@ mod tests {
             .action
             .unwrap();
         app.world_mut().resource_mut::<ClientSession>().players[0].reload_remaining = 0.0;
+        app.world_mut().resource_mut::<ClientSession>().players[0].mechanics = default();
         app.update();
         let after = app.world().resource::<Feedback>().responses[&7]
             .action
