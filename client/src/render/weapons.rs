@@ -430,6 +430,69 @@ pub(super) fn framed_offset(w: WeaponKind, aspect: f32) -> Vec3 {
 mod tests {
     use super::*;
     #[test]
+    fn baseline_voxel_sources_preserve_every_legacy_cuboid() {
+        use bevy::mesh::VertexAttributeValues;
+        for (weapon, root, magazine_source) in [
+            (
+                WeaponKind::Rifle,
+                include_str!("../../../assets/voxel/m4a1_baseline.json"),
+                include_str!("../../../assets/voxel/m4a1_magazine_baseline.json"),
+            ),
+            (
+                WeaponKind::Pistol,
+                include_str!("../../../assets/voxel/m1911_baseline.json"),
+                include_str!("../../../assets/voxel/m1911_magazine_baseline.json"),
+            ),
+            (
+                WeaponKind::Smg,
+                include_str!("../../../assets/voxel/mp5_baseline.json"),
+                include_str!("../../../assets/voxel/mp5_magazine_baseline.json"),
+            ),
+        ] {
+            let root: serde_json::Value = serde_json::from_str(root).unwrap();
+            let mag: serde_json::Value = serde_json::from_str(magazine_source).unwrap();
+            for (name, mesh, source) in [
+                ("receiver", receiver(weapon), &root),
+                ("furniture", furniture(weapon), &root),
+                ("bolt", bolt(weapon), &root),
+                ("control", control(weapon), &root),
+                ("magazine", magazine(weapon), &mag),
+            ] {
+                let part = source["parts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|p| p["id"] == name)
+                    .unwrap();
+                let boxes = part["boxes"].as_array().unwrap();
+                let Some(VertexAttributeValues::Float32x3(vertices)) =
+                    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                else {
+                    panic!("positions")
+                };
+                assert_eq!(boxes.len() * 24, vertices.len());
+                for (cuboid, vertices) in boxes.iter().zip(vertices.as_chunks::<24>().0) {
+                    let min = vertices
+                        .iter()
+                        .fold(Vec3::splat(f32::INFINITY), |v, p| v.min(Vec3::from(*p)));
+                    let max = vertices
+                        .iter()
+                        .fold(Vec3::splat(f32::NEG_INFINITY), |v, p| v.max(Vec3::from(*p)));
+                    for (field, original) in [("min", min), ("max", max)] {
+                        let authored = Vec3::from_array(std::array::from_fn(|i| {
+                            cuboid[field][i].as_f64().unwrap() as f32
+                        }));
+                        assert!(
+                            original.distance(authored) < 1e-6,
+                            "{weapon:?}/{name}/{field}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn primary_ads_puts_the_butt_end_behind_the_eye_not_in_front_of_the_iron_sights() {
         for (weapon, butt_z) in [(WeaponKind::Smg, 0.31), (WeaponKind::Rifle, 0.32)] {
             let eye_relative = common::weapon_animation::ads_offset(weapon) + Vec3::Z * butt_z;

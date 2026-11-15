@@ -5,16 +5,19 @@ use common::{
 };
 
 fn fixture() -> (App, Configuration) {
-    let source = common::catalog::CATALOG_SOURCE.replacen("sockets: [", r#"anchors: [
-        (kind: TriggerGrip, pose: (translation: (0.025, -0.09, 0.035), rotation: (0.0, 0.0, 0.0, 1.0))),
-        (kind: SupportGrip, pose: (translation: (-0.025, 0.005, -0.25), rotation: (0.0, 0.0, 0.0, 1.0))),
-    ], sockets: [
+    let source = common::catalog::CATALOG_SOURCE
+        .replacen(
+            "sockets: [",
+            r#"sockets: [
         (key: "grip", interface: (kind: Rail, standard: "fixture", size: 1),
             accepts: [Grip], positions: 3, pitch_m: 0.02,
             pose: (translation: (0.0, 0.0, -0.15), rotation: (0.0, 0.0, 0.0, 1.0))),
-    "#, 1).replacen(
-        "components: [\n",
-        r#"components: [
+    "#,
+            1,
+        )
+        .replacen(
+            "components: [\n",
+            r#"components: [
         (id: 104, key: "fixture_grip", kind: Grip, ammo: 201, capacity: 0, mass_kg: 0.1,
             assembly: (interface: (kind: Rail, standard: "fixture", size: 1),
                 platform: Some("m4a1"), caliber: Some("556x45"), occupied_positions: 1,
@@ -22,7 +25,9 @@ fn fixture() -> (App, Configuration) {
                     (kind: SupportGrip, pose: (translation: (-0.04, -0.04, -0.01),
                         rotation: (0.0, 0.0, 0.24740396, 0.9689124))),
                 ]))),
-    "#, 1);
+    "#,
+            1,
+        );
     let catalog = Catalog::parse("fixture", &source).unwrap();
     let fingerprint = catalog_fingerprint(&source);
     let packet = Configuration {
@@ -501,4 +506,111 @@ fn configured_visual_failed_initial_request_cleans_error_without_an_instance() {
     app.update();
     assert!(app.world().get::<ConfigurationVisualError>(root).is_none());
     assert!(descendants(app.world(), root).is_empty());
+}
+
+#[test]
+fn configured_visual_baseline_bindings_preserve_native_geometry_and_contacts() {
+    use common::catalog::catalog;
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, TransformPlugin))
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .init_resource::<ClientSession>()
+        .add_plugins(super::super::Plugin);
+    app.world_mut()
+        .resource_mut::<ClientSession>()
+        .configurations
+        .cache
+        .begin_epoch(1)
+        .unwrap();
+    let mut roots = Vec::new();
+    for (index, definition) in [WeaponId::M4A1, WeaponId::M1911, WeaponId::MP5]
+        .into_iter()
+        .enumerate()
+    {
+        let handle = index as u32 + 1;
+        let config = Configuration {
+            epoch: 1,
+            handle,
+            catalog: catalog_fingerprint(common::catalog::CATALOG_SOURCE),
+            owner: 7,
+            slot: if definition == WeaponId::M1911 {
+                common::EquipmentSlot::Sidearm
+            } else {
+                common::EquipmentSlot::Primary
+            },
+            instance: common::WeaponInstanceId(index as u64 + 1),
+            revision: 1,
+            weapon: catalog().configuration(definition).unwrap(),
+        };
+        app.world_mut()
+            .resource_mut::<ClientSession>()
+            .configurations
+            .cache
+            .apply(catalog(), config.catalog, config)
+            .unwrap();
+        for view_model in [false, true] {
+            let entity = spawn(&mut app, view_model, Transform::IDENTITY);
+            app.world_mut()
+                .get_mut::<ConfiguredWeapon>(entity)
+                .unwrap()
+                .handle = handle;
+            roots.push((entity, definition, view_model));
+        }
+    }
+    app.update();
+    for (entity, definition, view_model) in roots {
+        assert!(
+            app.world()
+                .get::<ConfigurationVisualError>(entity)
+                .is_none()
+        );
+        let model = app.world().get::<Instance>(entity).unwrap();
+        let rig = common::weapon_animation::WeaponRig::for_weapon(
+            catalog().weapon(definition).unwrap().class,
+        );
+        let root = app
+            .world()
+            .get::<GlobalTransform>(model.weapon_root)
+            .unwrap();
+        for (index, contact) in [(2, rig.support), (5, rig.trigger)] {
+            let hand = app
+                .world()
+                .get::<GlobalTransform>(model.hands[index])
+                .unwrap();
+            assert!(hand.translation().distance(root.transform_point(contact)) < 2e-6);
+        }
+        let magazine = &model.pieces[&1];
+        assert!(magazine.pose.translation.distance(rig.magazine) < 1e-6);
+        let root_asset = &app.world().resource::<VoxelCache>().assets[&model.pieces[&0].asset];
+        let muzzle = root_asset
+            .sockets
+            .iter()
+            .find(|s| s.id == "muzzle")
+            .unwrap();
+        assert!(muzzle.pose.transform().translation.distance(rig.muzzle) < 1e-6);
+        assert!(root_asset.parts.iter().any(|p| p.id == "bolt" && p.movable));
+        assert!(
+            root_asset
+                .parts
+                .iter()
+                .any(|p| p.id == "control" && p.movable)
+        );
+        for child in descendants(app.world(), entity) {
+            if app.world().get::<Mesh3d>(child).is_some() {
+                assert_eq!(
+                    app.world().get::<RenderLayers>(child).unwrap(),
+                    &RenderLayers::layer(if view_model {
+                        VIEW_MODEL_RENDER_LAYER
+                    } else {
+                        0
+                    })
+                );
+            }
+        }
+    }
+    // Six assets, each loaded once for two perspectives; four surfaces per root
+    // and one per magazine, plus three shared arm/palm meshes.
+    assert_eq!(app.world().resource::<VoxelCache>().assets.len(), 6);
+    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 18);
 }

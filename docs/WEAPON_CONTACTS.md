@@ -75,10 +75,19 @@ the moving socket, solves both arms and validates every ECS target before writin
 any transforms. Identity mismatches, invalid motion or missing targets reject the
 whole update. This shares meshes, not entity hierarchies, across instances.
 
-Production actor/view-model producers and baseline asset bindings still need to
-migrate to these components. The engineering fixtures bind root, magazine and
-grip to the same pipeline exemplar; they prove assembly/contact/cache mechanics,
-not completed weapon art or native weapon presentation.
+The default visual bindings now map the three baseline weapon definitions and
+their magazines to six baked assets. Their original cuboids were migrated at
+micrometre precision, with separate receiver/furniture/bolt/control pieces and
+attachment-local magazines. Root assets expose muzzle/control sockets; magazines
+expose their moving grasp socket. Catalogue anchors preserve existing support/
+trigger contacts, place the magazine attachment, and locate the authored stock
+surface where present. They do not force every pose to be stock-braced.
+
+Production actor/view-model producers still need to migrate to these components.
+The modular revision fixtures use the pipeline exemplar, while a separate native
+fixture loads all six baseline assets in both perspectives and checks actual
+contacts, muzzle position, render layers and shared buffers. This establishes the
+asset/assembly path before switching production presentation.
 
 Fixtures independently measure both bone lengths, exact contact position and
 orientation, elbow limits and pole direction. They cover collinear poles,

@@ -194,7 +194,7 @@ fn assembly_positive_matrix_and_independent_mass_anchor_oracles() {
     let catalog = catalog_fixture();
     // Both magazines; full adapter chains, compatible rail and bore/device
     // separation must coexist in the same accepted configuration.
-    for (magazine, capacity, mass) in [(101, 30, 3.61), (104, 20, 3.6)] {
+    for (magazine, capacity, magazine_mass, mass) in [(101, 30, 0.11, 3.61), (104, 20, 0.1, 3.6)] {
         let mut configuration = assembled();
         configuration.components[0].definition = DefinitionId(magazine);
         let resolved = catalog.resolve(&configuration).unwrap();
@@ -207,12 +207,15 @@ fn assembly_positive_matrix_and_independent_mass_anchor_oracles() {
         assert!(
             (anchors[&AnchorKind::Sight].translation - Vec3::new(0.0, 0.12, 0.03)).length() < 1e-6
         );
-        // 6 parts x 0.25 kg; y moment = .025+.030-.025=.030;
+        // 6 parts x 0.25 kg: y moment = .025+.030-.025=.030;
         // z moment = .0075+.0075+.005-.1-.1=-.180 kg*m.
-        assert!((resolved.assembly.center_of_mass[1] - 0.03 / mass).abs() < 1e-6);
-        assert!((resolved.assembly.center_of_mass[2] + 0.18 / mass).abs() < 1e-6);
+        // The baseline magazine now occupies its actual socket at (0,-.13,-.105).
+        let moment_y = 0.03_f32 - 0.13 * magazine_mass;
+        let moment_z = -0.18_f32 - 0.105 * magazine_mass;
+        assert!((resolved.assembly.center_of_mass[1] - moment_y / mass).abs() < 1e-6);
+        assert!((resolved.assembly.center_of_mass[2] - moment_z / mass).abs() < 1e-6);
         assert!(
-            (resolved.assembly.balance_kg_m - (0.03_f32.powi(2) + 0.18_f32.powi(2)).sqrt()).abs()
+            (resolved.assembly.balance_kg_m - (moment_y.powi(2) + moment_z.powi(2)).sqrt()).abs()
                 < 1e-6
         );
         assert_eq!(resolved.assembly.recoil_multiplier, 0.8);

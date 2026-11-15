@@ -165,6 +165,7 @@ fn handling_configuration_requires_named_rigid_contacts_and_keeps_grip_rotation(
         .unwrap()
         .assembly
         .clone();
+    assembly.anchors.remove(&AnchorKind::SupportGrip);
     assert_eq!(
         WeaponContacts::from_assembly(&assembly).unwrap_err(),
         HandlingError::MissingAnchor(AnchorKind::SupportGrip)
