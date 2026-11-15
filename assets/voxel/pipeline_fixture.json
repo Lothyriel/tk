@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "id": "pipeline_fixture",
+  "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK engineering fixture, authored from cuboids; no third-party model or firearm art.",
+  "materials": [
+    {"id": "steel", "surface": "metal", "color": [0.12, 0.14, 0.16, 1], "roughness": 0.32, "metallic": 0.9},
+    {"id": "polymer", "surface": "polymer", "color": [0.06, 0.065, 0.055, 1], "roughness": 0.8, "metallic": 0},
+    {"id": "wood", "surface": "wood", "color": [0.3, 0.12, 0.045, 1], "roughness": 0.65, "metallic": 0},
+    {"id": "rubber", "surface": "rubber", "color": [0.025, 0.025, 0.025, 1], "roughness": 0.95, "metallic": 0}
+  ],
+  "parts": [
+    {
+      "id": "receiver", "parent": null, "movable": false,
+      "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+      "boxes": [
+        {"min": [-0.02, -0.02, -0.12], "max": [0.02, 0.02, 0], "material": "steel"},
+        {"min": [-0.02, -0.02, 0], "max": [0.02, 0.02, 0.08], "material": "steel"},
+        {"min": [-0.024, -0.02, 0.02], "max": [-0.02, 0.02, 0.07], "material": "wood"},
+        {"min": [-0.02, -0.024, -0.1], "max": [0.02, -0.02, -0.02], "material": "polymer"},
+        {"min": [-0.02, -0.02, 0.08], "max": [0.02, 0.02, 0.084], "material": "rubber"}
+      ]
+    },
+    {
+      "id": "bolt", "parent": "receiver", "movable": true,
+      "pivot": {"translation": [0.0203, 0.0057, -0.04], "rotation": [0, 0, 0, 1]},
+      "boxes": [
+        {"min": [0, -0.004, -0.012], "max": [0.006, 0.004, 0.012], "material": "steel"}
+      ]
+    },
+    {
+      "id": "magazine", "parent": "receiver", "movable": true,
+      "pivot": {"translation": [0, -0.0253, -0.0501], "rotation": [0, 0, 0, 1]},
+      "boxes": [
+        {"min": [-0.015, -0.08, -0.025], "max": [0.015, 0, 0.025], "material": "steel"},
+        {"min": [-0.018, -0.084, -0.028], "max": [0.018, -0.08, 0.028], "material": "polymer"}
+      ]
+    }
+  ],
+  "sockets": [
+    {"id": "magazine.grasp", "part": "magazine", "pose": {"translation": [0.0153, -0.0401, 0.0007], "rotation": [0, 0, 0, 1]}},
+    {"id": "control.bolt", "part": "bolt", "pose": {"translation": [0.0061, 0.0003, -0.0001], "rotation": [0, 0, 0, 1]}}
+  ]
+}
