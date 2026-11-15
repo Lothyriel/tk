@@ -371,6 +371,64 @@ fn assembly_is_deterministic_for_all_entry_permutations() {
 }
 
 #[test]
+fn assembly_descendant_contacts_override_ancestors_but_not_other_branches() {
+    let mut doc = document();
+    // Mount supplies its bare outlet, then the attached can supplies the final one.
+    doc.components[8].assembly.geometry.anchors.push(Anchor {
+        kind: AnchorKind::DeviceExit,
+        pose: RigidPose {
+            translation: [0.0, 0.0, -0.05],
+            ..Default::default()
+        },
+    });
+    let catalog = Catalog::validate("nested-outlet.ron", doc.clone()).unwrap();
+    let mut config = assembled();
+    assert!(
+        (catalog.resolve(&config).unwrap().assembly.anchors[&AnchorKind::DeviceExit]
+            .translation
+            .z
+            + 0.6)
+            .abs()
+            < 1e-6
+    );
+    config.components.retain(|n| n.node != 7);
+    assert!(
+        (catalog.resolve(&config).unwrap().assembly.anchors[&AnchorKind::DeviceExit]
+            .translation
+            .z
+            + 0.45)
+            .abs()
+            < 1e-6
+    );
+
+    // Descendant ID sorts before both ancestors; order in the packet is irrelevant.
+    let mut config = assembled();
+    config.components[0].node = 8;
+    config.components[6].node = 1;
+    config.components.reverse();
+    assert!(
+        (catalog.resolve(&config).unwrap().assembly.anchors[&AnchorKind::DeviceExit]
+            .translation
+            .z
+            + 0.6)
+            .abs()
+            < 1e-6
+    );
+
+    // A foregrip cannot silently steal the muzzle outlet from another branch.
+    doc.components[6].assembly.geometry.anchors.push(Anchor {
+        kind: AnchorKind::DeviceExit,
+        pose: RigidPose::default(),
+    });
+    let catalog = Catalog::validate("ambiguous-outlet.ron", doc).unwrap();
+    assert!(catalog
+        .resolve(&config)
+        .unwrap_err()
+        .message
+        .contains("ambiguous DeviceExit"));
+}
+
+#[test]
 fn assembly_rigid_rotations_and_conservative_swept_clearance() {
     let mut doc = document();
     doc.weapons[0].assembly.geometry.sockets[1].pose.rotation =

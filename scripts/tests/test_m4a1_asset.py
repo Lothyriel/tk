@@ -5,7 +5,11 @@ These checks qualify source geometry, not its pending native artistic review.
 import itertools
 import json
 from pathlib import Path
+import sys
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import bake_voxels
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -124,6 +128,62 @@ class M4A1AssetTests(unittest.TestCase):
         base_grip = next(s for s in load("m4a1_magazine_30")["sockets"]
                          if s["id"] == "magazine.grasp")["pose"]["translation"]
         self.assertGreater(sum((a - b) ** 2 for a, b in zip(contact, base_grip)), 0.003 ** 2)
+
+    def test_modular_exports_partition_base_geometry_without_moving_surfaces(self):
+        exports = list(bake_voxels.exported_sources(self.asset))
+        seen = []
+        for selection, asset in zip(self.asset["exports"], exports):
+            parts = {p["id"]: p for p in asset["parts"]}
+            seen.extend(parts)
+            for key, part in parts.items():
+                original = self.parts[key]
+                self.assertEqual(part["boxes"], original["boxes"])
+                self.assertEqual(part.get("far_boxes"), original.get("far_boxes"))
+                self.assertEqual(part["movable"], original["movable"])
+                for box in part["boxes"]:
+                    for corner in itertools.product(*zip(box["min"], box["max"])):
+                        local = point(parts, key, corner)
+                        reassembled = point(self.parts, selection["root"], local)
+                        expected = point(self.parts, key, corner)
+                        for a, b in zip(reassembled, expected):
+                            self.assertAlmostEqual(a, b, delta=1e-8)
+        # Every surface has exactly one runtime owner, including all controls.
+        self.assertCountEqual(seen, list(self.parts))
+
+    def test_furniture_published_envelopes_openings_and_contacts(self):
+        # Published dimensions, independently converted from inches.
+        cases = [
+            ("m4a1_ctr", [1.7, 5.2, 7.0], "stock.shoulder",
+             [[-0.012, -0.012, 0.005], [0.012, 0.012, 0.160]]),
+            ("m4a1_afg2", [1.37, 1.94, 4.70], "grip.support",
+             [[-0.010, -0.025, -0.045], [0.010, -0.015, -0.030]]),
+            ("m4a1_rvg", [None, 3.5, None], "grip.support", None),
+            ("m4a1_moe_sl", [1.8, 2.4, 8.9], "grip.support",
+             [[-0.012, -0.012, -0.220], [0.012, 0.012, 0]]),
+        ]
+        for name, inches, contact_id, opening in cases:
+            with self.subTest(asset=name):
+                asset = load(name)
+                parts = {p["id"]: p for p in asset["parts"]}
+                solids = [bounds(parts, p["id"], box)
+                          for p in parts.values() for box in p["boxes"]]
+                for axis, value in enumerate(inches):
+                    if value is not None:
+                        extent = max(b[1][axis] for b in solids) - min(b[0][axis] for b in solids)
+                        self.assertAlmostEqual(extent, value * 0.0254, delta=0.001)
+                if opening:
+                    self.assertTrue(all(not intersects(b, opening) for b in solids))
+                socket = next(s for s in asset["sockets"] if s["id"] == contact_id)
+                contact = point(parts, socket["part"], socket["pose"]["translation"])
+                self.assertTrue(any(all(b[0][i] <= contact[i] <= b[1][i] for i in range(3))
+                                    for b in solids))
+                self.assertFalse(any(all(b[0][i] < contact[i] < b[1][i] for i in range(3))
+                                     for b in solids), "contact buried inside another solid")
+        stock = load("m4a1_ctr")
+        # A-frame has real negative space below the sleeve, rather than a filled wedge.
+        opening = [[-0.010, -0.060, 0.095], [0.010, -0.035, 0.125]]
+        self.assertTrue(all(not intersects([b["min"], b["max"]], opening)
+                            for b in stock["parts"][0]["boxes"]))
 
 
 if __name__ == "__main__":

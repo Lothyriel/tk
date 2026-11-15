@@ -1,0 +1,54 @@
+{
+  "version": 1, "id": "m4a1_moe_sl", "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK Magpul MOE SL carbine MAG538 exterior. F: 8.9 inch maximum length, 6.6 inch mount length, 1.8 inch width, 2.4 inch height, https://magpul.com/moe-sl-hand-guard-carbine-length-ar15-m4.html . V: open barrel channel, vent slots, ribs and lower front extension from manufacturer gallery mag538-blk_magpul_moe_sl_hand_guard_carbine-length_02.jpg. G: simplified slot stations/contact/palette; no front sling swivel.",
+  "materials": [
+    {"id": "polymer", "surface": "polymer", "color": [0.057, 0.062, 0.055, 1], "roughness": 0.86, "metallic": 0}
+  ],
+  "parts": [{
+    "id": "handguard", "parent": null, "movable": false,
+    "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+    "boxes": [
+      {"min": [-0.02186, -0.026, -0.16764], "max": [-0.018, 0.013, 0], "material": "polymer"},
+      {"min": [0.018, -0.026, -0.16764], "max": [0.02186, 0.013, 0], "material": "polymer"},
+      {"min": [-0.02186, 0.021, -0.16764], "max": [-0.01544, 0.025, 0], "material": "polymer"},
+      {"min": [0.01544, 0.021, -0.16764], "max": [0.02186, 0.025, 0], "material": "polymer"},
+      {"min": [-0.01544, 0.025, -0.16764], "max": [0.01544, 0.03048, 0], "material": "polymer"},
+      {"min": [-0.02186, 0.013, -0.005], "max": [-0.018, 0.021, 0], "material": "polymer"},
+      {"min": [0.018, 0.013, -0.005], "max": [0.02186, 0.021, 0], "material": "polymer"},
+      {"min": [-0.02186, 0.013, -0.045], "max": [-0.018, 0.021, -0.035], "material": "polymer"},
+      {"min": [0.018, 0.013, -0.045], "max": [0.02186, 0.021, -0.035], "material": "polymer"},
+      {"min": [-0.02186, 0.013, -0.085], "max": [-0.018, 0.021, -0.075], "material": "polymer"},
+      {"min": [0.018, 0.013, -0.085], "max": [0.02186, 0.021, -0.075], "material": "polymer"},
+      {"min": [-0.02186, 0.013, -0.125], "max": [-0.018, 0.021, -0.115], "material": "polymer"},
+      {"min": [0.018, 0.013, -0.125], "max": [0.02186, 0.021, -0.115], "material": "polymer"},
+      {"min": [-0.02186, 0.013, -0.16764], "max": [-0.018, 0.021, -0.155], "material": "polymer"},
+      {"min": [0.018, 0.013, -0.16764], "max": [0.02186, 0.021, -0.155], "material": "polymer"},
+      {"min": [-0.018, -0.03048, -0.22606], "max": [-0.004, -0.026, 0], "material": "polymer"},
+      {"min": [0.004, -0.03048, -0.22606], "max": [0.018, -0.026, 0], "material": "polymer"},
+      {"min": [-0.004, -0.03048, -0.010], "max": [0.004, -0.026, 0], "material": "polymer"},
+      {"min": [-0.004, -0.03048, -0.050], "max": [0.004, -0.026, -0.040], "material": "polymer"},
+      {"min": [-0.004, -0.03048, -0.090], "max": [0.004, -0.026, -0.080], "material": "polymer"},
+      {"min": [-0.004, -0.03048, -0.22606], "max": [0.004, -0.026, -0.120], "material": "polymer"},
+      {"min": [-0.02286, -0.026, -0.22606], "max": [-0.01544, -0.016, -0.16764], "material": "polymer"},
+      {"min": [0.01544, -0.026, -0.22606], "max": [0.02286, -0.016, -0.16764], "material": "polymer"},
+      {"min": [-0.02286, -0.026, -0.22606], "max": [0.02286, -0.012, -0.22006], "material": "polymer"},
+      {"min": [-0.02286, -0.023, -0.026], "max": [-0.02186, 0.012, -0.024], "material": "polymer"},
+      {"min": [0.02186, -0.023, -0.026], "max": [0.02286, 0.012, -0.024], "material": "polymer"},
+      {"min": [-0.02286, -0.023, -0.050], "max": [-0.02186, 0.012, -0.048], "material": "polymer"},
+      {"min": [0.02186, -0.023, -0.050], "max": [0.02286, 0.012, -0.048], "material": "polymer"},
+      {"min": [-0.02286, -0.023, -0.074], "max": [-0.02186, 0.012, -0.072], "material": "polymer"},
+      {"min": [0.02186, -0.023, -0.074], "max": [0.02286, 0.012, -0.072], "material": "polymer"},
+      {"min": [-0.02286, -0.023, -0.098], "max": [-0.02186, 0.012, -0.096], "material": "polymer"},
+      {"min": [0.02186, -0.023, -0.098], "max": [0.02286, 0.012, -0.096], "material": "polymer"},
+      {"min": [-0.02286, -0.023, -0.122], "max": [-0.02186, 0.012, -0.120], "material": "polymer"},
+      {"min": [0.02186, -0.023, -0.122], "max": [0.02286, 0.012, -0.120], "material": "polymer"},
+      {"min": [-0.02286, -0.023, -0.146], "max": [-0.02186, 0.012, -0.144], "material": "polymer"},
+      {"min": [0.02186, -0.023, -0.146], "max": [0.02286, 0.012, -0.144], "material": "polymer"}
+    ]
+  }],
+  "sockets": [
+    {"id": "grip.support", "part": "handguard", "pose": {"translation": [0, -0.03048, -0.085], "rotation": [0, 0, 0, 1]}},
+    {"id": "mlok.bottom", "part": "handguard", "pose": {"translation": [0, -0.03048, -0.105], "rotation": [0, 0, 0, 1]}}
+  ]
+}
