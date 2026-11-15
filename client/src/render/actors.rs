@@ -926,13 +926,7 @@ fn animate(
         };
         let recoil = feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
         preferred.translation.z += recoil;
-        let mut input = configured::native::action(
-            &entry.resolved,
-            action,
-            recoil,
-            p.mechanics.reloading(),
-            p.mechanics.magazine_inserted,
-        );
+        let mut input = configured::native::action(&entry.resolved, action, recoil, &p.mechanics);
         input.preferred_root = preferred;
         input.shoulders = [Segment::LeftUpperArm, Segment::RightUpperArm].map(|segment| {
             pose[segment.index()]

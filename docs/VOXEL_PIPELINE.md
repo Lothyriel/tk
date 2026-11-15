@@ -187,8 +187,8 @@ They assert active triangles 100↔84, unchanged entities/anchors, detailed
 view-models and stable cache allocations. Bake tests reject ±3 mm changes,
 accept ±1 mm, and reject simplified mechanisms or lost material groups.
 
-Remote weapon presentation now uses the data-driven assembler. Local view-model
-migration and the remaining configured handling integration continue in TAR-23.
+Both native weapon perspectives now use the data-driven assembler. Configured
+authority-side anatomy and final handling acceptance continue in TAR-23.
 
 ## Baseline weapon migration
 
@@ -213,5 +213,6 @@ until an authored simplification is validated.
 The default client bindings map the logical weapon/component IDs to these six
 asset IDs. A minimal Bevy fixture instantiates all three in world/view layers,
 checks catalogue contacts and muzzle locations, and observes 15 shared surface
-meshes plus three shared anatomical meshes. The production actor producer uses
-these bindings; view-model migration continues in TAR-23.
+meshes plus three shared anatomical meshes. Production actor and view-model
+producers use these bindings. First-person framing previews cached part bounds
+and solved palms; it shares the same bindings and solver as final publication.

@@ -1,8 +1,13 @@
 //! Original stepped voxel weapon assemblies. One set of parts in weapon-local metres.
 //! Base identities and authoring targets: docs/WEAPON_REFERENCES.md.
+#[cfg(test)]
 use super::{VIEW_MODEL_RENDER_LAYER, feedback};
-use bevy::{camera::visibility::RenderLayers, light::NotShadowCaster, prelude::*};
-use common::{WeaponKind, weapon_animation::WeaponRig};
+use bevy::prelude::*;
+#[cfg(test)]
+use bevy::{camera::visibility::RenderLayers, light::NotShadowCaster};
+use common::WeaponKind;
+#[cfg(test)]
+use common::weapon_animation::WeaponRig;
 
 fn boxes(parts: &[(Vec3, Vec3)]) -> Mesh {
     let mut mesh = Mesh::from(Cuboid::from_size(parts[0].0)).translated_by(parts[0].1);
@@ -13,6 +18,7 @@ fn boxes(parts: &[(Vec3, Vec3)]) -> Mesh {
     mesh
 }
 
+#[cfg(test)]
 pub(super) fn receiver(w: WeaponKind) -> Mesh {
     let mut parts = match w {
         WeaponKind::Pistol => vec![
@@ -93,6 +99,7 @@ pub(super) fn receiver(w: WeaponKind) -> Mesh {
     boxes(&parts)
 }
 
+#[cfg(test)]
 fn furniture(w: WeaponKind) -> Mesh {
     let mut parts = match w {
         WeaponKind::Pistol => vec![
@@ -142,6 +149,7 @@ fn furniture(w: WeaponKind) -> Mesh {
     boxes(&parts)
 }
 
+#[cfg(test)]
 fn bolt(w: WeaponKind) -> Mesh {
     if w == WeaponKind::Pistol {
         let mut parts = vec![
@@ -178,6 +186,7 @@ fn bolt(w: WeaponKind) -> Mesh {
     }
 }
 
+#[cfg(test)]
 fn magazine(w: WeaponKind) -> Mesh {
     let (width, height, depth) = match w {
         WeaponKind::Pistol => (0.037, 0.13, 0.052),
@@ -229,6 +238,7 @@ pub(super) fn glove() -> Mesh {
     boxes(&parts)
 }
 
+#[cfg(test)]
 fn control(w: WeaponKind) -> Mesh {
     let centre = match w {
         WeaponKind::Pistol => Vec3::new(-0.034, 0.015, -0.04),
@@ -243,6 +253,7 @@ pub(super) fn world_meshes(w: WeaponKind) -> [Mesh; 5] {
     [receiver(w), furniture(w), bolt(w), magazine(w), control(w)]
 }
 
+#[cfg(test)]
 pub(super) fn steel() -> StandardMaterial {
     StandardMaterial {
         base_color: Color::srgb(0.16, 0.18, 0.20),
@@ -252,6 +263,7 @@ pub(super) fn steel() -> StandardMaterial {
     }
 }
 
+#[cfg(test)]
 pub(super) fn trim(w: WeaponKind) -> StandardMaterial {
     StandardMaterial {
         base_color: if w == WeaponKind::Pistol {
@@ -264,6 +276,7 @@ pub(super) fn trim(w: WeaponKind) -> StandardMaterial {
     }
 }
 
+#[cfg(test)]
 fn part(
     mesh: Handle<Mesh>,
     material: Handle<StandardMaterial>,
@@ -278,6 +291,7 @@ fn part(
     )
 }
 
+#[cfg(test)]
 fn framed_part(
     meshes: &mut Assets<Mesh>,
     mesh: Mesh,
@@ -288,6 +302,7 @@ fn framed_part(
     (bounds, part(meshes.add(mesh), material, transform))
 }
 
+#[cfg(test)]
 fn view_frame_bounds(mesh: &Mesh) -> feedback::ViewFrameBounds {
     let Some(bevy::mesh::VertexAttributeValues::Float32x3(vertices)) =
         mesh.attribute(Mesh::ATTRIBUTE_POSITION)
@@ -312,6 +327,7 @@ fn view_frame_bounds(mesh: &Mesh) -> feedback::ViewFrameBounds {
     feedback::ViewFrameBounds(bounds)
 }
 
+#[cfg(test)]
 pub(super) fn assembly(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
