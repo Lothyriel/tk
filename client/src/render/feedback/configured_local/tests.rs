@@ -147,6 +147,146 @@ fn configured_local_first_person_rifle_receiver_clears_near_plane_through_recoil
 }
 
 #[test]
+fn configured_local_inspect_frames_real_assembly_and_returns_continuously() {
+    for aspect in [4.0 / 3.0, 1.6, 16.0 / 9.0, 21.0 / 9.0] {
+        for fps in [30, 60, 165] {
+            let mut f = Fixture::new(WeaponKind::Rifle, aspect);
+            f.app
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    std::time::Duration::from_secs_f64(1.0 / fps as f64),
+                ));
+            let before = f.app.world().resource::<ClientSession>().players[0].mechanics;
+            let rest_frame = f.app.world().resource::<Feedback>().responses[&7].frame_offset;
+            let pieces = descendants(f.app.world(), f.root);
+            let trigger = named(&f.app, f.root, "configured-trigger-palm");
+            let mut previous = Some(
+                f.app
+                    .world()
+                    .get::<GlobalTransform>(trigger)
+                    .unwrap()
+                    .translation(),
+            );
+            let mut sides = [false; 2];
+            for frame in 0..=fps * 4 {
+                let fraction = (frame as f32 / fps as f32 / 2.8).min(1.0);
+                {
+                    let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+                    session.players[0].mechanics.kind =
+                        (fraction < 1.0).then_some(ManipulationKind::Inspect);
+                    session.players[0].mechanics.fraction = fraction;
+                }
+                f.step();
+                f.assert_contacts();
+                let world = f.app.world();
+                let response = &world.resource::<Feedback>().responses[&7];
+                let action = response.action.unwrap();
+                let side = (action.root.rotation * Vec3::NEG_Z).x;
+                sides[0] |= side > 0.45;
+                sides[1] |= side < -0.45;
+                assert_eq!(action.magazine_grip, 0.0);
+                assert_eq!(action.control_grip, 0.0);
+                assert_eq!(
+                    descendants(world, f.root),
+                    pieces,
+                    "inspect must not replace the assembly"
+                );
+                let state = world.resource::<ClientSession>().players[0].mechanics;
+                assert_eq!(state.magazine, before.magazine);
+                assert_eq!(state.chambered, before.chambered);
+                let hand = named(&f.app, f.root, "configured-trigger-palm");
+                let position = world.get::<GlobalTransform>(hand).unwrap().translation();
+                if let Some(previous) = previous {
+                    assert!(
+                        position.distance(previous) < 2.0 / fps as f32 + 0.001,
+                        "inspect/return snaps at fraction={fraction}: {}",
+                        position.distance(previous)
+                    );
+                }
+                previous = Some(position);
+                if fraction < 1.0 {
+                    f.assert_pistol_frame(aspect);
+                }
+            }
+            assert!(
+                sides.into_iter().all(|side| side),
+                "both receiver sides must be presented"
+            );
+            assert!(
+                f.app.world().resource::<Feedback>().responses[&7]
+                    .frame_offset
+                    .distance(rest_frame)
+                    < 0.001
+            );
+        }
+    }
+}
+
+#[test]
+fn configured_local_inspect_interruptions_keep_continuous_contacts_and_framing() {
+    for fps in [30, 60, 165] {
+        for fraction in [0.28, 0.70] {
+            for next in ["idle", "ads", "reload", "unequip", "sprint"] {
+                let mut f = Fixture::new(WeaponKind::Rifle, 4.0 / 3.0);
+                f.app
+                    .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                        std::time::Duration::from_secs_f64(1.0 / fps as f64),
+                    ));
+                {
+                    let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+                    session.players[0].mechanics.kind = Some(ManipulationKind::Inspect);
+                    session.players[0].mechanics.fraction = fraction;
+                }
+                for _ in 0..fps {
+                    f.step();
+                }
+                let hand = named(&f.app, f.root, "configured-trigger-palm");
+                let mut previous = f
+                    .app
+                    .world()
+                    .get::<GlobalTransform>(hand)
+                    .unwrap()
+                    .translation();
+                {
+                    let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+                    session.players[0].mechanics.kind = match next {
+                        "reload" => Some(ManipulationKind::TacticalReload),
+                        "unequip" => Some(ManipulationKind::Unequip),
+                        _ => None,
+                    };
+                    session.players[0].mechanics.fraction = 0.0;
+                    if next == "sprint" {
+                        session.players[0].pose.velocity = [0.0, 0.0, -8.0];
+                        session.players[0].pose.acceleration = [0.0, -12.0];
+                    }
+                }
+                f.app.world_mut().resource_mut::<LocalInput>().aim = next == "ads";
+                for frame in 0..fps {
+                    if next == "unequip" {
+                        f.app.world_mut().resource_mut::<ClientSession>().players[0]
+                            .mechanics
+                            .fraction = (frame as f32 / fps as f32 / 0.2).min(1.0);
+                    }
+                    f.step();
+                    f.assert_contacts();
+                    let current = f
+                        .app
+                        .world()
+                        .get::<GlobalTransform>(hand)
+                        .unwrap()
+                        .translation();
+                    assert!(
+                        current.distance(previous) <= 3.0 / fps as f32 + 0.001,
+                        "{next} fps={fps} frame={frame} displacement={}",
+                        current.distance(previous)
+                    );
+                    previous = current;
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn configured_local_mixed_reload_uses_owned_incoming_mesh_before_insertion_without_duplicates() {
     use common::catalog::{DefinitionId, EquippedWeapon, WeaponInstanceId, WeaponKit};
     use common::replication::ConfigurationPublisher;
@@ -317,17 +457,13 @@ fn configured_local_switch_during_reload_keeps_outgoing_magazine_location() {
         }
         let inserted = rifle.mechanics().inserted().map(|m| m.id);
         rifle.mechanics_mut().cancel();
-        {
-            let mut session = f.app.world_mut().resource_mut::<ClientSession>();
-            let player = &mut session.players[0];
-            player.weapon = WeaponKind::Pistol;
-            player.weapon_id = common::WeaponId::M1911;
-            player.weapon_slot = EquipmentSlot::Sidearm;
-            player.weapon_instance = pistol.instance().id;
-            player.configuration = pistol_handle;
-            player.mechanics = pistol.mechanics().snapshot();
-            player.pose.weapon = WeaponKind::Pistol;
-        }
+        assert!(
+            rifle
+                .mechanics_mut()
+                .start_unequip(common::catalog::HandlingTiming::UNEQUIP)
+        );
+        f.app.world_mut().resource_mut::<ClientSession>().players[0].mechanics =
+            rifle.mechanics().snapshot();
         f.step();
         f.assert_support_clears_magwell();
         let world = f.app.world();
@@ -350,9 +486,41 @@ fn configured_local_switch_during_reload_keeps_outgoing_magazine_location() {
             }),
             "switch at {fraction} revealed a detached magazine"
         );
-        for _ in 0..30 {
+        // The outgoing slot remains selected until the actual unequip commit,
+        // including a slowed clock. The incoming snapshot changes the display
+        // immediately at that marker, with no independent triangular timer.
+        for _ in 0..20 {
+            rifle.advance(0.005);
+            f.app.world_mut().resource_mut::<ClientSession>().players[0].mechanics =
+                rifle.mechanics().snapshot();
             f.step();
+            assert_eq!(
+                f.app.world().resource::<Feedback>().responses[&7].displayed,
+                Some(WeaponKind::Rifle)
+            );
+            assert_eq!(
+                f.app
+                    .world()
+                    .get::<ConfiguredWeapon>(f.root)
+                    .unwrap()
+                    .magazine,
+                inserted
+            );
         }
+        {
+            let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+            let player = &mut session.players[0];
+            player.weapon = WeaponKind::Pistol;
+            player.weapon_id = common::WeaponId::M1911;
+            player.weapon_slot = EquipmentSlot::Sidearm;
+            player.weapon_instance = pistol.instance().id;
+            player.configuration = pistol_handle;
+            player.mechanics = pistol.mechanics().snapshot();
+            player.mechanics.kind = Some(common::catalog::ManipulationKind::Equip);
+            player.mechanics.fraction = 0.0;
+            player.pose.weapon = WeaponKind::Pistol;
+        }
+        f.step();
         assert_eq!(
             f.app.world().resource::<Feedback>().responses[&7].displayed,
             Some(WeaponKind::Pistol)
@@ -890,6 +1058,25 @@ fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_rel
                 }
                 f.step();
                 f.assert_contacts();
+            }
+        }
+        // Inspect all actual kit bounds, including the long suppressor, at the
+        // four acceptance aspect ratios without changing the configured FOV.
+        for aspect in [4.0 / 3.0, 1.6, 16.0 / 9.0, 21.0 / 9.0] {
+            let mut projection = f.app.world_mut().get_mut::<Projection>(f.camera).unwrap();
+            let Projection::Perspective(projection) = &mut *projection else {
+                panic!("perspective");
+            };
+            projection.aspect_ratio = aspect;
+            for step in 0..=168 {
+                {
+                    let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+                    session.players[0].mechanics.kind = Some(ManipulationKind::Inspect);
+                    session.players[0].mechanics.fraction = step as f32 / 168.0;
+                }
+                f.step();
+                f.assert_contacts();
+                f.assert_pistol_frame(aspect);
             }
         }
     }
