@@ -6,19 +6,36 @@
         (id: 1, key: "m4a1", name: "M4A1", class: Rifle, profile: 301, ammo: 201,
             components: [(node: 1, definition: 101, parent: None, socket: "magazine", position: 0)],
             assembly: (platform: "m4a1", caliber: "556x45", mass_kg: 2.88, geometry: (
+                anchors: [
+                    (kind: TriggerGrip, pose: (translation: (0.025, -0.09, 0.035), rotation: (0.0, 0.0, 0.0, 1.0))),
+                    (kind: SupportGrip, pose: (translation: (-0.025, 0.005, -0.35), rotation: (0.0, 0.0, 0.0, 1.0))),
+                    (kind: StockContact, pose: (translation: (0.0, -0.005, 0.335), rotation: (0.0, 0.0, 0.0, 1.0))),
+                ],
                 sockets: [(key: "magazine", interface: (kind: Magwell, standard: "stanag", size: 556),
+                    pose: (translation: (0.0, -0.13, -0.105), rotation: (0.0, 0.0, 0.0, 1.0)),
                     accepts: [Magazine], positions: 1, pitch_m: 0.0, required: true)],
             ))),
         (id: 2, key: "m1911", name: "Pistol", class: Pistol, profile: 302, ammo: 202,
             components: [(node: 1, definition: 102, parent: None, socket: "magazine", position: 0)],
             assembly: (platform: "m1911", caliber: "45acp", mass_kg: 1.03, geometry: (
+                anchors: [
+                    (kind: TriggerGrip, pose: (translation: (0.025, -0.085, 0.015), rotation: (0.0, 0.0, 0.0, 1.0))),
+                    (kind: SupportGrip, pose: (translation: (-0.045, -0.085, -0.015), rotation: (0.0, 0.0, 0.0, 1.0))),
+                ],
                 sockets: [(key: "magazine", interface: (kind: Magwell, standard: "m1911", size: 45),
+                    pose: (translation: (0.0, -0.11, 0.025), rotation: (0.0, 0.0, 0.0, 1.0)),
                     accepts: [Magazine], positions: 1, pitch_m: 0.0, required: true)],
             ))),
         (id: 3, key: "mp5", name: "SMG", class: Smg, profile: 303, ammo: 203,
             components: [(node: 1, definition: 103, parent: None, socket: "magazine", position: 0)],
             assembly: (platform: "mp5", caliber: "9x19", mass_kg: 2.38, geometry: (
+                anchors: [
+                    (kind: TriggerGrip, pose: (translation: (0.025, -0.09, 0.035), rotation: (0.0, 0.0, 0.0, 1.0))),
+                    (kind: SupportGrip, pose: (translation: (-0.025, 0.0, -0.255), rotation: (0.0, 0.0, 0.0, 1.0))),
+                    (kind: StockContact, pose: (translation: (0.0, -0.012, 0.3275), rotation: (0.0, 0.0, 0.0, 1.0))),
+                ],
                 sockets: [(key: "magazine", interface: (kind: Magwell, standard: "mp5", size: 9),
+                    pose: (translation: (0.0, -0.14, -0.095), rotation: (0.0, 0.0, 0.0, 1.0)),
                     accepts: [Magazine], positions: 1, pitch_m: 0.0, required: true)],
             ))),
     ],

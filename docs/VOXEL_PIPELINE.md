@@ -189,3 +189,29 @@ accept ±1 mm, and reject simplified mechanisms or lost material groups.
 
 The current legacy weapon presentation is not yet migrated to this data-driven
 assembler; configured weapon/hand integration belongs to TAR-23.
+
+## Baseline weapon migration
+
+TAR-23 also supplies declarative `m4a1_baseline`, `m1911_baseline`, `mp5_baseline`
+and a separate `*_magazine_baseline` for each. These preserve the original TK
+procedural cuboids at 1 µm authoring precision; a migration regression compares
+every source cuboid against its original bounds. This is existing geometry moved
+to the pipeline, not the later weapon-art refinement.
+
+Root assets have one static receiver with static furniture and independent
+movable bolt/control children. Magazine geometry is attachment-local; catalogue
+socket placement supplies its rest transform. Named control/magazine grasp
+sockets move with their mechanisms. All baseline far meshes reuse near meshes
+until an authored simplification is validated.
+
+| Combined root + magazine | Vertices | Triangles | Surface submissions | Buffer bytes |
+| --- | --- | --- | --- | --- |
+| M4A1 | 1,292 | 646 | 5 | 38,760 |
+| M1911 | 1,304 | 652 | 5 | 39,120 |
+| MP5 | 900 | 450 | 5 | 27,000 |
+
+The default client bindings map the logical weapon/component IDs to these six
+asset IDs. A minimal Bevy fixture instantiates all three in world/view layers,
+checks catalogue contacts and muzzle locations, and observes 15 shared surface
+meshes plus three shared anatomical meshes. Production actor/view-model migration
+continues in TAR-23.

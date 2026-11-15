@@ -8,10 +8,29 @@ use common::{
 
 /// Visual bindings belong to the client. Catalogue/network data never supplies
 /// filesystem paths or mesh handles. Node zero is the weapon definition.
-#[derive(Default, Resource)]
+#[derive(Resource)]
 pub(crate) struct VisualBindings {
     pub weapons: BTreeMap<WeaponId, String>,
     pub components: BTreeMap<DefinitionId, String>,
+}
+
+impl Default for VisualBindings {
+    fn default() -> Self {
+        Self {
+            weapons: [
+                (WeaponId::M4A1, "m4a1_baseline".into()),
+                (WeaponId::M1911, "m1911_baseline".into()),
+                (WeaponId::MP5, "mp5_baseline".into()),
+            ]
+            .into(),
+            components: [
+                (DefinitionId(101), "m4a1_magazine_baseline".into()),
+                (DefinitionId(102), "m1911_magazine_baseline".into()),
+                (DefinitionId(103), "mp5_magazine_baseline".into()),
+            ]
+            .into(),
+        }
+    }
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]

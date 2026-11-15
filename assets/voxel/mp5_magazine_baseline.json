@@ -1,0 +1,140 @@
+{
+  "axes": "right_handed_y_up_negative_z_forward",
+  "id": "mp5_magazine_baseline",
+  "materials": [
+    {
+      "color": [
+        0.16,
+        0.18,
+        0.2,
+        1.0
+      ],
+      "id": "steel",
+      "metallic": 0.82,
+      "roughness": 0.38,
+      "surface": "metal"
+    }
+  ],
+  "parts": [
+    {
+      "boxes": [
+        {
+          "material": "steel",
+          "max": [
+            0.02,
+            0.1105,
+            0.0275
+          ],
+          "min": [
+            -0.02,
+            0.0655,
+            -0.0275
+          ]
+        },
+        {
+          "material": "steel",
+          "max": [
+            0.02,
+            0.0665,
+            0.029687
+          ],
+          "min": [
+            -0.02,
+            0.0215,
+            -0.025313
+          ]
+        },
+        {
+          "material": "steel",
+          "max": [
+            0.02,
+            0.0225,
+            0.03625
+          ],
+          "min": [
+            -0.02,
+            -0.0225,
+            -0.01875
+          ]
+        },
+        {
+          "material": "steel",
+          "max": [
+            0.02,
+            -0.0215,
+            0.047187
+          ],
+          "min": [
+            -0.02,
+            -0.0665,
+            -0.007813
+          ]
+        },
+        {
+          "material": "steel",
+          "max": [
+            0.02,
+            -0.0655,
+            0.0625
+          ],
+          "min": [
+            -0.02,
+            -0.1105,
+            0.0075
+          ]
+        },
+        {
+          "material": "steel",
+          "max": [
+            0.024,
+            -0.104,
+            0.067
+          ],
+          "min": [
+            -0.024,
+            -0.116,
+            0.003
+          ]
+        }
+      ],
+      "id": "magazine",
+      "movable": true,
+      "parent": null,
+      "pivot": {
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ],
+  "provenance": "Original TK legacy magazine cuboids; attachment-local, not final firearm art.",
+  "sockets": [
+    {
+      "id": "magazine.grasp",
+      "part": "magazine",
+      "pose": {
+        "rotation": [
+          0.0,
+          0.0,
+          -0.14943814277648926,
+          0.9887710809707642
+        ],
+        "translation": [
+          -0.04500000178813934,
+          -0.02500000037252903,
+          0.02500000037252903
+        ]
+      }
+    }
+  ],
+  "units": "metres",
+  "version": 1
+}
