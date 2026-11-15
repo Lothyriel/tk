@@ -162,7 +162,13 @@ pub(super) fn drive(
     } = frame;
     let observe = sequence.control(input, local, other, &frame);
     if observe {
-        let target = if peer {
+        let target = if std::env::var_os("TK_WEAPON_DEBUG").is_some()
+            && let Some(other) = other
+        {
+            // Asset review: a near side view outside the actor's muzzle ray.
+            // Locomotion still uses ordinary replicated input.
+            (Vec3::from(other.pos) + Vec3::new(1.35, 0.0, 0.15)).to_array()
+        } else if peer {
             [-7.0, 1.0, 13.0]
         } else {
             [-3.0, 1.0, 14.0]

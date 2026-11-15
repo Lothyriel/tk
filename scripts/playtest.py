@@ -24,7 +24,13 @@ def main():
     parser.add_argument("--client-path", type=Path)
     parser.add_argument("--video", action="store_true", help="Record native framebuffers and encode timestamped MP4 reviews")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
+    parser.add_argument("--weapon-debug", action="store_true",
+                        help="Show live socket/pivot overlays and use a close side observer during animation review")
+    parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
+                        help="Explicit LOD inspection override (requires --weapon-debug)")
     args = parser.parse_args()
+    assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
+    assert args.weapon_debug or args.weapon_lod == "auto", "--weapon-lod requires --weapon-debug"
     root = Path(__file__).resolve().parents[1]
     output = (args.output or root / "target" / "playtest").resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -41,7 +47,8 @@ def main():
                             "--", "-o", str(output / f"{binary}{suffix}")], cwd=root, check=True)
     suffix = ".exe" if os.name == "nt" else ""
     env = os.environ.copy()
-    for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY"):
+    for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY",
+                 "TK_WEAPON_DEBUG", "TK_WEAPON_LOD"):
         env.pop(flag, None)
     env.update(SERVER_ADDR="127.0.0.1", TK_PORT="19080", TK_PLAYTEST_DIR=str(output), TK_PLAYTEST_CLIENTS=str(args.clients), NO_COLOR="1")
     if args.video:
@@ -49,6 +56,9 @@ def main():
     if args.animation_review:
         assert args.clients == 2, "Animation review requires a real UDP observer"
         env["TK_ANIMATION_REVIEW"] = "1"
+    if args.weapon_debug:
+        env["TK_WEAPON_DEBUG"] = "1"
+        env["TK_WEAPON_LOD"] = args.weapon_lod
     server_path = output / f"server{suffix}"
     client_path = output / f"client{suffix}"
     if args.no_build:
@@ -66,6 +76,7 @@ def main():
         "peer_snapshot_drop_every": 3 if args.clients == 2 else 0,
         "resolution": [1280, 800], "world_fov_degrees": 70,
         "video": args.video, "animation_review": args.animation_review,
+        "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "capture_target_hz": 30 if args.video else 0,
         "shot_diagnostics": env.get("TK_SHOT_DIAGNOSTICS") is not None,
         "loadouts": "leader Rifle / peer SMG; AP; heavy vest; helmet; both carry pistol",

@@ -39,6 +39,31 @@ are errors. Deserialization expands the references into ordinary geometry before
 catalogue validation. The replication fingerprint includes this generated
 contract, so unchanged IDs cannot silently resolve to different authored poses.
 
+## Native rig inspection
+
+Press **F8** to toggle the live socket/pivot overlay. Socket axes are +X red,
++Y green and -Z blue, each 30 mm long; white 8 mm crosses identify part pivots.
+Socket centres distinguish bore/device (amber), sights (cyan), grips (green),
+ejection (orange) and controls (magenta). Markers consume propagated transforms
+from the accepted hierarchy and respect visibility and the world/view camera
+layers.
+
+While the overlay is enabled, **F9** cycles automatic, forced near and forced far
+LOD. Forced far also applies to the view model for inspection; disabling the
+overlay restores normal automatic selection. This is a diagnostic override,
+not ordinary distance-based presentation.
+
+For reproducible dual-client screenshots:
+
+```sh
+python scripts/playtest.py --no-build --clients 2 --animation-review \
+  --weapon-debug --weapon-lod near --output target/weapon-debug-near
+```
+
+Use a separate output directory with `--weapon-lod far` for comparison. The
+debug route observes the actor from a close side position using ordinary input.
+Settings are recorded in `run-settings.json`; video still requires `--video`.
+
 The comparison was limited to `pipeline_fixture.json`: receiver, magazine,
 bolt, four material families and two sockets. It is an original engineering
 exemplar, not approved M4 art.

@@ -23,6 +23,7 @@ fn choose_far(was_far: bool, distance: f32, pixels: f32, error: f32) -> bool {
 }
 
 pub(super) fn select(
+    debug: Option<Res<super::debug::DebugView>>,
     cameras: Query<(&Camera, &Projection, &GlobalTransform), With<WorldModelCamera>>,
     mut models: Query<(&GlobalTransform, &mut VoxelInstance)>,
     mut surfaces: Query<(&GlobalTransform, &SurfaceLod, &mut Mesh3d)>,
@@ -118,6 +119,11 @@ pub(super) fn select(
             far &= choose_far(instance.far, distance, pixels, error);
         }
         far &= observed; // no valid world camera: retain detailed geometry
+        // Explicit inspection only; ordinary selection and view-model quality
+        // retain their normal projection thresholds.
+        if let Some(forced) = debug.as_ref().and_then(|debug| debug.lod) {
+            far = forced;
+        }
         if far != instance.far {
             for &entity in &instance.surfaces {
                 if let Ok((_, lod, mut mesh)) = surfaces.get_mut(entity) {

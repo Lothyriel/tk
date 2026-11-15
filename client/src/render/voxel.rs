@@ -324,6 +324,7 @@ fn instantiate(
         for part in &asset.parts {
             let mut entity = commands.spawn((
                 VoxelPart,
+                layers.clone(),
                 Name::new(part.id.clone()),
                 part.pivot,
                 Visibility::Inherited,
@@ -363,6 +364,7 @@ fn instantiate(
             let entity = commands
                 .spawn((
                     VoxelSocket,
+                    layers.clone(),
                     Name::new(socket.id.clone()),
                     socket.pose.transform(),
                     Visibility::Inherited,
@@ -392,6 +394,7 @@ fn instantiate(
 }
 
 pub(crate) mod configured;
+pub(crate) mod debug;
 mod lod;
 #[cfg(test)]
 mod tests;
