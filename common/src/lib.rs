@@ -4,6 +4,7 @@ pub mod data;
 pub mod humanoid;
 pub mod map;
 pub mod raid;
+pub mod replication;
 pub mod weapon_animation;
 
 use bevy::{platform::collections::HashMap, prelude::*};
