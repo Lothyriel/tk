@@ -128,6 +128,8 @@ Subsequent T6 evidence: candidate10 continuous recovery and four healthy native 
 **Tests**: e2e + independent outcome review
 **Gate**: Build
 
+T7 harness checkpoint: native framebuffer capture, full-decode encoding, 17-contact/observer indexes, four-case physical runner and matched-camera/performance tooling are implemented. Candidate14's normal diagnostic dual/loss passed; candidate15's111-test suite passed but its old16.8s recovery assertion failed before naturalStanding17.04s. AD-011 authorizes actual-completion capture bounded18.2s without changing physical eligibility,1sget-up or fatal-shot deadline. The recorder/harness commit is a verified implementation checkpoint, not closure of final native/performance/artistic acceptance.
+
 ### T8: Point-blank muzzle clearance without capsule redirection
 **What**: Repair the user-approved close-range origin policy: trace eye-to-muzzle clearance through the same posed-anatomy/world collision path as ordinary projectile travel, then continue the unchanged muzzle ray if clear. Keep the original native Injury route and fatal-shot deadline.
 **Where**: `server/src/tick/simulation.rs`, server-only projectile state in `mod.rs`, co-located `tests.rs`
