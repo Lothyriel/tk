@@ -1,5 +1,7 @@
 # PR #2 conflict resolution
 
+Historical audit only. Current development uses [the Linear workflow](DEVELOPMENT.md); the old process files are retained in Git history, and this record grants no current integration permission.
+
 ## Cause and preservation strategy
 
 The extraction-alpha commits were recreated on `main` with different commit IDs.
@@ -18,7 +20,7 @@ The existing temporary gunshot silence is retained, not introduced by this merge
 
 | File | Retained content |
 | --- | --- |
-| `.specs/STATE.md` | Extraction, physical-humanoid and animation progress and open acceptance gates |
+| Historical state ledger (removed from the active tree) | Extraction, physical-humanoid and animation progress and open acceptance gates; preserved in Git at 6a4a99b |
 | `client/src/hud.rs` | Lobby/loadout/results, extraction HUD and detailed anatomy status |
 | `client/src/input/mod.rs` | Equipment/readiness, movement, weapons, interaction and held RMB ADS |
 | `client/src/playtest.rs` | Complete raid route, dual-client, weapon and physical acceptance scenarios |
