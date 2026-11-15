@@ -11,3 +11,6 @@ bevy_renet2 = { workspace = true }
 bevy_rapier3d = { workspace = true }
 bytes = { workspace = true }
 rkyv = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+serde_path_to_error = { workspace = true }

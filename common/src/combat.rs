@@ -16,11 +16,7 @@ pub enum AmmoKind {
 
 impl AmmoKind {
     pub fn penetration(self, weapon: WeaponKind) -> f32 {
-        let base = match weapon {
-            WeaponKind::Rifle => 36.0,
-            WeaponKind::Pistol => 10.0,
-            WeaponKind::Smg => 14.0,
-        };
+        let base = weapon.spec().penetration;
         base * if self == Self::Ap { 1.8 } else { 1.0 }
     }
 

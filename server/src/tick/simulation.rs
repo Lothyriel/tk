@@ -6,11 +6,7 @@ use common::{combat::*, raid::*, *};
 use super::{Projectile, WorldState, can_stand_up, set_crouched_state};
 
 pub(super) fn impact_mark_size_mm(weapon: WeaponKind) -> u8 {
-    match weapon {
-        WeaponKind::Pistol => 25,
-        WeaponKind::Smg => 35,
-        WeaponKind::Rifle => 50,
-    }
+    weapon.spec().impact_size_mm
 }
 
 pub(super) fn physx_tick(
