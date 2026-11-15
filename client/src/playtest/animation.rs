@@ -13,6 +13,7 @@ pub(super) struct Sequence {
     pub captures: u32,
     pub ads_captures: u8,
     pub mechanism_captures: u8,
+    observer_captures: u8,
     clock: Clock,
     selector: Selector,
     next_click: f64,
@@ -179,6 +180,38 @@ pub(super) fn drive(
                     .looking_at(Vec3::from(other.pos) + Vec3::Y * 0.1, Vec3::Y)
                     .rotation
                     .into();
+            let weapon_index = usize::from(other.weapon != WeaponKind::Pistol);
+            for (cue, label, visible) in [
+                (0, "ads", other.pose.ads > 0.95),
+                (
+                    1,
+                    "reload",
+                    other.mechanics.reloading() && (0.30..0.65).contains(&other.mechanics.fraction),
+                ),
+            ] {
+                let bit = 1 << (weapon_index * 2 + cue);
+                if visible && sequence.observer_captures & bit == 0 {
+                    sequence.observer_captures |= bit;
+                    capture(
+                        commands,
+                        &format!("remote-{}-{label}", other.weapon_id.spec().catalog_key),
+                    );
+                    info!(
+                        "REMOTE CONTACT {label} weapon={:?} ads={} reload={}",
+                        other.weapon, other.pose.ads, other.mechanics.fraction
+                    );
+                }
+            }
+        }
+        if sequence.complete {
+            assert_eq!(
+                sequence.mechanism_captures, 0b11,
+                "both empty reload mechanism captures must be observed"
+            );
+            assert_eq!(
+                sequence.observer_captures, 0b1111,
+                "both remote weapons require ADS and reload evidence"
+            );
         }
         return true;
     }
@@ -201,17 +234,19 @@ pub(super) fn drive(
     } else {
         1
     };
-    let mechanism_at = match local.weapon {
-        WeaponKind::Pistol => 0.85,
-        WeaponKind::Smg => 0.88,
-        WeaponKind::Rifle => 0.89,
+    let action = common::weapon_animation::reload_action(local.weapon, fraction, true);
+    // A delayed/lost snapshot can jump over a timestamp and arrive after the
+    // control has already returned. Capture the actual active mechanism instead
+    // of asserting that every sample after a timestamp is still at its peak.
+    let mechanism_visible = if local.weapon == WeaponKind::Smg {
+        (0.85..0.95).contains(&fraction) && action.control_grip > 0.5
+    } else {
+        action.control > 0.5
     };
     if local.mechanics.kind == Some(catalog::ManipulationKind::EmptyReload)
-        && fraction >= mechanism_at
-        && fraction < 0.98
+        && mechanism_visible
         && sequence.mechanism_captures & (1 << mechanism_index) == 0
     {
-        let action = common::weapon_animation::reload_action(local.weapon, fraction, true);
         assert!(action.control > 0.5 || local.weapon == WeaponKind::Smg);
         let name = if mechanism_index == 0 {
             "m1911-slide-release"
