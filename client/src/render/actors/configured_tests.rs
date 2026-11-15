@@ -348,12 +348,13 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
     let control = socket("control.grasp");
     let request = app.world().get::<ConfiguredWeapon>(weapon).unwrap();
     let session = app.world().resource::<ClientSession>();
-    let spec = &session
+    let spec = session
         .configurations
         .cache
         .get(request.epoch, request.handle)
         .unwrap()
-        .resolved;
+        .visual(request.magazine)
+        .unwrap();
     let recoil = app.world().resource::<feedback::Feedback>().responses[&7].recoil;
     let logical = handling::configured_contacts(spec, action, recoil, &player.mechanics).unwrap();
     let logical_support = world_root.mul_transform(logical.support);
@@ -425,6 +426,201 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
             Visibility::Hidden
         })
     );
+}
+
+#[test]
+fn configured_remote_mixed_reload_extremes_preserve_contacts_identity_and_cancelled_locations() {
+    use common::catalog::{Attachment, DefinitionId, EquippedWeapon, WeaponKit};
+    use common::replication::ConfigurationPublisher;
+    for (fps, stock, grip, position) in [(30, 0, 134, 0), (60, 5, 134, 9), (165, 5, 135, 2)] {
+        for empty in [false, true] {
+            let (mut app, body) = fixture(WeaponKind::Rifle);
+            let root = weapon_root(&app, body);
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_secs_f64(1.0 / fps as f64),
+            ));
+            let mut kit = WeaponKit::from_configuration(
+                catalog(),
+                catalog().configuration(common::WeaponId::M4A1).unwrap(),
+            )
+            .unwrap();
+            // Exercise both directions, since outgoing and incoming have
+            // different grasp heights even though the seating interface agrees.
+            let (outgoing_definition, incoming_definition) =
+                if empty { (101, 120) } else { (120, 101) };
+            for part in &mut kit.weapon.components {
+                match part.node {
+                    1 => part.definition = DefinitionId(outgoing_definition),
+                    2 => {
+                        part.definition = DefinitionId(122);
+                        part.position = stock;
+                    }
+                    _ => {}
+                }
+            }
+            kit.weapon.components.push(Attachment {
+                node: 11,
+                definition: DefinitionId(grip),
+                parent: Some(3),
+                socket: "bottom".into(),
+                position,
+            });
+            kit.reserves = vec![DefinitionId(incoming_definition)];
+            let mut weapon =
+                EquippedWeapon::from_kit(catalog(), WeaponInstanceId(77), &kit).unwrap();
+            let shots = if empty { weapon.rounds() } else { 4 };
+            for _ in 0..shots {
+                assert!(weapon.fire());
+            }
+            let total = weapon.mechanics().total_rounds();
+            let old = weapon.mechanics().magazines()[0].id;
+            let incoming = weapon.mechanics().magazines()[1].id;
+            let fingerprint = catalog_fingerprint(common::catalog::CATALOG_SOURCE);
+            let mut publisher = ConfigurationPublisher::new(2, fingerprint).unwrap();
+            app.world_mut()
+                .resource_mut::<ClientSession>()
+                .configurations
+                .cache
+                .begin_epoch(2)
+                .unwrap();
+            let publish =
+                |app: &mut App, publisher: &mut ConfigurationPublisher, weapon: &EquippedWeapon| {
+                    let handle = publisher
+                        .register(7, EquipmentSlot::Primary, weapon.instance())
+                        .unwrap();
+                    let packet = publisher.entries()[(handle - 1) as usize].clone();
+                    let mut session = app.world_mut().resource_mut::<ClientSession>();
+                    session
+                        .configurations
+                        .cache
+                        .apply(catalog(), fingerprint, packet)
+                        .unwrap();
+                    let player = &mut session.players[0];
+                    player.weapon_instance = weapon.instance().id;
+                    player.configuration = handle;
+                    player.mechanics = weapon.mechanics().snapshot();
+                    player.ammo_in_mag = weapon.rounds();
+                    player.reserve_ammo = weapon.reserve();
+                    player.pose.reload_fraction = player.mechanics.fraction;
+                    player.pose.reload_empty = empty;
+                };
+            assert!(weapon.mechanics_mut().start_reload(2.4));
+            let initial = weapon.instance().clone();
+            let mut saw_unseated = false;
+            for frame in 0..fps * 4 {
+                weapon.advance(0.7 / fps as f32);
+                if frame % 3 != 2 {
+                    publish(&mut app, &mut publisher, &weapon);
+                }
+                app.update();
+                assert_arms(&app, body, root);
+                assert_eq!(weapon.mechanics().total_rounds(), total);
+                let player = &app.world().resource::<ClientSession>().players[0];
+                let wanted = if player.mechanics.reloading() && player.mechanics.fraction < 0.41 {
+                    old
+                } else {
+                    incoming
+                };
+                assert_eq!(
+                    app.world().get::<ConfiguredWeapon>(root).unwrap().magazine,
+                    Some(wanted)
+                );
+                let pieces: Vec<_> = descendants(app.world(), root)
+                    .into_iter()
+                    .filter_map(|e| {
+                        app.world()
+                            .get::<configured::ConfiguredPiece>(e)
+                            .filter(|p| [101, 120].contains(&p.definition))
+                    })
+                    .collect();
+                assert_eq!(pieces.len(), 1);
+                assert_eq!(
+                    pieces[0].definition,
+                    if wanted == old {
+                        outgoing_definition
+                    } else {
+                        incoming_definition
+                    }
+                );
+                saw_unseated |= player.mechanics.reloading()
+                    && (0.45..0.69).contains(&player.mechanics.fraction);
+            }
+            assert!(saw_unseated);
+            // Restore independent authoritative actions at each phase. Keep
+            // the displayed response and check cancellation on its first frame.
+            for fraction in [0.15, 0.30, 0.55, 0.75, 0.95] {
+                let (mut app, body) = fixture(WeaponKind::Rifle);
+                let root = weapon_root(&app, body);
+                app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    std::time::Duration::from_secs_f64(1.0 / fps as f64),
+                ));
+                app.world_mut()
+                    .resource_mut::<ClientSession>()
+                    .configurations
+                    .cache
+                    .begin_epoch(2)
+                    .unwrap();
+                let mut publisher = ConfigurationPublisher::new(2, fingerprint).unwrap();
+                weapon = EquippedWeapon::restore(catalog(), initial.clone()).unwrap();
+                weapon.advance(2.4 * fraction);
+                publish(&mut app, &mut publisher, &weapon);
+                for _ in 0..8 {
+                    app.update();
+                }
+                assert_arms(&app, body, root);
+                let before = app.world().resource::<feedback::Feedback>().responses[&7]
+                    .action
+                    .unwrap();
+                let inserted = weapon.mechanics().inserted().map(|m| m.id);
+                weapon.mechanics_mut().cancel();
+                publish(&mut app, &mut publisher, &weapon);
+                app.update();
+                assert!(
+                    app.world()
+                        .get::<configured::ConfigurationVisualError>(root)
+                        .is_none()
+                );
+                assert_eq!(weapon.mechanics().total_rounds(), total);
+                assert_eq!(
+                    app.world().get::<ConfiguredWeapon>(root).unwrap().magazine,
+                    inserted
+                );
+                let after = app.world().resource::<feedback::Feedback>().responses[&7]
+                    .action
+                    .unwrap();
+                assert!(
+                    after.root.translation.distance(before.root.translation)
+                        <= 1.2 / fps as f32 + 1e-6
+                );
+                let rest =
+                    common::weapon_animation::WeaponRig::for_weapon(WeaponKind::Rifle).support;
+                let remaining = after.support.translation.distance(rest);
+                let previous = before.support.translation.distance(rest);
+                if previous > 0.001 {
+                    assert!(
+                        remaining > 1e-6 && remaining < previous,
+                        "return from the displayed hand, not an idle reset"
+                    );
+                }
+                let part = descendants(app.world(), root)
+                    .into_iter()
+                    .find(|&e| {
+                        app.world()
+                            .get::<Name>(e)
+                            .is_some_and(|n| n.as_str() == "magazine")
+                    })
+                    .unwrap();
+                assert_eq!(
+                    app.world().get::<Visibility>(part),
+                    Some(&if inserted.is_some() {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    })
+                );
+            }
+        }
+    }
 }
 
 #[test]

@@ -4,6 +4,16 @@ use super::*;
 
 pub const MAX_RETAINED_MAGAZINES: usize = 4;
 
+/// Normalized commit markers of the closed-bolt manipulation profile.
+/// Duration comes from the resolved weapon and injury changes the one action
+/// clock. Presentation can approach a marker early but never seat/feed later.
+pub struct ReloadTiming;
+impl ReloadTiming {
+    pub const REMOVED: f32 = 0.25;
+    pub const INSERTED: f32 = 0.70;
+    pub const FED: f32 = 0.90;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub struct MagazineInstance {
     pub id: MagazineInstanceId,
@@ -69,14 +79,14 @@ impl Manipulation {
 
     fn interval(&self) -> (f32, f32) {
         match self.phase {
-            ManipulationPhase::Remove => (0.0, 0.25),
-            ManipulationPhase::Insert => (0.25, 0.70),
-            ManipulationPhase::Feed => (0.70, 0.90),
+            ManipulationPhase::Remove => (0.0, ReloadTiming::REMOVED),
+            ManipulationPhase::Insert => (ReloadTiming::REMOVED, ReloadTiming::INSERTED),
+            ManipulationPhase::Feed => (ReloadTiming::INSERTED, ReloadTiming::FED),
             ManipulationPhase::Finish => (
                 if self.kind == ManipulationKind::EmptyReload {
-                    0.90
+                    ReloadTiming::FED
                 } else {
-                    0.70
+                    ReloadTiming::INSERTED
                 },
                 1.0,
             ),

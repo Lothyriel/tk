@@ -84,6 +84,7 @@ pub(super) fn update(
         epoch: entry.packet.epoch,
         handle: entry.packet.handle,
         view_model: false,
+        magazine: None,
     };
     if model.2 == Some(&request) {
         return;

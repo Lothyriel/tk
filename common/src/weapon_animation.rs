@@ -2,6 +2,8 @@
 use crate::WeaponKind;
 use bevy::prelude::*;
 
+pub mod m4a1;
+
 #[derive(Debug, Clone, Copy)]
 pub struct WeaponRig {
     pub muzzle: Vec3,
@@ -98,6 +100,9 @@ fn ramp(t: f32, a: f32, b: f32) -> f32 {
 /// Piecewise contact choreography. The server's reload fraction is the only clock.
 /// Tactical: retain chamber, seat magazine, regrip. Empty: add slide/handle release.
 pub fn reload_action(weapon: WeaponKind, fraction: f32, empty: bool) -> WeaponAction {
+    if weapon == WeaponKind::Rifle {
+        return m4a1::reload(fraction, empty);
+    }
     let rig = WeaponRig::for_weapon(weapon);
     let t = fraction.clamp(0.0, 1.0);
     let (out, incoming, seat, release) = match weapon {

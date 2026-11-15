@@ -28,3 +28,31 @@ committed target. A feed-only resume has a target but no outgoing magazine.
 The reliable roster contains no changing ammunition counts or second inventory.
 The two compact references preserve the existing 60,000-byte worst-case snapshot
 budget; copying full physical IDs/definitions per frame would exceed it.
+
+## AR presentation tracks
+
+`ReloadTiming` owns the normalized removal (0.25), insertion (0.70) and
+feed (0.90) commits. The M4A1 track clears the feed lips axially, moves toward
+retention, and swaps the outgoing/incoming visual identity inside the hidden
+0.38–0.44 retention interval. Retrieval aligns at 0.60 and seats at 0.66,
+leaving a dwell before insertion. Tactical reload never presses the bolt catch;
+empty reload holds the carrier open until the feed commit and returns from the
+catch to the installed support grip.
+
+The client resolves each distinct owned magazine geometry once when accepting
+the reliable configuration. Local and remote assemblies choose that variant
+before insertion, with the same physical ID and authored grasp socket. There is
+one displayed magazine, never separate installed/carried copies. Authoritative
+anatomy uses the corresponding pre-resolved presentation variant; gameplay
+properties continue to use the installed configuration.
+
+The displayed root/hand response remains filtered through interruption. Once
+the server commits insertion, the magazine pose is seated without filter lag;
+bolt state likewise follows the authoritative commit. Cancellation clears the
+incoming binding and displays only the committed installed location.
+
+Composed engine fixtures cover mixed 20/30-round pools, local/remote contacts,
+stock/grip extremes, 30/60/165 Hz updates, slowed mechanical time, lost updates,
+and cancellation in each phase. Projection of the actual magazine mesh checks
+that retention leaves the local viewport before hiding. These measurements do
+not certify normal-speed weight/naturalness or final finger clearance.

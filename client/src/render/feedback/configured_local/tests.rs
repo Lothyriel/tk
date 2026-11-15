@@ -43,6 +43,124 @@ struct Fixture {
 }
 
 #[test]
+fn configured_local_mixed_reload_uses_owned_incoming_mesh_before_insertion_without_duplicates() {
+    use common::catalog::{DefinitionId, EquippedWeapon, WeaponInstanceId, WeaponKit};
+    use common::replication::ConfigurationPublisher;
+    for fps in [30, 60, 165] {
+        for empty in [false, true] {
+            let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
+            f.app
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    std::time::Duration::from_secs_f64(1.0 / fps as f64),
+                ));
+            let mut kit = WeaponKit::from_configuration(
+                catalog(),
+                catalog().configuration(common::WeaponId::M4A1).unwrap(),
+            )
+            .unwrap();
+            let (outgoing_definition, incoming_definition) =
+                if empty { (101, 120) } else { (120, 101) };
+            kit.weapon
+                .components
+                .iter_mut()
+                .find(|p| p.node == 1)
+                .unwrap()
+                .definition = DefinitionId(outgoing_definition);
+            kit.reserves = vec![DefinitionId(incoming_definition)];
+            let mut weapon =
+                EquippedWeapon::from_kit(catalog(), WeaponInstanceId(77), &kit).unwrap();
+            for _ in 0..if empty { weapon.rounds() } else { 4 } {
+                assert!(weapon.fire());
+            }
+            let total = weapon.mechanics().total_rounds();
+            let old = weapon.mechanics().magazines()[0].id;
+            let incoming = weapon.mechanics().magazines()[1].id;
+            let fingerprint = catalog_fingerprint(common::catalog::CATALOG_SOURCE);
+            let mut publisher = ConfigurationPublisher::new(2, fingerprint).unwrap();
+            f.app
+                .world_mut()
+                .resource_mut::<ClientSession>()
+                .configurations
+                .cache
+                .begin_epoch(2)
+                .unwrap();
+            assert!(weapon.mechanics_mut().start_reload(2.4));
+            let mut saw_incoming_unseated = false;
+            let mut previously_visible = true;
+            for frame in 0..(fps * 4) {
+                // A slower shared mechanical clock models injury. Lose every
+                // third update; the next snapshot reconstructs the actual object.
+                weapon.advance(0.7 / fps as f32);
+                if frame % 3 != 2 {
+                    let handle = publisher
+                        .register(7, EquipmentSlot::Primary, weapon.instance())
+                        .unwrap();
+                    let packet = publisher.entries()[(handle - 1) as usize].clone();
+                    let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+                    session
+                        .configurations
+                        .cache
+                        .apply(catalog(), fingerprint, packet)
+                        .unwrap();
+                    let player = &mut session.players[0];
+                    player.weapon_instance = weapon.instance().id;
+                    player.configuration = handle;
+                    player.mechanics = weapon.mechanics().snapshot();
+                    player.ammo_in_mag = weapon.rounds();
+                    player.reserve_ammo = weapon.reserve();
+                    player.pose.reload_fraction = player.mechanics.fraction;
+                    player.pose.reload_empty = empty;
+                }
+                f.step();
+                f.assert_contacts();
+                assert_eq!(weapon.mechanics().total_rounds(), total);
+                let world = f.app.world();
+                let player = &world.resource::<ClientSession>().players[0];
+                let fraction = player.mechanics.fraction;
+                let action = world.resource::<Feedback>().responses[&7].action.unwrap();
+                if !action.magazine_visible && previously_visible {
+                    f.assert_magazine_below_viewport();
+                }
+                previously_visible = action.magazine_visible;
+                let wanted = if player.mechanics.reloading() && fraction < 0.41 {
+                    old
+                } else {
+                    incoming
+                };
+                let request = world.get::<ConfiguredWeapon>(f.root).unwrap();
+                assert_eq!(request.magazine, Some(wanted));
+                let magazines: Vec<_> = descendants(world, f.root)
+                    .into_iter()
+                    .filter_map(|entity| {
+                        world
+                            .get::<ConfiguredPiece>(entity)
+                            .filter(|p| [101, 120].contains(&p.definition))
+                    })
+                    .collect();
+                assert_eq!(magazines.len(), 1, "never render installed and hand copies");
+                assert_eq!(
+                    magazines[0].definition,
+                    if wanted == old {
+                        outgoing_definition
+                    } else {
+                        incoming_definition
+                    }
+                );
+                if player.mechanics.reloading() && (0.45..0.69).contains(&fraction) {
+                    assert!(!player.mechanics.magazine_inserted);
+                    assert_eq!(
+                        magazines[0].definition, incoming_definition,
+                        "incoming mesh must not wait for the installed revision"
+                    );
+                    saw_incoming_unseated = true;
+                }
+            }
+            assert!(saw_incoming_unseated);
+        }
+    }
+}
+
+#[test]
 fn configured_local_stock_and_clothing_keep_contacts_and_ads_sight_line() {
     for weapon in [WeaponKind::Rifle, WeaponKind::Smg] {
         for armor in [
@@ -352,6 +470,43 @@ impl Fixture {
             ) < 3e-6
         );
         assert!(trigger.translation().distance(rest_trigger) < 3e-6);
+    }
+
+    fn assert_magazine_below_viewport(&self) {
+        use bevy::mesh::VertexAttributeValues;
+        let world = self.app.world();
+        let part = named(&self.app, self.root, "magazine");
+        let to_eye = world
+            .get::<GlobalTransform>(self.camera)
+            .unwrap()
+            .to_matrix()
+            .inverse();
+        let meshes = world.resource::<Assets<Mesh>>();
+        let mut count = 0;
+        for entity in std::iter::once(part).chain(descendants(world, part)) {
+            let Some(mesh) = world.get::<Mesh3d>(entity) else {
+                continue;
+            };
+            let VertexAttributeValues::Float32x3(vertices) = meshes
+                .get(&mesh.0)
+                .unwrap()
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+            else {
+                panic!("positions");
+            };
+            let transform = to_eye * world.get::<GlobalTransform>(entity).unwrap().to_matrix();
+            for vertex in vertices {
+                let point = transform.transform_point3(Vec3::from(*vertex));
+                let lower_edge = point.z * (65.0_f32.to_radians() * 0.5).tan();
+                assert!(
+                    point.y < lower_edge,
+                    "retention must leave the viewport before hiding: {point:?}, edge={lower_edge}"
+                );
+                count += 1;
+            }
+        }
+        assert!(count > 0);
     }
 
     fn assert_pistol_frame(&self, aspect: f32) {

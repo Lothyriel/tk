@@ -189,7 +189,14 @@ pub(crate) fn action(
             },
             weight: action.magazine_grip,
         });
-        if !action.magazine_visible || (!mechanics.magazine_inserted && !reloading) {
+        let resumed_without_source = spec.definition == common::WeaponId::M4A1
+            && reloading
+            && mechanics.reload_target.present()
+            && common::weapon_animation::m4a1::magazine(mechanics).is_none();
+        if !action.magazine_visible
+            || (!mechanics.magazine_inserted && !reloading)
+            || resumed_without_source
+        {
             hidden_parts.push((node, "magazine".into()));
         }
     }
