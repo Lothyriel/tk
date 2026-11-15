@@ -63,12 +63,14 @@ T2 gate: 12 Python tests passed. Docs mode passed both with the selected feature
 **Gate**: Quick
 
 ### T3: Publish workflow and contribution rules
-**What**: Make the local TLC flow and verification commands discoverable, with English Conventional Commits and explicit publication boundaries.
-**Where**: `CONTRIBUTING.md` (workflow entry in AGENTS.md)
+**What**: Publish the user-approved short root guide, mother/child skill routing and contributor guide, with English Conventional Commits and explicit publication boundaries.
+**Where**: `CONTRIBUTING.md` (root guide and project skill entry points)
 **Depends on**: T2
 **Requirement**: DEV-02
 **Done when**:
-- [ ] Both guides resolve local validators, explain quick/full/docs and retain headless/no-default-video rules without installing hooks.
+- [x] The short root guide and tk-workflow/tk-verification/tk-contribution skills route analysis, implementation, tests and authorized Git work without recursion or a second TLC layer; CONTRIBUTING.md resolves local validators and explains quick/full/docs, with no-default-video safety retained in the root guide.
+
+T3 gate: docs mode passed 18 tooling tests and both structural validators with no warnings. The three new skill IDs loaded successfully in this session. Independent read-only routing review passed all three stored scenarios; its clarifications and limits are in routing-review.md. The root guide is below the 80-line limit; no Git hooks were installed.
 **Tests**: structural documentation checks
 **Gate**: Docs
 
