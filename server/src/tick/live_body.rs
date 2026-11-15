@@ -182,6 +182,7 @@ pub(super) fn advance(
             &mut Transform,
             &mut Body,
             &mut ragdoll::Motion,
+            Option<&Arsenal>,
         ),
         Without<PhysicsPiece>,
     >,
@@ -201,6 +202,7 @@ pub(super) fn advance(
         mut root,
         mut body,
         mut motion,
+        arsenal,
     ) in &mut actors
     {
         if !health.alive() {
@@ -310,11 +312,19 @@ pub(super) fn advance(
             target_pose.root_drop = 0.0;
             target_pose.velocity = [0.0; 3];
             target_pose.foot_weight = [0.0; 2];
-            let rig = evaluate_pose(
-                &target_pose,
-                health.anatomy.capacity(Region::LeftLeg),
-                health.anatomy.capacity(Region::RightLeg),
-            );
+            let rig = match ragdoll::evaluate(&target_pose, health, arsenal) {
+                Ok(rig) => {
+                    motion.handling_error = None;
+                    rig
+                }
+                Err(error) => {
+                    if motion.handling_error != Some(error) {
+                        warn!("Configured recovery target rejected: {error:?}");
+                    }
+                    motion.handling_error = Some(error);
+                    continue;
+                }
+            };
             root.translation = recovery
                 .root
                 .translation

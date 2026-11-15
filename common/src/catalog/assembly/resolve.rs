@@ -240,6 +240,7 @@ impl Catalog {
             parts.push(ResolvedPart {
                 node: node.node,
                 definition: node.definition,
+                kind: component.kind,
                 pose,
             });
         }

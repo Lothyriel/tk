@@ -121,8 +121,33 @@ view-arm placement. The previous procedural assembly/placement remains compiled
 only in tests as a migration oracle.
 
 This aligns remote visual tissue with the accepted contacts and preserves all 17
-segment IDs. Authority-side configured anatomical evaluation, native stock/
-clothing validation and rendered acceptance remain before the card can complete.
+segment IDs. Native stock/clothing validation and rendered acceptance remain
+before the card can complete.
+
+## Authoritative anatomy and handoff
+
+The logical catalog supplies `MagazineGrip` and `ControlGrip` as well as the
+static grips. `handling::mechanisms` shares bolt/control and attachment-local
+magazine deltas with the client. `configured_contacts` composes those deltas
+with resolved anchors, including rotated attachments, and blends the moving
+support contact. Native client fixtures compare this result against baked
+sockets; authority uses zero visual recoil.
+
+`humanoid::configured::evaluate` replaces only the six arm/hand poses, using
+the same preferred root as remote presentation. Physical poses retain ownership
+of all 17 segments. The server captures the configured result from the current
+Arsenal into `ragdoll::Motion`; projectile hit testing and injury resolution
+consume that accepted pose. An unreachable update records a handling error and
+retains the accepted local anatomy while following the actor root. Fall/death
+handoff therefore receives the same tissue used for damage. Recovery evaluates
+a configured standing target and reports rejection before applying it.
+
+Real server fixtures hit a revised arm with ordinary weapon fire, reject an
+unreachable revision while the actor moves, and transfer all 17 segments into
+Rapier. The rest/run × floor/wall/corner/step regression also checks every frame
+from 8 to 10 seconds for residual velocity and drift. Passive joint motors use
+force-based torque damping (2.5 N m s/rad), avoiding inertia-scaled weak damping
+of distal segments against loaded angular limits.
 
 Fixtures independently measure both bone lengths, exact contact position and
 orientation, elbow limits and pole direction. They cover collinear poles,

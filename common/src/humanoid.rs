@@ -481,6 +481,8 @@ pub fn posed_weapon(state: &PoseState, rig: &[SegmentPose; SEGMENT_COUNT]) -> Tr
     .with_rotation(hand.rotation)
 }
 
+pub mod configured;
+
 /// Slab intersection in the oriented box's frame. Includes rays starting inside tissue.
 pub fn ray_box(
     origin: Vec3,

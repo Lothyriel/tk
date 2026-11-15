@@ -171,6 +171,12 @@ pub(super) fn corpse(
                 _ => [-1.4, 1.4],
             };
             joint.set_limits(axis, limits);
+            // Passive joint drag is torque per angular speed (N m s/rad).
+            // AccelerationBased scales drag by effective inertia: light distal
+            // segments then keep oscillating against a loaded joint limit after
+            // the torso has settled. Use physical torque damping, with no spring
+            // target, so a configured handoff can still fall to a new rest pose.
+            joint.set_motor_model(axis, MotorModel::ForceBased);
             joint.set_motor_velocity(axis, 0.0, 2.5);
         }
         joint.set_contacts_enabled(false);

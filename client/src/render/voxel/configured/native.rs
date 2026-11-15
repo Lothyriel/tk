@@ -1,9 +1,6 @@
 //! Adapter from the existing authoritative action clock to configured parts.
 use super::*;
-use common::{
-    catalog::{ComponentKind, ResolvedWeapon, catalog},
-    weapon_animation::*,
-};
+use common::{catalog::ResolvedWeapon, weapon_animation::*};
 
 /// Preview uses the very same cache, bindings, moving parts and contact solver
 /// as publication. Framing consumes bounds in request space, never legacy meshes.
@@ -112,45 +109,36 @@ pub(crate) fn action(
     mechanics: &common::catalog::MechanicalSnapshot,
 ) -> ConfiguredHandling {
     let reloading = mechanics.reloading();
-    let mut bolt = bolt_transform(spec.class, &action, recoil, reloading);
-    if spec.class == common::WeaponKind::Pistol && mechanics.bolt_open && !reloading {
-        bolt.translation.z = WeaponRig::for_weapon(spec.class).bolt_travel;
-    }
+    let parts = handling::mechanisms(spec, action, recoil, mechanics);
     let mut motions = vec![
         PartMotion {
             node: 0,
             part: "bolt".into(),
-            delta: bolt,
+            delta: parts.bolt,
         },
         PartMotion {
             node: 0,
             part: "control".into(),
-            delta: control_transform(spec.class, &action),
+            delta: parts.control,
         },
     ];
     let mut support_blends = Vec::new();
     let mut hidden_parts = Vec::new();
-    if let Some(magazine) = spec.assembly.parts.iter().find(|part| {
-        catalog()
-            .component(part.definition)
-            .is_some_and(|c| c.kind == ComponentKind::Magazine)
-    }) {
-        let mut delta = action.magazine;
-        delta.translation -= WeaponRig::for_weapon(spec.class).magazine;
+    if let Some((node, _, delta)) = parts.magazine {
         motions.push(PartMotion {
-            node: magazine.node,
+            node,
             part: "magazine".into(),
             delta,
         });
         support_blends.push(SocketBlend {
             address: SocketAddress {
-                node: magazine.node,
+                node,
                 socket: "magazine.grasp".into(),
             },
             weight: action.magazine_grip,
         });
         if !action.magazine_visible || (!mechanics.magazine_inserted && !reloading) {
-            hidden_parts.push((magazine.node, "magazine".into()));
+            hidden_parts.push((node, "magazine".into()));
         }
     }
     support_blends.push(SocketBlend {
