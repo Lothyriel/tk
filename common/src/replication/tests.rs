@@ -409,7 +409,75 @@ fn command(arsenal: &Arsenal) -> ConfigurationCommand {
         instance: weapon.id,
         expected_revision: weapon.revision,
         weapon: configuration,
+        reserves: None,
     }
+}
+
+#[test]
+fn replication_free_kit_selection_is_atomic_idempotent_and_separate_from_live_inventory() {
+    let mut arsenal = Arsenal::new(Loadout::default());
+    let mut ledger = CommandLedger::default();
+    let mut request = command(&arsenal);
+    request.weapon.components[0].definition = DefinitionId(120);
+    request.reserves = Some(vec![DefinitionId(101), DefinitionId(120)]);
+    let result = ledger.execute(1, request.clone(), true, &mut arsenal, catalog());
+    assert_eq!(result.outcome, CommandOutcome::Applied);
+    assert_eq!(result.revision, Some(1));
+    assert_eq!(
+        (arsenal.current().rounds(), arsenal.current().reserve()),
+        (20, 50)
+    );
+    let accepted = data::encode(arsenal.current().instance());
+    let kits = arsenal.kits().to_vec();
+    assert_eq!(
+        ledger.execute(1, request.clone(), false, &mut arsenal, catalog()),
+        result
+    );
+    assert_eq!(data::encode(arsenal.current().instance()), accepted);
+    request.request = 2;
+    request.expected_revision = 1;
+    request.reserves = Some(vec![DefinitionId(122)]);
+    let rejected = ledger.execute(1, request.clone(), true, &mut arsenal, catalog());
+    assert_eq!(rejected.outcome, CommandOutcome::InvalidConfiguration);
+    assert!(rejected.reason.unwrap().contains("magazine"));
+    assert_eq!(data::encode(arsenal.current().instance()), accepted);
+    assert_eq!(arsenal.kits(), kits);
+    request.request = 3;
+    request.reserves = Some(vec![DefinitionId(120); 4]);
+    assert_eq!(
+        ConfigurationCommand::decode(&data::encode(&request)),
+        Err(ConfigurationError::Bounds)
+    );
+    assert!(arsenal.equipped_mut(EquipmentSlot::Primary).unwrap().fire());
+    let restocked = arsenal.restocked(catalog(), Loadout::default()).unwrap();
+    assert_eq!(
+        (restocked.current().rounds(), restocked.current().reserve()),
+        (20, 50)
+    );
+    assert_ne!(
+        restocked.current().instance().id,
+        arsenal.current().instance().id
+    );
+    let mut larger = arsenal.current().instance().configuration.clone();
+    larger
+        .components
+        .iter_mut()
+        .find(|part| {
+            catalog().component(part.definition).unwrap().kind
+                == crate::catalog::ComponentKind::Magazine
+        })
+        .unwrap()
+        .definition = DefinitionId(101);
+    arsenal
+        .reconfigure(catalog(), EquipmentSlot::Primary, 1, larger)
+        .unwrap();
+    let after_switch = arsenal.restocked(catalog(), Loadout::default()).unwrap();
+    assert_eq!(after_switch.current().spec().magazine_size, 30);
+    assert_eq!(after_switch.current().mechanics().total_rounds(), 70);
+    assert_eq!(
+        after_switch.kits()[0].1.reserves,
+        [DefinitionId(120), DefinitionId(120)]
+    );
 }
 
 #[test]

@@ -185,6 +185,36 @@ impl EquippedWeapon {
         &self.resolved
     }
 
+    /// Selection matching this assembly and owned pool, ignoring spent rounds.
+    /// During a detached-magazine phase the configuration still identifies the
+    /// last installed definition, which remains in the retained pool.
+    pub fn kit(&self) -> WeaponKit {
+        let definition = self
+            .instance
+            .configuration
+            .components
+            .iter()
+            .find(|part| part.node == self.magazine_node)
+            .unwrap()
+            .definition;
+        let mut reserves: Vec<_> = self
+            .instance
+            .mechanics
+            .magazines()
+            .iter()
+            .map(|magazine| magazine.definition)
+            .collect();
+        let inserted = reserves
+            .iter()
+            .position(|part| *part == definition)
+            .unwrap();
+        reserves.remove(inserted);
+        WeaponKit {
+            weapon: self.instance.configuration.clone(),
+            reserves,
+        }
+    }
+
     /// Compare-and-swap of the entire validated configuration. No partial
     /// removal, client-supplied stats or ammunition truncation is possible.
     pub fn reconfigure(

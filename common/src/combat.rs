@@ -218,6 +218,7 @@ impl SurfaceKind {
 pub struct Arsenal {
     pub recoil: crate::recoil::RecoilState,
     equipment: Vec<(EquipmentSlot, EquippedWeapon)>,
+    kits: Vec<(EquipmentSlot, crate::catalog::WeaponKit)>,
     pub active: EquipmentSlot,
     /// Derived compatibility value for HUD; never drives mechanical commits.
     pub reload_remaining: f32,
@@ -313,6 +314,7 @@ impl Arsenal {
         Ok(Self {
             recoil: Default::default(),
             equipment,
+            kits: kits.to_vec(),
             active: EquipmentSlot::Primary,
             reload_remaining: 0.0,
             loadout,
@@ -343,6 +345,60 @@ impl Arsenal {
         self.equipped(self.active).expect("equipped active slot")
     }
 
+    pub fn kits(&self) -> &[(EquipmentSlot, crate::catalog::WeaponKit)] {
+        &self.kits
+    }
+
+    /// Reissue the confirmed selections, not the current magazine/reload state.
+    pub fn restocked(&self, catalog: &Catalog, loadout: Loadout) -> Result<Self, CatalogError> {
+        Self::from_kits(catalog, loadout, &self.kits)
+    }
+
+    /// Free equipment selection. The caller must enforce the unready lobby
+    /// policy; physical reconfiguration below remains ammunition-conservative.
+    pub fn select_kit(
+        &mut self,
+        catalog: &Catalog,
+        slot: EquipmentSlot,
+        expected_revision: u64,
+        mut kit: crate::catalog::WeaponKit,
+    ) -> Result<u64, CatalogError> {
+        let fail = |message: &str| CatalogError {
+            file: crate::catalog::CATALOG_FILE.into(),
+            field: "equipment.kit".into(),
+            message: message.into(),
+        };
+        if self.current().mechanics().action().is_some() {
+            return Err(fail("cannot select equipment during manipulation"));
+        }
+        let old = self.equipped(slot).ok_or_else(|| fail("empty slot"))?;
+        if old.instance().revision != expected_revision {
+            return Err(fail("stale configuration revision"));
+        }
+        if old.spec().definition != kit.weapon.definition {
+            return Err(fail("cannot replace instance identity"));
+        }
+        kit.weapon.components.sort_by_key(|part| part.node);
+        let index = self.kits.iter().position(|(s, _)| *s == slot).unwrap();
+        if self.kits[index].1 == kit {
+            return Ok(expected_revision);
+        }
+        let revision = expected_revision
+            .checked_add(1)
+            .ok_or_else(|| fail("revision exhausted"))?;
+        let replacement = EquippedWeapon::from_kit(catalog, old.instance().id, &kit)?;
+        let mut instance = replacement.instance().clone();
+        instance.revision = revision;
+        let mut replacement = EquippedWeapon::restore(catalog, instance)?;
+        if self.active != slot {
+            replacement.mechanics_mut().start_unequip(0.01);
+            replacement.advance(0.01);
+        }
+        *self.equipped_mut(slot).unwrap() = replacement;
+        self.kits[index].1 = kit;
+        Ok(revision)
+    }
+
     /// Authoritative configuration boundary. Lobby ownership/ready locks are
     /// enforced by the caller; this layer rejects stale or invalid assemblies.
     pub fn reconfigure(
@@ -364,7 +420,12 @@ impl Arsenal {
             field: "equipment.slot".into(),
             message: "empty slot".into(),
         })?;
-        weapon.reconfigure(catalog, expected_revision, configuration)
+        let revision = weapon.reconfigure(catalog, expected_revision, configuration)?;
+        let kit = weapon.kit();
+        // Preserve the multiset of owned magazines when an ordinary edit selects
+        // another inserted definition; it must not duplicate that new reserve.
+        self.kits.iter_mut().find(|(s, _)| *s == slot).unwrap().1 = kit;
+        Ok(revision)
     }
 
     /// Returns an authorized shot, never a client-authoritative projectile.

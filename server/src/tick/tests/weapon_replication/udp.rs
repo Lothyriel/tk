@@ -205,6 +205,7 @@ fn replication_udp_solo_dual_loss_and_late_join() {
             instance: local.weapon_instance,
             expected_revision: 0,
             weapon: configuration,
+            reserves: None,
         };
         for _ in 0..2 {
             first
@@ -309,6 +310,7 @@ fn replication_udp_solo_dual_loss_and_late_join() {
             instance: target.weapon_instance,
             expected_revision: 0,
             weapon: catalog().configuration(target.weapon_id).unwrap(),
+            reserves: None,
         };
         late.peer
             .network

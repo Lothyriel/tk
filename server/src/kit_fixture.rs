@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use common::{
     EquipmentSlot, WeaponId,
-    catalog::{Attachment, DefinitionId, EquippedWeapon, WeaponConfiguration, catalog},
+    catalog::{Attachment, DefinitionId, WeaponConfiguration, WeaponKit, catalog},
     combat::{Arsenal, Loadout},
 };
 
@@ -66,21 +66,38 @@ impl KitFixture {
     }
 
     pub(crate) fn arsenal(&self, loadout: Loadout) -> Arsenal {
-        let mut arsenal = Arsenal::new(loadout);
-        if loadout.primary == WeaponId::M4A1
-            && let Some(config) = &self.0
-        {
-            let weapon = arsenal.equipped_mut(EquipmentSlot::Primary).unwrap();
-            *weapon = EquippedWeapon::new(catalog(), weapon.instance().id, config.clone())
-                .expect("valid initial fixture and owned magazines");
-        }
-        arsenal
+        let primary = self
+            .0
+            .as_ref()
+            .filter(|_| loadout.primary == WeaponId::M4A1)
+            .cloned()
+            .unwrap_or_else(|| catalog().configuration(loadout.primary).unwrap());
+        Arsenal::from_kits(
+            catalog(),
+            loadout,
+            &[
+                (
+                    EquipmentSlot::Primary,
+                    WeaponKit::from_configuration(catalog(), primary).unwrap(),
+                ),
+                (
+                    EquipmentSlot::Sidearm,
+                    WeaponKit::from_configuration(
+                        catalog(),
+                        catalog().configuration(WeaponId::M1911).unwrap(),
+                    )
+                    .unwrap(),
+                ),
+            ],
+        )
+        .expect("valid initial fixture and owned magazines")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::catalog::EquippedWeapon;
 
     #[test]
     fn kit_fixture_seeds_owned_magazines_and_preserves_other_loadouts() {

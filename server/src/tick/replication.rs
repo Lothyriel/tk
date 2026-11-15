@@ -173,7 +173,7 @@ pub(super) fn commands(
     for client in server.clients_id() {
         for _ in 0..16 {
             // Reserve enough queue space for the reply before consuming input.
-            if !server.can_send_message(client, CONFIGURATION_CHANNEL, 128) {
+            if !server.can_send_message(client, CONFIGURATION_CHANNEL, MAX_CONFIGURATION_BYTES) {
                 break;
             }
             let Some(bytes) = server.receive_message(client, CONFIGURATION_CHANNEL) else {

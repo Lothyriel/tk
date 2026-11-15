@@ -44,11 +44,28 @@ pub(super) fn lobby_tick(
     } = reset_entities;
     let previous_phase = raid.phase;
     let mut return_requested = false;
-    for (_, input, mut player, ..) in &mut players {
+    for (_, input, mut player, _, _, mut arsenal, ..) in &mut players {
         if raid.phase == RaidPhase::Lobby
             && !player.ready
             && let Some(loadout) = input.loadout.validated()
         {
+            if loadout.primary != arsenal.loadout.primary {
+                let replacement = fixture.arsenal(loadout);
+                let mut kits = arsenal.kits().to_vec();
+                kits.iter_mut()
+                    .find(|(slot, _)| *slot == EquipmentSlot::Primary)
+                    .unwrap()
+                    .1 = replacement
+                    .kits()
+                    .iter()
+                    .find(|(slot, _)| *slot == EquipmentSlot::Primary)
+                    .unwrap()
+                    .1
+                    .clone();
+                *arsenal = Arsenal::from_kits(common::catalog::catalog(), loadout, &kits)
+                    .expect("confirmed sidearm and validated primary kit");
+            }
+            arsenal.loadout = loadout;
             player.loadout = loadout;
         }
         if player.last_command == input.lobby_sequence {
@@ -64,8 +81,12 @@ pub(super) fn lobby_tick(
 
     if players.is_empty() || return_requested {
         raid.reset_lobby();
-        for (_, _, mut player, ..) in &mut players {
+        for (_, input, mut player, _, _, mut arsenal, ..) in &mut players {
             player.return_to_lobby();
+            *arsenal = arsenal
+                .restocked(common::catalog::catalog(), player.loadout)
+                .expect("confirmed raid kits");
+            arsenal.synchronize_sequences(input);
         }
     }
 
@@ -91,7 +112,9 @@ pub(super) fn lobby_tick(
             player.begin();
             *body = BodyHealth::default();
             *armor = ArmorState::from_loadout(player.loadout);
-            *arsenal = fixture.arsenal(player.loadout);
+            *arsenal = arsenal
+                .restocked(common::catalog::catalog(), player.loadout)
+                .expect("confirmed raid kits");
             arsenal.synchronize_sequences(input);
             movement.velocity = Vec3::ZERO;
             set_crouched_state(&mut movement, &mut collider, &mut transform, false);
