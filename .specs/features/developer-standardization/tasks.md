@@ -4,7 +4,7 @@
 
 Use tlc-spec-driven, commits-incrementais and game-state. The user authorized this implementation and publishing the selected standards; continue on the existing branch. Four cohesive tasks run inline. After the final task commit, dispatch an independent Verifier with an isolated-scratch discrimination sensor. No CI, toolchain, edition or gameplay changes.
 
-**Status**: In Progress
+**Status**: Done
 
 Design is inline in spec.md: vendor the existing skill, use a standard-library Python command orchestrator and preserve historical memory in a separate archive. No additional architecture document is needed.
 
@@ -87,7 +87,11 @@ T3 gate: docs mode passed 18 tooling tests and both structural validators with n
 
 User decision (2026-11-15): retain the full runner and Clippy `-D warnings` unchanged; document the existing anatomy API lint and continue this standardization delivery without changing Rust. The Build run remains exit 101, not PASS. Run the Delivery commands separately; do not relabel separately executed workspace tests as completion of that stopped full run.
 
-T4 gate: docs mode passed 20 tooling tests and both structural validators (zero errors/warnings). Separately executed workspace tests passed 112 tests (27 client, 42 common, 43 server; no failures/ignored tests), with no application/video launch. Direct baseline comparisons confirmed byte-exact archived STATE, all prior decisions preserved, unchanged Mermaid and no Rust/CI/Cargo/toolchain/linker changes. Evidence logs are ignored target/verification/developer-standardization-{full,workspace-tests}.log; the first remains a failure. Independent feature verification/completion is still pending this task's commit.
+T4 gate: docs mode passed 20 tooling tests and both structural validators (zero errors/warnings). Separately executed workspace tests passed 112 tests (27 client, 42 common, 43 server; no failures/ignored tests), with no application/video launch. Direct baseline comparisons confirmed byte-exact archived STATE, all prior decisions preserved, unchanged Mermaid and no Rust/CI/Cargo/toolchain/linker changes. Evidence logs are ignored target/verification/developer-standardization-{full,workspace-tests}.log; the first remains a failure. Independent feature verification was pending at this task's commit; it is now recorded in validation.md.
+
+## Final Verification
+
+The independent Verifier reviewed 83bfc4a..83c02c0 and returned scoped PASS for DEV-01..10, independently passed docs/20 tooling tests and 112 separate workspace tests, and killed all three scratch-only behavior mutations with no real-tree changes. The local completion validator passed. See validation.md for exact assertion/source evidence, platform limits and the unchanged full/Clippy blocker. Done means the approved tooling delivery is complete; it does not mean full is green or prior gameplay acceptance is closed.
 
 ## Diagram-Definition Cross-Check
 
