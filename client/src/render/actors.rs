@@ -43,10 +43,13 @@ struct PieceVisual(u64);
 struct PoseCache {
     raid: u32,
     poses: HashMap<u64, PoseState>,
+    roots: HashMap<u64, Transform>,
+    last_live: HashMap<(u64, Segment), Transform>,
 }
 #[derive(Component)]
 struct WorldWeapon {
     owner: u64,
+    part: usize,
 }
 #[derive(Component)]
 struct WorldFlash(u64);
@@ -76,7 +79,9 @@ struct VoxelAssets {
     vest: Handle<StandardMaterial>,
     helmet: Handle<Mesh>,
     plate: Handle<Mesh>,
-    weapons: Vec<Handle<Mesh>>,
+    weapons: Vec<Vec<Handle<Mesh>>>,
+    weapon_metal: Handle<StandardMaterial>,
+    weapon_trim: Vec<Handle<StandardMaterial>>,
     flash: Handle<StandardMaterial>,
     cube: Handle<Mesh>,
 }
@@ -176,7 +181,17 @@ fn assets(
         plate: meshes.add(Cuboid::new(0.39, 0.32, 0.055)),
         weapons: [WeaponKind::Rifle, WeaponKind::Pistol, WeaponKind::Smg]
             .into_iter()
-            .map(|w| meshes.add(world_gun(w)))
+            .map(|w| {
+                super::weapons::world_meshes(w)
+                    .into_iter()
+                    .map(|m| meshes.add(m))
+                    .collect()
+            })
+            .collect(),
+        weapon_metal: materials.add(super::weapons::steel()),
+        weapon_trim: [WeaponKind::Rifle, WeaponKind::Pistol, WeaponKind::Smg]
+            .into_iter()
+            .map(|w| materials.add(super::weapons::trim(w)))
             .collect(),
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         flash: materials.add(StandardMaterial {
@@ -186,56 +201,6 @@ fn assets(
             ..default()
         }),
     });
-}
-
-fn world_gun(weapon: WeaponKind) -> Mesh {
-    let mut mesh = Mesh::from(Cuboid::new(
-        0.085,
-        0.10,
-        if weapon == WeaponKind::Pistol {
-            0.24
-        } else {
-            0.32
-        },
-    ));
-    let parts = if weapon == WeaponKind::Pistol {
-        vec![
-            (Vec3::new(0.07, 0.16, 0.08), Vec3::new(0.0, -0.10, 0.05)),
-            (Vec3::new(0.07, 0.06, 0.24), Vec3::new(0.0, 0.07, -0.02)),
-        ]
-    } else {
-        let barrel = if weapon == WeaponKind::Rifle {
-            0.37
-        } else {
-            0.23
-        };
-        vec![
-            (
-                Vec3::new(0.04, 0.04, barrel),
-                Vec3::new(0.0, 0.02, -0.16 - barrel * 0.5),
-            ),
-            (
-                Vec3::new(
-                    0.075,
-                    0.19,
-                    if weapon == WeaponKind::Smg {
-                        0.055
-                    } else {
-                        0.10
-                    },
-                ),
-                Vec3::new(0.0, -0.14, -0.02),
-            ),
-            (Vec3::new(0.07, 0.16, 0.08), Vec3::new(0.0, -0.10, 0.12)),
-            (Vec3::new(0.075, 0.11, 0.22), Vec3::new(0.0, 0.0, 0.24)),
-            (Vec3::new(0.05, 0.04, 0.06), Vec3::new(0.0, 0.085, -0.08)),
-        ]
-    };
-    for (size, offset) in parts {
-        mesh.merge(&Mesh::from(Cuboid::from_size(size)).translated_by(offset))
-            .expect("weapon attributes");
-    }
-    mesh
 }
 
 fn organ_mesh(organ: Organ) -> Mesh {
@@ -349,17 +314,26 @@ fn build_actors(
                 MeshMaterial3d(assets.vest.clone()),
                 Transform::default(),
             ));
-            c.spawn((
-                WorldWeapon { owner: client.id },
-                Mesh3d(assets.weapons[0].clone()),
-                MeshMaterial3d(assets.leather.clone()),
-                Transform::default(),
-            ));
+            for part in 0..5 {
+                c.spawn((
+                    WorldWeapon {
+                        owner: client.id,
+                        part,
+                    },
+                    Mesh3d(assets.weapons[0][part].clone()),
+                    MeshMaterial3d(if part == 1 {
+                        assets.weapon_trim[0].clone()
+                    } else {
+                        assets.weapon_metal.clone()
+                    }),
+                    Transform::default(),
+                ));
+            }
             c.spawn((
                 WorldFlash(client.id),
-                Mesh3d(assets.helmet.clone()),
+                Mesh3d(assets.cube.clone()),
                 MeshMaterial3d(assets.flash.clone()),
-                Transform::from_scale(Vec3::splat(0.3)),
+                Transform::from_scale(Vec3::new(0.075, 0.075, 0.12)),
                 Visibility::Hidden,
             ));
             for organ in ORGANS {
@@ -503,9 +477,13 @@ struct StumpVisual {
     parent: Segment,
 }
 
-fn interpolate(time: Res<Time>, mut actors: Query<(&mut Transform, &mut RemoteTarget)>) {
+fn interpolate(
+    time: Res<Time>,
+    mut cache: ResMut<PoseCache>,
+    mut actors: Query<(&mut Transform, &mut RemoteTarget, &Client)>,
+) {
     let alpha = 1.0 - (-time.delta_secs() * 18.0).exp();
-    for (mut t, mut target) in &mut actors {
+    for (mut t, mut target, client) in &mut actors {
         let snap = target.snap || t.translation.distance(target.position) > 4.0;
         t.translation = if snap {
             target.position
@@ -516,6 +494,7 @@ fn interpolate(time: Res<Time>, mut actors: Query<(&mut Transform, &mut RemoteTa
             .rotation
             .slerp(target.rotation, if snap { 1.0 } else { alpha });
         target.snap = false;
+        cache.roots.insert(client.id, *t);
     }
 }
 
@@ -556,7 +535,13 @@ fn animate(
         ),
     >,
     mut weapons: Query<
-        (&WorldWeapon, &mut Transform, &mut Mesh3d, &mut Visibility),
+        (
+            &WorldWeapon,
+            &mut Transform,
+            &mut Mesh3d,
+            &mut MeshMaterial3d<StandardMaterial>,
+            &mut Visibility,
+        ),
         (
             Without<BoneVisual>,
             Without<EquipmentVisual>,
@@ -599,6 +584,8 @@ fn animate(
 ) {
     if cache.raid != session.raid.raid_id {
         cache.poses.clear();
+        cache.roots.clear();
+        cache.last_live.clear();
         cache.raid = session.raid.raid_id;
     }
     let age = (time.elapsed_secs_f64() - session.last_received).clamp(0.0, 0.065) as f32;
@@ -613,7 +600,7 @@ fn animate(
         let speed = Vec2::new(p.pose.velocity[0], p.pose.velocity[2]).length();
         let phase = p.pose.phase
             + if p.pose.grounded {
-                age * speed * std::f32::consts::PI / (2.0 * (0.28 - p.pose.crouch * 0.1))
+                age * stride_phase_rate(speed, p.pose.crouch)
             } else {
                 0.0
             };
@@ -623,29 +610,65 @@ fn animate(
         state.mode = p.pose.mode;
         state.mode_time = p.pose.mode_time + age;
         state.aim_pitch += (p.pose.aim_pitch - state.aim_pitch) * alpha;
+        state.ads += (p.pose.ads - state.ads) * alpha;
         for i in 0..2 {
             state.lean[i] += (p.pose.lean[i] - state.lean[i]) * alpha;
         }
         state.landing = p.pose.landing;
-        state.weapon = p.weapon;
+        state.weapon = feedback
+            .responses
+            .get(&p.id)
+            .and_then(|r| r.displayed)
+            .unwrap_or(p.weapon);
         state.reload_fraction = p.pose.reload_fraction;
+        state.reload_empty = p.pose.reload_empty;
         state.arm_weakness = p.pose.arm_weakness;
         state.root_drop = p.pose.root_drop;
-        rigs.insert(
-            p.id,
-            evaluate_pose(
-                state,
-                p.body.anatomy.capacity(Region::LeftLeg),
-                p.body.anatomy.capacity(Region::RightLeg),
-            ),
+        state.fall_direction = p.pose.fall_direction;
+        state.fall_phase = p.pose.fall_phase;
+        state.fall_velocity = p.pose.fall_velocity;
+        state.physical = p.pose.physical.clone();
+        state.acceleration = p.pose.acceleration;
+        state.turn_rate += (p.pose.turn_rate - state.turn_rate) * alpha;
+        let foot_alpha = 1.0 - (-time.delta_secs() * 18.0).exp();
+        for i in 0..2 {
+            state.feet[i] = Vec3::from(state.feet[i])
+                .lerp(p.pose.feet[i].into(), foot_alpha)
+                .into();
+            state.foot_weight[i] += (p.pose.foot_weight[i] - state.foot_weight[i]) * foot_alpha;
+            state.foot_normal[i] = p.pose.foot_normal[i];
+            let delta = p.pose.foot_yaw[i] - state.foot_yaw[i];
+            state.foot_yaw[i] += delta.sin().atan2(delta.cos()) * foot_alpha;
+        }
+        let rig = evaluate_pose_with_action(
+            state,
+            p.body.anatomy.capacity(Region::LeftLeg),
+            p.body.anatomy.capacity(Region::RightLeg),
+            feedback.responses.get(&p.id).and_then(|r| r.action),
         );
+        if p.alive && p.pose.physical.is_none() {
+            let root = cache.roots.get(&p.id).copied().unwrap_or_else(|| {
+                Transform::from_translation(p.pos.into())
+                    .with_rotation(Quat::from_rotation_y(p.rot.yaw))
+            });
+            for segment in SEGMENTS {
+                if p.body.anatomy.missing & (1 << segment.index()) == 0 {
+                    cache.last_live.insert(
+                        (p.id, segment),
+                        root.mul_transform(rig[segment.index()].transform()),
+                    );
+                }
+            }
+        }
+        rigs.insert(p.id, rig);
     }
     for (bone, mut t, mut mesh, mut visible) in &mut bones {
         let Some(p) = session.local(bone.owner) else {
             continue;
         };
         let a = &p.body.anatomy;
-        let present = p.alive && a.missing & (1 << bone.segment.index()) == 0;
+        let present =
+            p.alive && p.pose.physical.is_none() && a.missing & (1 << bone.segment.index()) == 0;
         let wound = a.wounds & (1 << bone.segment.index()) != 0;
         *visible = if present && (bone.inner == 0 || wound) {
             Visibility::Inherited
@@ -690,7 +713,7 @@ fn animate(
         } else {
             p.armor.vest > 0.0
         };
-        *visible = if p.alive && equipped {
+        *visible = if p.alive && p.pose.physical.is_none() && equipped {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -718,18 +741,21 @@ fn animate(
         };
         let pose = rigs[&p.id][organ.segment.index()];
         let exposed = p.body.anatomy.wounds & (1 << organ.segment.index()) != 0;
-        *visible =
-            if p.alive && exposed && p.body.anatomy.missing & (1 << organ.segment.index()) == 0 {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            };
+        *visible = if p.alive
+            && p.pose.physical.is_none()
+            && exposed
+            && p.body.anatomy.missing & (1 << organ.segment.index()) == 0
+        {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         *t = pose.transform();
         t.scale = Vec3::splat(0.85 + 0.15 * p.body.anatomy.organs[organ.organ as usize] / 100.0);
         let offset = t.rotation * organ.offset;
         t.translation += offset;
     }
-    for (weapon, mut t, mut mesh, mut visible) in &mut weapons {
+    for (weapon, mut t, mut mesh, mut material, mut visible) in &mut weapons {
         let Some(p) = session.local(weapon.owner) else {
             continue;
         };
@@ -739,49 +765,77 @@ fn animate(
             Visibility::Hidden
         };
         let pose = rigs[&p.id];
-        *t = pose[Segment::RightHand.index()].transform();
-        t.rotation = Quat::from_rotation_x(p.pose.aim_pitch);
-        t.rotation *=
-            Quat::from_rotation_z(-(p.pose.reload_fraction * std::f32::consts::PI).sin() * 0.30);
-        let offset = t.rotation
-            * Vec3::new(
-                0.04,
-                0.03,
-                if p.weapon == WeaponKind::Pistol {
-                    -0.26
-                } else {
-                    -0.07
-                },
-            );
-        t.translation += offset;
+        *t = posed_weapon(&cache.poses[&p.id], &pose);
+        let displayed = cache.poses[&p.id].weapon;
+        let action = feedback
+            .responses
+            .get(&p.id)
+            .and_then(|r| r.action)
+            .unwrap_or_else(|| {
+                common::weapon_animation::reload_action(
+                    displayed,
+                    cache.poses[&p.id].reload_fraction,
+                    p.pose.reload_empty,
+                )
+            });
+        if weapon.part == 3 {
+            *t = t.mul_transform(action.magazine);
+            if !action.magazine_visible {
+                *visible = Visibility::Hidden;
+            }
+        }
+        if weapon.part == 4 {
+            *t = t.mul_transform(common::weapon_animation::control_transform(
+                displayed, &action,
+            ));
+        }
         if let Some(r) = feedback.responses.get(&p.id) {
             t.translation.z += r.recoil;
+            if weapon.part == 2 {
+                let bolt = common::weapon_animation::bolt_transform(
+                    displayed,
+                    &action,
+                    r.recoil,
+                    p.reload_remaining > 0.0,
+                );
+                *t = t.mul_transform(bolt);
+            }
         }
-        mesh.0 = assets.weapons[p.weapon.index()].clone();
+        mesh.0 = assets.weapons[displayed.index()][weapon.part].clone();
+        material.0 = if weapon.part == 1 {
+            assets.weapon_trim[displayed.index()].clone()
+        } else {
+            assets.weapon_metal.clone()
+        };
     }
     for (flash, mut t, mut visible) in &mut flashes {
         let Some(p) = session.local(flash.0) else {
             continue;
         };
-        *visible = if p.alive && feedback.responses.get(&p.id).is_some_and(|r| r.flash > 0.0) {
+        *visible = if p.alive
+            && cache.poses[&p.id].weapon == p.weapon
+            && feedback.responses.get(&p.id).is_some_and(|r| r.flash > 0.0)
+        {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
-        t.translation = Vec3::Y
-            * (PLAYER_VIEW_HEIGHT
-                + if p.crouched {
-                    PLAYER_CROUCH_VIEW_OFFSET
-                } else {
-                    0.0
-                })
-            + Quat::from_rotation_x(p.pose.aim_pitch) * Vec3::from(p.weapon.spec().barrel_offset);
+        let gun = posed_weapon(&cache.poses[&p.id], &rigs[&p.id]);
+        t.translation = gun.transform_point(
+            common::weapon_animation::WeaponRig::for_weapon(cache.poses[&p.id].weapon).muzzle
+                - Vec3::Z * 0.05,
+        );
+        t.rotation = gun.rotation;
+        if let Some(r) = feedback.responses.get(&p.id) {
+            t.translation.z += r.recoil;
+        }
     }
     for (detail, mut t, mut visible) in &mut details {
         let Some(p) = session.local(detail.owner) else {
             continue;
         };
         let present = p.alive
+            && p.pose.physical.is_none()
             && p.body.anatomy.missing & (1 << detail.segment.index()) == 0
             && (!detail.armor || p.armor.vest > 0.0);
         *visible = if present {
@@ -835,20 +889,26 @@ fn sync_pieces(
     time: Res<Time>,
     session: Res<ClientSession>,
     assets: Res<VoxelAssets>,
-    mut visuals: Query<(Entity, &PieceVisual, &mut Transform)>,
+    cache: Res<PoseCache>,
+    id: Res<PlayerId>,
+    mut visuals: Query<(Entity, &PieceVisual, &mut Transform, &mut Visibility)>,
 ) {
-    for (entity, visual, mut t) in &mut visuals {
+    let piece_visibility = |piece: &PhysicsPieceData| {
+        physical_visibility(piece, id.0, session.local(id.0).is_some_and(|p| p.alive))
+    };
+    for (entity, visual, mut t, mut visible) in &mut visuals {
         if let Some(piece) = session.physics_pieces.iter().find(|p| p.id == visual.0) {
             let target = piece.pose.transform();
             let alpha = 1.0 - (-time.delta_secs() * 22.0).exp();
             t.translation = t.translation.lerp(target.translation, alpha);
             t.rotation = t.rotation.slerp(target.rotation, alpha);
+            *visible = piece_visibility(piece);
         } else {
             commands.entity(entity).despawn();
         }
     }
     for p in &session.physics_pieces {
-        if visuals.iter().any(|(_, v, _)| v.0 == p.id) {
+        if visuals.iter().any(|(_, v, _, _)| v.0 == p.id) {
             continue;
         }
         let owner = session.local(p.owner);
@@ -857,13 +917,18 @@ fn sync_pieces(
         commands
             .spawn((
                 PieceVisual(p.id),
+                piece_visibility(p),
                 Mesh3d(if wounded {
                     assets.wounded[p.segment.index()].clone()
                 } else {
                     assets.intact[p.segment.index()].clone()
                 }),
                 MeshMaterial3d(surface(&assets, p.segment, p.bot)),
-                p.pose.transform(),
+                cache
+                    .last_live
+                    .get(&(p.owner, p.segment))
+                    .copied()
+                    .unwrap_or_else(|| p.pose.transform()),
             ))
             .with_children(|c| {
                 c.spawn((
@@ -924,6 +989,20 @@ fn sync_pieces(
     }
 }
 
+fn physical_visibility(piece: &PhysicsPieceData, local: u64, alive: bool) -> Visibility {
+    // The living physical camera follows the head while the world meshes lag
+    // snapshots for interpolation. Do not let the player's own torso/arms sweep
+    // through that camera during get-up. Detached fragments and remote bodies
+    // remain visible; death can still be observed from the normal death view.
+    if piece.owner == local
+        && (matches!(piece.segment, Segment::Head | Segment::Neck) || alive && !piece.detached)
+    {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    }
+}
+
 fn verify_native_replication(
     session: Res<ClientSession>,
     visuals: Query<&PieceVisual>,
@@ -964,6 +1043,26 @@ pub(super) fn body() -> impl Bundle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_local_physical_meshes_do_not_cross_the_head_camera_but_remote_and_detached_parts_remain()
+     {
+        let mut piece = PhysicsPieceData {
+            id: 1,
+            owner: 7,
+            segment: Segment::Thorax,
+            pose: SegmentPose::default(),
+            detached: false,
+            bot: false,
+        };
+        assert_eq!(physical_visibility(&piece, 7, true), Visibility::Hidden);
+        assert_eq!(physical_visibility(&piece, 8, true), Visibility::Inherited);
+        assert_eq!(physical_visibility(&piece, 7, false), Visibility::Inherited);
+        piece.detached = true;
+        assert_eq!(physical_visibility(&piece, 7, true), Visibility::Inherited);
+        piece.segment = Segment::Head;
+        assert_eq!(physical_visibility(&piece, 7, true), Visibility::Hidden);
+        assert_eq!(physical_visibility(&piece, 8, true), Visibility::Inherited);
+    }
     #[test]
     fn voxel_layers_are_real_detailed_meshes_and_wounds_remove_surface() {
         let healthy = voxel_mesh(Segment::Thorax, false, false);

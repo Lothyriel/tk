@@ -71,6 +71,7 @@ fn keyboard(
     input.jump = active && keys.pressed(KeyCode::Space);
     input.interact = active && keys.pressed(KeyCode::KeyF);
     input.fire = active && buttons.pressed(MouseButton::Left);
+    input.aim = active && buttons.pressed(MouseButton::Right);
     if active && buttons.just_pressed(MouseButton::Left) {
         input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
     }
@@ -136,8 +137,9 @@ fn mouse(
     if cursor.grab_mode == CursorGrabMode::None {
         return;
     }
-    input.camera.yaw -= motion.delta.x * 0.003;
-    input.camera.pitch = (input.camera.pitch - motion.delta.y * 0.002).clamp(-1.56, 1.56);
+    let scale = if input.aim { 0.65 } else { 1.0 };
+    input.camera.yaw -= motion.delta.x * 0.003 * scale;
+    input.camera.pitch = (input.camera.pitch - motion.delta.y * 0.002 * scale).clamp(-1.56, 1.56);
 }
 
 #[cfg(test)]
@@ -167,6 +169,32 @@ mod tests {
             },
         ));
         app
+    }
+
+    #[test]
+    fn right_mouse_aim_is_held_only_during_captured_active_control() {
+        let mut app = input_app();
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Right);
+        app.update();
+        assert!(app.world().resource::<LocalInput>().aim);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Right);
+        app.update();
+        assert!(!app.world().resource::<LocalInput>().aim);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Right);
+        app.world_mut().resource_mut::<ClientSession>().raid.phase = RaidPhase::Debrief;
+        app.update();
+        assert!(!app.world().resource::<LocalInput>().aim);
     }
 
     #[test]

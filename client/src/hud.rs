@@ -145,7 +145,7 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
                 });
                 text.push_str(&format!("  {:.1} / 5.0s\n", p.extraction_seconds));
             }
-            text.push_str("WASD move | Shift run | Ctrl crouch | Space jump\nLMB fire | R reload | 1 primary / 2 pistol | F loot / extract\nWood can be penetrated. Concrete stops rounds. Esc: cursor.");
+            text.push_str("WASD move | Shift run | Ctrl crouch | Space jump\nLMB fire | Hold RMB aim | R reload | 1 primary / 2 pistol\nF loot / extract | Wood penetrable; concrete stops rounds. Esc: cursor.");
         }
         _ => {
             text.push_str(&format!(
