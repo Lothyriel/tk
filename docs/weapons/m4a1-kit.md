@@ -1,0 +1,105 @@
+# M4A1 modular kit
+
+Reference selection for TAR-26, reviewed 2026-11-15. Production and acceptance
+are pending. This sheet extends the [F/V/G contract](../WEAPON_REFERENCES.md):
+**F** is a published manufacturer fact, **V** is interpreted exterior geometry,
+and **G** is an authored game value. Images remain linked to their owners.
+
+## Selected models and sources
+
+| Component | Reference and published constraints | Authoring boundary |
+| --- | --- | --- |
+| Base magazine | FN M4A1 [F1/F2](../WEAPON_REFERENCES.md): 30-round military magazine | Reuse definition 101 and `m4a1_magazine_30`; aluminum body/ribs/follower are V. Do not invent an OEM or NSN from the photograph. |
+| Short magazine | [Magpul PMAG 20 AR/M4 GEN M3, MAG560](https://magpul.com/pmag-20-ar-m4-gen-m3.html): 20 rounds, 5.56×45/.223, STANAG-compatible, 4 oz, maximum length 5.6 inches | F: 0.113398 kg, 0.14224 m. V: polymer ribs, flared floorplate and over-insertion stop. Share the seat interface; author a distinct grasp on its shorter body. |
+| Base stock | FN F1/F2 M4 collapsible stock | Reuse accepted shape and 0.08255 m travel. Separate the stock from the fixed receiver extension. Isolated stock mass is G; FN lists a whole-weapon mass. |
+| Alternate stock | [Magpul CTR Mil-Spec, MAG310](https://magpul.com/ctr-carbine-stock-mil-spec.html): mil-spec extension only; 8.9 oz without extension; 7.0 × 1.7 × 5.2 inches maximum; approximately 3.3 inches LOP adjustment | F: 0.252311 kg, 0.1778 × 0.04318 × 0.13208 m. V: A-frame opening, latch, friction lock, QD recess and rubber pad. Keep extension mass on the receiver. |
+| Base handguard | [KAC M4 RAS 98064](https://www.knightarmco.com/13129/shop/hand-guards/rasris/m4-ras-forend-assembly): carbine gas, delta ring, fixed front sight/gas block and round cap; M1913 rails; M4/Government contour preferred | Current page: 6.25 inches, 8.9 oz, aluminum. Qualify the TAR-24 interpreted handguard against this named reference before calling it a dimensional reproduction. |
+| Alternate handguard | [Magpul MOE SL carbine, MAG538](https://magpul.com/moe-sl-hand-guard-carbine-length-ar15-m4.html): carbine gas, A2 front sight, round cap and delta ring; M-LOK at 2/6/10 o'clock; original front sling swivel incompatible | F: maximum length 8.9 inches, mounting length 6.6 inches, width 1.8 inches, height 2.4 inches, 6.7 oz. V: narrow polymer shell, front extension and vent/slot openings. |
+| Base barrel group | FN F1/F2 M4A1, 14.5 inches | Preserve the 0.36830 m bore and fixed front sight. Separate device geometry. Isolated group mass and hidden geometry are G/V, not inferred by dividing FN's total weight. |
+| Short barrel group | [Daniel Defense 10.3-inch Government, with FSB](https://danieldefense.com/10-3-5-56mm-carbine-1-7-government-profile.html): 5.56 NATO, carbine gas, A4 extension, 1/2×28 muzzle, phosphate exterior/chrome bore | F: 0.26162 m, 1.46 lb = 0.662245 kg **with FSB**. Do not use the 1.15 lb stripped or 1.23 lb low-profile-gas-block mass for this asset. Exterior/profile remains V. |
+| Base device | FN F2 A2-style flash hider | Reuse the accepted cavity and outlet. Exact modeled extension and isolated mass remain V/G; it is not a SOCOM adapter. |
+| Brake / suppressor mount | [SureFire SFMB-556-1/2-28](https://www.surefire.com/socom-muzzle-brake/): 5.56, 1/2×28, SOCOM Fast-Attach; 2.6 inches, 110.5 g | F: 0.06604 m, 0.1105 kg. V: external ports and mounting collar. This single component is both brake/compensator and the RC2 mount. |
+| Suppressor | [SureFire SOCOM556-RC2](https://www.surefire.com/socom556-rc2/): SOCOM adapters; 5.56/.223; minimum 10-inch barrel; 6.4 inches long, 1.5-inch diameter, 482 g | F: 0.16256 m, 0.0381 m diameter, 0.482 kg. Published added length is approximately 3.8 inches and explicitly adapter-dependent. Author mating depth as V and check the final outlet; do not add the full can length to the adapter outlet. |
+| Irons | FN F2 fixed front tower and rail-mounted rear aperture | Reuse the open TAR-24 sight line. The front tower belongs to the barrel group; the rear aperture is a removable rail component. Its exact commercial identity and isolated mass are not published by F2. |
+| Red dot | [Aimpoint PRO 12841](https://www.aimpoint.com/products/pro-patrol-rifle-optic-2-moa-red-dot-reflex-sight-with-standard-spacer-and-qrp2-mount): 2 MOA, 1×, unlimited eye relief, QRP2 + ring + standard spacer | F: axis 39 mm above mounting interface; published kit envelope 132 × 72 × 81 mm. V: open tubular housing, adjustment/battery housings and folded lens caps. Functional reticle/zero acceptance belongs to TAR-31. |
+| Optic mount | Same Aimpoint 12841 kit: QRP2, base/top ring and standard AR spacer | One separate mount component carries the real ring and spacer. The PRO requires this mount in the kit; direct rail installation fails. Do not count kit mass again on the optic. |
+| Vertical grip | [Magpul RVG, MAG412](https://magpul.com/rvg-rail-vertical-grip.html): M1913 Picatinny, 3.5 inches tall, 2.6 oz with hardware | F: 0.0889 m, 0.073709 kg. V: textured polymer, narrow mount and distinct vertical palm contact. |
+| Angled grip | [Magpul AFG-2, MAG414](https://magpul.com/afg-2-angled-fore-grip.html): Picatinny/STANAG4694, recommended minimum 3-inch rail; 4.70 inches long, 1.94 inches below rail, 1.37 inches wide, 2.53 oz | F: 0.11938 × 0.034798 × 0.049276 m, 0.071724 kg. V: open triangular profile, finger shelf and angled palm contact. |
+
+### Source disagreements and choices
+
+- The KAC current page and 2016/2017 catalogs give 6.25 inches / 8.9 oz;
+  its 2014 catalog gives 6.625 inches / 11.6 oz for the same part number.
+  Use the current page's handguard body reference. Rail panels and retaining
+  hardware need explicit accounting. TAR-24 currently has a 174 mm interpreted
+  handguard shell: that is not evidence for either published KAC length.
+- Aimpoint's international page lists 192 g sight-only and 360 g with mount in
+  the highlights, but 357 g in its specification table. The US page lists
+  220 g sight-only / 366 g kit. Select the international 12841 geometry and
+  **G mass split of 0.192 kg optic + 0.168 kg mount**. The selected 0.360 kg total
+  follows that page's highlights; the split is not a separately weighed mount.
+- SureFire's centimetre values are rounded. Use the published inch dimensions
+  converted to metres, with source precision documented; do not treat 16.2 cm
+  and 6.4 inches as contradictory engineering measurements.
+- The preliminary Colt 11.5-inch candidate is superseded by DD's 10.3-inch
+  **FSB** option, whose primary page specifies the selected group and mass.
+  This is a configured M4-family kit, not a claim to reproduce a factory FN
+  short-barrel model or a complete Mk18.
+- MOE SL is selected over a second quad rail for its distinct polymer silhouette
+  and M-LOK interface. RVG/AFG-2 attach directly only to the RAS in this kit.
+  The supported SL configuration uses its handguard contact. Neither a hidden
+  adapter nor a universal Picatinny/M-LOK compatibility exception is allowed.
+
+## Assembly and property contract
+
+The receiver retains receiver controls, pistol grip and fixed extension. Reuse
+its accepted geometry when extracting stock, handguard, barrel/device and rear
+sight into components. Preserve continuous socket transforms and moving control
+names; a new component must not leave a second copy inside the receiver.
+
+The shared magazine source remains `m4a1_magazine_30`, definition 101. TAR-59 and
+TAR-87 consume this same origin; no alternate inventory mesh or magazine-ammo
+state is introduced here. Capacity is 30 or 20 according to the installed
+definition, excluding the independently modeled chamber.
+
+Use typed extension, barrel, handguard, muzzle, optic-mount and magazine
+interfaces. Required sockets enforce the barrel/device/furniture chain.
+Picatinny placements use bounded intervals; solids and swept corridors qualify
+placement. Manufacturer compatibility statements establish eligible interfaces,
+not automatic acceptance of every placement or an exemption from geometry.
+
+Mass includes each physical group once. Subtract extracted groups from the
+baseline root before adding components. Label estimated base-group masses,
+centres of mass and recoil/velocity/signature modifiers G. Keep the existing
+base total as an explicit migration target until a separately sourced mass
+budget replaces it. No device makes ammunition more damaging by name.
+
+Stock endpoints, magazine seating/grasp, support contact, bore and final outlet
+follow installed parts. The receiver's charging-handle sweep is fixed; moving
+an optic rearward must not move that corridor out of the way. Intentional mating
+regions are excluded from non-contact solids, with the exclusion explained.
+
+## Acceptance matrix
+
+These are required scenarios, not results. All use the same catalog resolver,
+logical rigs and client bindings as gameplay.
+
+| Scenario | Observable outcome |
+| --- | --- |
+| Base | 14.5-inch group, original stock/RAS/A2/irons, magazine30; preserve published length and accepted contacts within the reference tolerances. |
+| Compact | DD 10.3-inch FSB, CTR retracted, magazine20; shorter bore/overall envelope and distinct palm target; qualify SL and RAS separately. |
+| Long/suppressed | 14.5-inch group, extended stock, SFMB + RC2, magazine30 and PRO/QRP2; device exit and mass/balance include all installed components once. |
+| Grips | RVG and AFG-2 at valid RAS positions; support palm follows each surface. Both magazines clear the magwell and the nearby grip through removal/insertion. |
+| Stock endpoints | Both stock models at their bounded retracted/extended positions; shoulder contact moves, receiver/charging-handle corridor stays fixed. |
+| Rail rejection | RVG and AFG-2 occupying intersecting intervals on the same rail are rejected; moving beyond available rail also fails. |
+| Interface rejection | RVG/AFG-2 directly on SL's M-LOK, PRO directly on receiver rail, RC2 on A2 or bare muzzle all fail through interface/socket rules. |
+| Clearance rejection | An otherwise rail-compatible optic placement occupying the charging-handle sweep fails geometrically, independently of rail occupancy. |
+| Combined extremes | Cross-check both barrels, handguards, magazines, stock endpoints and valid muzzle chains. Record any measured interference as a rejected configuration, never a silent clipping allowance. |
+
+Headless evidence must include dimension/shape and magazine-sweep oracles,
+valid/invalid catalog configurations, resolved mass/anchors and actual local/
+remote binding/contact fixtures. Native review checks silhouettes, material
+separation, open sight lines and seams on the actual camera. Existing action
+sampling checks static contacts; normal-speed reload/handling and final optical
+acceptance remain explicitly tied to TAR-29/31/32. No production or artistic
+acceptance is asserted by this reference selection.

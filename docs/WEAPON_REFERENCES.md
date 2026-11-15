@@ -54,6 +54,10 @@ No extracted game assets, textures, motion curves or audio are a source.
 
 ### M4A1
 
+The [modular kit sheet](weapons/m4a1-kit.md) selects the TAR-26 components,
+primary sources and compatibility matrix, with production acceptance tracked
+separately from reference selection.
+
 | Property | Target / provenance |
 | --- | --- |
 | Barrel length | **F1:** 14.5 inches = 0.36830; this is barrel length, not total visible forward assembly |
