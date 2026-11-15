@@ -9,8 +9,11 @@ use crate::ClientSystems;
 use crate::render::{ImpactMarkVisual, ProjectileVisual, player_body_mesh};
 use common::raid::{RaidPhase, RaidState, RaidStatus};
 
+mod motion;
+
 #[derive(Debug, Default, Resource)]
 pub(crate) struct ClientSession {
+    pub local_motion: motion::LocalMotion,
     pub destroyed_cells: Vec<u16>,
     pub raid: RaidState,
     pub players: Vec<ClientData>,
@@ -65,6 +68,10 @@ impl bevy::prelude::Plugin for Plugin {
                 send_input
                     .in_set(ClientSystems::Send)
                     .run_if(client_connected),
+            )
+            .add_systems(
+                Update,
+                motion::present_local_motion.in_set(ClientSystems::Present),
             );
     }
 }
@@ -160,6 +167,20 @@ fn recv_players_pos(
     }
 
     for player in snapshot.players.iter() {
+        if player.id == player_id.0 {
+            let reset = new_raid
+                || session.local(player.id).is_some_and(|previous| {
+                    previous.pose.mode != player.pose.mode
+                        || previous.alive != player.alive
+                        || previous.participant.status != player.participant.status
+                });
+            session.local_motion.record(
+                snapshot.simulation_time,
+                player.pos.into(),
+                time.elapsed_secs_f64(),
+                reset,
+            );
+        }
         if !lobby.players.contains_key(&player.id) && player.id != player_id.0 {
             let entity = commands
                 .spawn((
@@ -173,13 +194,7 @@ fn recv_players_pos(
             lobby.players.insert(player.id, entity);
         }
         if let Some(player_entity) = lobby.players.get(&player.id) {
-            if player.id == player_id.0 {
-                commands.entity(*player_entity).insert(Transform {
-                    translation: player.pos.into(),
-                    rotation: Quat::from_rotation_y(player.rot.yaw),
-                    ..default()
-                });
-            } else {
+            if player.id != player_id.0 {
                 commands
                     .entity(*player_entity)
                     .insert(crate::render::actors::RemoteTarget {
