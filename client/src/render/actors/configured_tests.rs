@@ -358,6 +358,12 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
     let recoil = app.world().resource::<feedback::Feedback>().responses[&7].recoil;
     let logical = handling::configured_contacts(spec, action, recoil, &player.mechanics).unwrap();
     let logical_support = world_root.mul_transform(logical.support);
+    let clearance = world_root.rotation()
+        * if player.weapon == WeaponKind::Rifle {
+            common::weapon_animation::m4a1::support_clearance(&action)
+        } else {
+            Vec3::ZERO
+        };
     let actual_support = if player.weapon == WeaponKind::Rifle {
         socket("grip.support")
     } else {
@@ -373,6 +379,7 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
                 .translation()
                 .lerp(magazine.translation(), action.magazine_grip)
                 .lerp(control.translation(), action.control_grip)
+                + clearance
         ) < 2e-6
     );
     for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
@@ -384,7 +391,8 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
     let expected = actual_support
         .translation()
         .lerp(magazine.translation(), action.magazine_grip)
-        .lerp(control.translation(), action.control_grip);
+        .lerp(control.translation(), action.control_grip)
+        + clearance;
     let hand = descendants(app.world(), body)
         .into_iter()
         .find(|&e| {
@@ -425,6 +433,33 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
         } else {
             Visibility::Hidden
         })
+    );
+}
+
+fn assert_hand_clearance(app: &App, body: Entity, root: Entity) {
+    let lower = descendants(app.world(), root)
+        .into_iter()
+        .find(|&e| {
+            app.world()
+                .get::<Name>(e)
+                .is_some_and(|n| n.as_str() == "lower")
+        })
+        .unwrap();
+    let hand = descendants(app.world(), body)
+        .into_iter()
+        .find(|&e| {
+            app.world()
+                .get::<BoneVisual>(e)
+                .is_some_and(|b| b.segment == Segment::LeftHand && b.inner == 0)
+        })
+        .unwrap();
+    crate::render::weapons::grasp::assert_magwell_clear(
+        app.world(),
+        hand,
+        lower,
+        app.world().resource::<ClientSession>().players[0]
+            .mechanics
+            .fraction,
     );
 }
 
@@ -514,6 +549,7 @@ fn configured_remote_mixed_reload_extremes_preserve_contacts_identity_and_cancel
                 }
                 app.update();
                 assert_arms(&app, body, root);
+                assert_hand_clearance(&app, body, root);
                 assert_eq!(weapon.mechanics().total_rounds(), total);
                 let player = &app.world().resource::<ClientSession>().players[0];
                 let wanted = if player.mechanics.reloading() && player.mechanics.fraction < 0.41 {
@@ -575,6 +611,7 @@ fn configured_remote_mixed_reload_extremes_preserve_contacts_identity_and_cancel
                 weapon.mechanics_mut().cancel();
                 publish(&mut app, &mut publisher, &weapon);
                 app.update();
+                assert_hand_clearance(&app, body, root);
                 assert!(
                     app.world()
                         .get::<configured::ConfigurationVisualError>(root)

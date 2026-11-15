@@ -55,8 +55,19 @@ mechanical state and collapses its reload to the committed installed magazine.
 That state follows the lowering weapon until the displayed slot changes; the
 new pistol/rifle snapshot cannot make its predecessor's magazine reappear.
 
+The support hand approaches and leaves the contact along a left-side clearance
+arc, shared by server anatomy and both client rigs. At full contact the arc is
+zero and the authored socket remains the anchor. The glove has two GPU morph
+targets: a wrapped magazine grip and a thumb press with curled fingers outside
+the receiver. Their weights follow the filtered magazine/control blends. Both
+views use the same mesh; wounded remote hands retain their damage surfaces.
+The mesh is cached, and conservative culling bounds include all finger poses.
+
 Composed engine fixtures cover mixed 20/30-round pools, local/remote contacts,
 stock/grip extremes, 30/60/165 Hz updates, slowed mechanical time, lost updates,
 and cancellation in each phase. Projection of the actual magazine mesh checks
-that retention leaves the local viewport before hiding. These measurements do
-not certify normal-speed weight/naturalness or final finger clearance.
+that retention leaves the local viewport before hiding. Triangle/box separation
+checks the morphed glove against the four authored magwell walls with a 1 mm
+contact tolerance, including approach, release, cancellation and slot switch.
+These measurements do not certify normal-speed weight/naturalness or rendered
+30/60/165 FPS performance.

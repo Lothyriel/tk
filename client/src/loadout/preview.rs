@@ -93,6 +93,8 @@ pub(super) fn update(
         return;
     };
     let handling = ConfiguredHandling {
+        support_clearance: Vec3::ZERO,
+        support_fingers: [0.0; 2],
         preflight_error: None,
         preferred_root: Transform::IDENTITY,
         shoulders: [

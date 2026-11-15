@@ -114,5 +114,10 @@ pub fn configured_contacts(
             .with_rotation(contacts.support.rotation.slerp(moving.rotation, weight)),
         )?;
     }
+    if spec.definition == crate::WeaponId::M4A1 {
+        let mut support = contacts.support;
+        support.translation += m4a1::support_clearance(&action);
+        contacts = contacts.with_support(support)?;
+    }
     Ok(contacts)
 }

@@ -120,6 +120,8 @@ pub(crate) struct ConfiguredHandling {
     pub stock_target: Option<Vec3>,
     pub max_adjustment: f32,
     pub support_blends: Vec<SocketBlend>,
+    pub support_clearance: Vec3,
+    pub support_fingers: [f32; 2],
     pub motions: Vec<PartMotion>,
     pub hidden_parts: Vec<(u16, String)>,
     pub visible_hands: [bool; 6],
@@ -188,7 +190,7 @@ impl HandAssets {
             (
                 meshes.add(Cuboid::new(0.07, handling::UPPER_ARM_METRES, 0.065)),
                 meshes.add(Cuboid::new(0.065, handling::FOREARM_METRES, 0.06)),
-                meshes.add(super::super::weapons::glove()),
+                meshes.add(super::super::weapons::grasp::mesh()),
                 materials.add(StandardMaterial {
                     base_color: Color::srgb(0.11, 0.14, 0.10),
                     ..default()
@@ -382,6 +384,12 @@ pub(super) fn assemble(
                     0
                 }),
             ));
+            if i % 3 == 2 {
+                hand.insert((
+                    super::super::weapons::grasp::component([0.0; 2]),
+                    super::super::weapons::grasp::bounds(),
+                ));
+            }
             if request.view_model {
                 hand.insert(NotShadowCaster);
             }
@@ -557,6 +565,11 @@ fn resolve_pose<'a>(
             )
             .map_err(|e| format!("socket contact: {e:?}"))?;
     }
+    let mut support = contacts.support;
+    support.translation += input.support_clearance;
+    contacts = contacts
+        .with_support(support)
+        .map_err(|e| format!("support clearance: {e:?}"))?;
     let solved = handling::fit_weapon(
         input.preferred_root,
         contacts,
@@ -634,6 +647,11 @@ pub(super) fn pose(
         };
         match prepare() {
             Ok((solved, updates)) => {
+                commands
+                    .entity(model.hands[2])
+                    .insert(super::super::weapons::grasp::component(
+                        input.support_fingers,
+                    ));
                 for (target, pose, visible) in updates {
                     if let Ok((mut transform, mut visibility)) = transforms.get_mut(target) {
                         *transform = pose;

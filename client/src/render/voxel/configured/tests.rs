@@ -158,6 +158,8 @@ fn fixture() -> (App, Configuration) {
 
 fn input() -> ConfiguredHandling {
     ConfiguredHandling {
+        support_clearance: Vec3::ZERO,
+        support_fingers: [0.0; 2],
         preflight_error: None,
         preferred_root: Transform::from_xyz(0.0, 0.10, -0.12),
         shoulders: [Vec3::new(-0.30, 0.1, 0.0), Vec3::new(0.30, 0.1, 0.0)],
