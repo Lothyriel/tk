@@ -55,7 +55,7 @@ impl bevy::prelude::Plugin for Plugin {
 }
 
 #[derive(Debug, Component)]
-struct WorldModelCamera;
+pub(crate) struct WorldModelCamera;
 
 #[derive(Debug, Component)]
 pub(crate) struct ViewModelCamera;

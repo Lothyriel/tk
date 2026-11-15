@@ -4,6 +4,7 @@ use common::{combat::*, map::*, raid::*, *};
 
 use crate::{ClientSystems, input::InputCapture, sync::ClientSession};
 mod animation;
+mod asset_review;
 mod mechanics;
 mod physical;
 mod video;
@@ -19,6 +20,14 @@ impl bevy::prelude::Plugin for Plugin {
             )
             .init_resource::<video::CaptureQueue>()
             .add_systems(Update, review_hud.after(drive))
+            .add_systems(
+                Update,
+                asset_review::body_visibility.after(ClientSystems::Present),
+            )
+            .add_systems(
+                PostUpdate,
+                asset_review::camera.after(bevy::transform::TransformSystems::Propagate),
+            )
             .add_systems(PostUpdate, video::record);
     }
 }
@@ -27,7 +36,7 @@ fn review_hud(driver: Res<Driver>, mut hud: Query<&mut Node, With<crate::hud::Ra
     for mut node in &mut hud {
         // The verbose raid panel covers the hands in portrait review windows.
         // State evidence stays in the route logs; restore ordinary HUD afterward.
-        node.display = if driver.step == Step::Animation {
+        node.display = if matches!(driver.step, Step::Animation | Step::AssetReview) {
             Display::None
         } else {
             Display::Flex
@@ -47,6 +56,7 @@ enum Step {
     PhysicalAction,
     PhysicalRest,
     Animation,
+    AssetReview,
     Weapons,
     Loot,
     Fight,
@@ -76,6 +86,7 @@ struct Driver {
     recovery_seen: bool,
     recovery_recorded: bool,
     next_fight_report: f64,
+    asset_captures: u8,
 }
 
 impl Driver {
@@ -403,6 +414,28 @@ fn drive(
                     "CONTINUOUS ANIMATION PASS reciprocal M1911 + {:?}; empty/tactical/interrupted reloads through normal UDP inputs",
                     desired.primary
                 );
+                let next = if std::env::var_os("TK_WEAPON_DEBUG").is_some() {
+                    Step::AssetReview
+                } else {
+                    Step::Showcase
+                };
+                driver.advance(next, now);
+            }
+        }
+        Step::AssetReview => {
+            view_camera.is_active = false;
+            input.camera = CameraInput::default();
+            let elapsed = now - driver.since;
+            for (index, label) in asset_review::VIEWS.into_iter().enumerate() {
+                if elapsed >= index as f64 * 2.0 + 1.0 && driver.asset_captures & (1 << index) == 0
+                {
+                    driver.asset_captures |= 1 << index;
+                    capture(&mut commands, &format!("asset-{label}"));
+                    info!("ASSET VIEW {label} elapsed={elapsed:.2} world_fov={world_fov}");
+                }
+            }
+            if elapsed >= 8.0 {
+                assert_eq!(driver.asset_captures, 0b1111);
                 driver.advance(Step::Showcase, now);
             }
         }
@@ -881,6 +914,11 @@ fn drive(
             .enumerate()
             {
                 let mut capture_due = elapsed >= at;
+                if name == "injury-fall" {
+                    // Capture the confirmed state, not a local clock estimate
+                    // of the peer's movement. The route gates on this same fall.
+                    capture_due = victim.pose.mode == PhysicalMode::Fallen;
+                }
                 // LIVE_RAGDOLL_PROOF_BEGIN
                 if name == "injury-recovery" {
                     // Capture the actual supported completion, not an assumed

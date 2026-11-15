@@ -73,7 +73,8 @@ class M4A1AssetTests(unittest.TestCase):
         for box in self.parts["receiver"]["boxes"]:
             self.assertFalse(intersects(bounds(self.parts, "receiver", box), aperture))
         self.assertEqual(self.parts["bolt"]["parent"], "receiver")
-        for name in ("charging_handle", "control", "dust_cover", "trigger", "selector"):
+        for name in ("charging_handle", "control", "dust_cover", "trigger", "selector",
+                     "forward_assist", "magazine_release"):
             self.assertTrue(self.parts[name]["movable"])
             parent = self.parts[name]["parent"]
             while parent:
