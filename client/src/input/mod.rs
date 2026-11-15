@@ -78,6 +78,12 @@ fn keyboard(
     if active && keys.just_pressed(KeyCode::KeyR) {
         input.reload_sequence = input.reload_sequence.wrapping_add(1);
     }
+    if active && keys.just_pressed(KeyCode::KeyI) {
+        input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
+    }
+    if active && keys.just_pressed(KeyCode::KeyB) {
+        input.selector_sequence = input.selector_sequence.wrapping_add(1);
+    }
     if active {
         if keys.just_pressed(KeyCode::KeyQ) {
             *tilt_target = if input.camera.roll < 0.0 { 0.0 } else { 0.3 };

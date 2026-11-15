@@ -32,8 +32,9 @@ missing definitions fail before reduction.
   component definition IDs globally; exclusion is enforced from either part.
   Self/unknown/duplicate constraints, contradictions and required-dependency
   cycles or chains exceeding 32 parts are invalid content.
-- Exactly one magazine is currently required. Chamber and detachable-magazine
-  inventory state remain separate future extensions.
+- Exactly one magazine definition is required in the resolved configuration.
+  Mechanical state may temporarily have no inserted magazine after a removal
+  commit; the configuration retains its last definition during that interval.
 
 ## Coordinates, anchors and conservative volumes
 
@@ -114,17 +115,22 @@ increments the `u64` revision; overflow fails.
 
 Removing a mount alone fails while its children remain. Explicit dependencies
 also prevent orphaned logical configurations. A caller can submit a complete
-valid removal of optional parts in one transaction. Reducing capacity below
-loaded rounds fails and requires unloading first; changing configuration never
-truncates or creates ammunition.
+valid removal of optional parts in one transaction. A magazine definition change
+selects an already-owned compatible physical magazine; an unowned definition
+fails. The previous magazine keeps its rounds in reserve and the chamber is
+untouched. No physical magazine changes capacity or gains rounds.
 
-`Arsenal::reconfigure` adds the reload lock and slot lookup. The server owns its
+`Arsenal::reconfigure` adds the manipulation lock and slot lookup. The server owns its
 catalog and rederives properties; no client stats enter the transaction.
 Ownership/lobby-ready checks and configuration requests are integrated with the
 customizer; configuration replication uses the dedicated protocol work. The
-existing protocol 9 inputs/snapshots are unchanged here. `WeaponInstance`
-serialization now includes its revision and attachment nodes.
+protocol 10 snapshot carries dynamic mechanical state; reliable full configuration
+replication remains a separate integration. `WeaponInstance` serialization includes
+its revision, attachment nodes and physical magazine pool.
 
 `spec()` returns the already-resolved cache: no catalog scan, tree traversal or
 pairwise volume check runs each frame. Resolution may test bounded pairs once
 per actual change, at most 32 parts × 16 boxes (plus root geometry).
+Owned magazine variants are resolved on restore/reconfiguration. A reload that
+seats a different definition selects that cache and increments the revision.
+Revision exhaustion cancels such a manipulation before its configuration commit.

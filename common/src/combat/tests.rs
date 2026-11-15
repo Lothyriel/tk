@@ -157,10 +157,15 @@ fn arsenal_enforces_cadence_and_semi_automatic_trigger() {
     assert_eq!(arsenal.step(&input, 0.1, 0.11), Some(WeaponId::M4A1));
     input.weapon = EquipmentSlot::Sidearm;
     input.fire_pressed_sequence = 2;
-    assert_eq!(arsenal.step(&input, 0.5, 0.61), Some(WeaponId::M1911));
+    assert_eq!(arsenal.step(&input, 0.2, 0.31), None);
+    assert_eq!(arsenal.current().spec().definition, WeaponId::M1911);
+    assert!(!arsenal.current().mechanics().equipped());
+    assert_eq!(arsenal.step(&input, 0.35, 0.66), None);
+    input.fire_pressed_sequence = 3;
+    assert_eq!(arsenal.step(&input, 0.0, 0.66), Some(WeaponId::M1911));
     assert_eq!(arsenal.step(&input, 0.5, 1.11), None);
     assert_eq!(arsenal.current().rounds(), 16);
-    input.fire_pressed_sequence = 3;
+    input.fire_pressed_sequence = 4;
     assert_eq!(arsenal.step(&input, 0.5, 1.61), Some(WeaponId::M1911));
     assert_eq!(arsenal.current().rounds(), 15);
 }
@@ -225,6 +230,10 @@ fn switching_cancels_reload_and_cannot_equip_unselected_primary() {
     input.loadout.primary = WeaponId::M4A1;
     input.weapon = EquipmentSlot::Primary;
     arsenal.step(&input, 0.1, 0.2);
+    assert_eq!(arsenal.current().spec().definition, WeaponId::M1911);
+    arsenal.step(&input, 0.35, 0.55);
+    arsenal.step(&input, 0.2, 0.75);
+    arsenal.step(&input, 0.35, 1.1);
     assert_eq!(arsenal.current().spec().definition, WeaponId::MP5);
 }
 
@@ -264,7 +273,8 @@ fn catalog_variant_and_two_equipped_instances_use_slots_and_resolved_capacity() 
     assert!(arsenal.reload_remaining > 0.0);
     input.weapon = EquipmentSlot::Sidearm;
     input.fire = true;
-    assert_eq!(arsenal.step(&input, 0.2, 0.3), Some(WeaponId(4)));
+    assert_eq!(arsenal.step(&input, 0.2, 0.3), None);
+    assert_eq!(arsenal.step(&input, 0.35, 0.65), Some(WeaponId(4)));
     assert_eq!(arsenal.reload_remaining, 0.0);
     assert_eq!(arsenal.current().rounds(), 11);
     assert_eq!(arsenal.current().reserve(), 36);
@@ -277,4 +287,114 @@ fn catalog_variant_and_two_equipped_instances_use_slots_and_resolved_capacity() 
         .unwrap()
         .set_ammunition(13, 36)
         .is_err());
+}
+
+#[test]
+fn mechanics_arsenal_deduplicates_actions_and_semi_edges_across_reordering() {
+    use crate::catalog::{FireMode, ManipulationKind};
+    let mut arsenal = Arsenal::new(Loadout::default());
+    let mut input = ClientInput {
+        selector_sequence: 1,
+        ..Default::default()
+    };
+    arsenal.step(&input, 0.0, 0.0); // Auto -> Safe
+    assert_eq!(arsenal.current().mechanics().mode(), FireMode::Safe);
+    input.selector_sequence = 0; // reordered
+    arsenal.step(&input, 0.0, 0.0);
+    input.selector_sequence = 1; // duplicate
+    arsenal.step(&input, 0.0, 0.0);
+    assert_eq!(arsenal.current().mechanics().mode(), FireMode::Safe);
+    input.selector_sequence = 2;
+    input.inspect_sequence = 1;
+    arsenal.step(&input, 0.0, 0.0);
+    let action_id = arsenal.current().mechanics().action_sequence();
+    assert_eq!(
+        arsenal.current().mechanics().action().unwrap().kind,
+        ManipulationKind::Inspect
+    );
+    arsenal.step(&input, 0.5, 0.5);
+    assert_eq!(arsenal.current().mechanics().action_sequence(), action_id);
+    input.fire_pressed_sequence = 1;
+    assert!(arsenal.step(&input, 0.0, 0.5).is_some());
+    assert!(arsenal.current().mechanics().action().is_none());
+    for sequence in [1, 0, 1] {
+        input.fire_pressed_sequence = sequence;
+        assert!(arsenal.step(&input, 0.5, 1.0).is_none());
+    }
+    input.reload_sequence = 1;
+    arsenal.step(&input, 0.0, 1.0);
+    let action_id = arsenal.current().mechanics().action_sequence();
+    arsenal.step(&input, 0.7, 1.7); // removed, retained chamber
+    assert!(arsenal.current().mechanics().inserted().is_none());
+    arsenal.cancel_actions();
+    arsenal.step(&input, 0.0, 1.7);
+    assert!(arsenal.current().mechanics().action().is_none());
+    assert_eq!(arsenal.current().mechanics().action_sequence(), action_id);
+    input.reload_sequence = 2;
+    arsenal.step(&input, 0.0, 1.7);
+    arsenal.step(&input, 3.0, 4.7);
+    assert_eq!(
+        (arsenal.current().rounds(), arsenal.current().reserve()),
+        (31, 88)
+    );
+    // Wrap is fresh; a packet immediately preceding the wrap is not.
+    let mut last = u32::MAX;
+    assert!(fresh_sequence(&mut last, 0));
+    assert!(!fresh_sequence(&mut last, u32::MAX));
+}
+
+#[test]
+fn mechanics_switch_cancel_at_each_stage_keeps_both_physical_pools() {
+    for cancel_at in [0.0_f32, 0.19, 0.2, 0.3, 0.55] {
+        let mut arsenal = Arsenal::new(Loadout::default());
+        let mut input = ClientInput {
+            weapon: EquipmentSlot::Sidearm,
+            ..Default::default()
+        };
+        let ids: Vec<_> = arsenal
+            .equipment
+            .iter()
+            .map(|(_, w)| w.instance().id)
+            .collect();
+        let total: u32 = arsenal
+            .equipment
+            .iter()
+            .map(|(_, w)| w.mechanics().total_rounds())
+            .sum();
+        arsenal.step(&input, cancel_at.min(0.2), 0.2);
+        if cancel_at > 0.2 {
+            arsenal.step(&input, cancel_at - 0.2, cancel_at);
+        }
+        arsenal.cancel_actions();
+        input.weapon = EquipmentSlot::Primary;
+        for i in 0..120 {
+            assert!(arsenal.step(&input, 0.01, 1.0 + i as f32 * 0.01).is_none());
+        }
+        assert_eq!(arsenal.active, EquipmentSlot::Primary);
+        assert!(arsenal.current().mechanics().equipped());
+        assert!(arsenal.current().mechanics().action().is_none());
+        assert!(!arsenal
+            .equipped(EquipmentSlot::Sidearm)
+            .unwrap()
+            .mechanics()
+            .equipped());
+        assert_eq!(
+            arsenal
+                .equipment
+                .iter()
+                .map(|(_, w)| w.instance().id)
+                .collect::<Vec<_>>(),
+            ids
+        );
+        assert_eq!(
+            arsenal
+                .equipment
+                .iter()
+                .map(|(_, w)| w.mechanics().total_rounds())
+                .sum::<u32>(),
+            total
+        );
+        input.fire = true;
+        assert!(arsenal.step(&input, 0.01, 3.0).is_some());
+    }
 }

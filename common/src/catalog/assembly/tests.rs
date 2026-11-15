@@ -418,25 +418,45 @@ fn assembly_revision_atomicity_cache_and_ammunition_conservation() {
     assert_eq!(equipped.spec().assembly.parts.as_ptr(), cache_ptr);
     let mut config = assembled();
     config.components[0].definition = DefinitionId(101);
+    assert!(equipped
+        .reconfigure(&catalog, 0, config.clone())
+        .unwrap_err()
+        .message
+        .contains("not owned"));
+    assert_eq!(crate::data::encode(equipped.instance()), original);
+    // Supply a real owned 30-round magazine rather than changing the capacity
+    // of the existing 20-round physical object.
+    let mut instance = equipped.instance().clone();
+    let mut magazines = instance.mechanics.magazines().to_vec();
+    magazines[1].definition = DefinitionId(101);
+    magazines[1].capacity = 30;
+    magazines[1].rounds = 30;
+    instance.mechanics = MechanicalState::with_magazines(
+        &catalog,
+        equipped.spec(),
+        magazines,
+        instance.mechanics.inserted().map(|m| m.id),
+        instance.mechanics.chamber(),
+    )
+    .unwrap();
+    equipped = EquippedWeapon::restore(&catalog, instance).unwrap();
+    let total = equipped.mechanics().total_rounds();
     assert_eq!(
         equipped.reconfigure(&catalog, 0, config.clone()).unwrap(),
         1
     );
-    assert_eq!((equipped.rounds(), equipped.reserve()), (19, 60));
+    assert_eq!((equipped.rounds(), equipped.reserve()), (31, 58));
+    assert_eq!(equipped.mechanics().total_rounds(), total);
     assert_eq!(equipped.spec().magazine_size, 30);
     assert!(equipped.reconfigure(&catalog, 0, assembled()).is_err());
-    equipped.reload();
-    assert_eq!((equipped.rounds(), equipped.reserve()), (30, 49));
-    assert!(equipped
-        .reconfigure(&catalog, 1, assembled())
-        .unwrap_err()
-        .message
-        .contains("unload"));
-    assert_eq!(equipped.spec().magazine_size, 30);
-    assert_eq!(equipped.instance().revision, 1);
+    assert_eq!(equipped.reconfigure(&catalog, 1, assembled()).unwrap(), 2);
+    assert_eq!((equipped.rounds(), equipped.reserve()), (21, 68));
+    assert_eq!(equipped.mechanics().total_rounds(), total);
+    assert_eq!(equipped.spec().magazine_size, 20);
+    assert_eq!(equipped.instance().revision, 2);
     let restored: WeaponInstance = crate::data::decode(&crate::data::encode(equipped.instance()));
-    assert_eq!(restored.configuration, config);
-    assert_eq!(restored.revision, 1);
+    assert_eq!(restored.configuration, assembled());
+    assert_eq!(restored.revision, 2);
 }
 
 #[test]

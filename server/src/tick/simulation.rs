@@ -3,7 +3,7 @@ use bevy_rapier3d::prelude::*;
 use common::humanoid::*;
 use common::{combat::*, raid::*, *};
 
-use super::{Projectile, WorldState, can_stand_up, set_crouched_state};
+use super::{Bot, LastInput, Projectile, WorldState, can_stand_up, set_crouched_state};
 
 pub(super) fn impact_mark_size_mm(weapon: WeaponId) -> u8 {
     weapon.spec().impact_size_mm
@@ -144,20 +144,27 @@ pub(super) fn weapons_tick(
         &PoseState,
         &Participant,
         &mut Arsenal,
+        &LastInput,
+        Has<Bot>,
     )>,
 ) {
-    for (entity, input, transform, movement, body, client, pose, player, mut arsenal) in &mut query
+    for (entity, input, transform, movement, body, client, pose, player, mut arsenal, last, bot) in
+        &mut query
     {
-        if raid.phase != RaidPhase::Active || player.status != RaidStatus::Active || !body.alive() {
+        if raid.phase != RaidPhase::Active
+            || player.status != RaidStatus::Active
+            || !body.alive()
+            || (!bot && time.elapsed_secs() - last.received_at > 0.5)
+        {
             arsenal.synchronize_sequences(input);
-            arsenal.reload_remaining = 0.0;
+            arsenal.cancel_actions();
             continue;
         }
         if matches!(pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering)
             || body.anatomy.capacity(Region::RightArm) <= 0.0
         {
             arsenal.synchronize_sequences(input);
-            arsenal.reload_remaining = 0.0;
+            arsenal.cancel_actions();
             continue;
         }
         let handling = 0.45 + body.anatomy.handling() * 0.55;

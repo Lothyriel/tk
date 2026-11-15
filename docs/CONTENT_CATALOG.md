@@ -20,7 +20,9 @@ once with `catalog()`. The server does not load a mesh, texture or audio file.
 - General items extend this document and namespace. Inventory references the
   existing weapon instance instead of duplicating its ammunition state.
 
-Protocol 9 inputs select `Primary`/`Sidearm` slots. Loadouts carry a stable
+Protocol 10 inputs select `Primary`/`Sidearm` slots and sequence reload, inspect
+and selector changes. Snapshots include the compact mechanical action/phase,
+chamber, bolt, inserted-magazine, selector and equip state. Loadouts carry a stable
 weapon definition ID; equipped snapshots carry definition/instance IDs and
 confirmed shots carry only the definition ID. Repeating instance IDs and class
 metadata in every recent shot exceeds the existing worst-case snapshot budget.
@@ -41,8 +43,9 @@ property reductions and revision transactions.
 Resolution produces capacity, damage, penetration, cadence, reload duration,
 velocity, mass, balance, modifiers, anchors and conservative obstruction bounds.
 `EquippedWeapon` caches this result when equipped or successfully reconfigured.
-Mutable magazine/reserve counts and the configuration revision belong to its
-`WeaponInstance`.
+The physical magazine pool, separate chamber, actions and configuration revision
+belong to its `WeaponInstance`. Loaded/reserve counters are derived views; see
+[mechanical state](WEAPON_MECHANICS.md).
 
 The initial values preserve TK's existing combat rules, including the temporary
 17-round pistol. These are migration baselines, not claims of real-world
@@ -50,7 +53,7 @@ fidelity. See [weapon references](WEAPON_REFERENCES.md) for the intended targets
 The bundled root masses and magazine interfaces are **G migration placeholders**,
 not manufacturer-certified kit masses. Baseline roots still contain the entire
 legacy assembly; replacing a baseline with a decomposed kit must subtract the
-removed parts from root mass. Physical chamber state extends this state model.
+removed parts from root mass.
 
 Visual mesh construction, palettes, animation tracks and sound resources belong
 to the client. The shared bore offset remains logical because authoritative

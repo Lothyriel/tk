@@ -38,6 +38,18 @@ fn assembly_authority_rejects_invalid_changes_and_fires_from_cached_properties()
             "occupied_positions: 1, geometry: (), modifiers: (velocity: 1.2)",
         );
     let catalog = Catalog::parse("server-fixture.ron", &source).unwrap();
+    // Physical magazines are created from this registry, never resized by a
+    // subsequent configuration request.
+    let arsenal = Arsenal::from_slots(
+        &catalog,
+        Loadout::default(),
+        &[
+            (EquipmentSlot::Primary, WeaponId::M4A1),
+            (EquipmentSlot::Sidearm, WeaponId::M1911),
+        ],
+    )
+    .unwrap();
+    app.world_mut().entity_mut(player).insert(arsenal);
     let mut configuration = catalog.configuration(WeaponId::M4A1).unwrap();
     configuration.components[0].node = 2;
     let received: WeaponConfiguration = data::decode(&data::encode(&configuration));
@@ -62,7 +74,7 @@ fn assembly_authority_rejects_invalid_changes_and_fires_from_cached_properties()
         assert!((arsenal.current().spec().muzzle_speed - 858.0).abs() < 0.001);
         assert_eq!(
             (arsenal.current().rounds(), arsenal.current().reserve()),
-            (30, 90)
+            (40, 120)
         );
     }
     app.world_mut().get_mut::<ClientInput>(player).unwrap().fire = true;
@@ -73,7 +85,7 @@ fn assembly_authority_rejects_invalid_changes_and_fires_from_cached_properties()
             .unwrap()
             .current()
             .rounds(),
-        29
+        39
     );
     assert!(
         app.world()
@@ -957,6 +969,140 @@ fn destroyed_trigger_arm_disables_firing_and_reload_while_actor_remains_alive() 
         .reload_sequence += 1;
     held_steps(&mut app, b, 2);
     assert_eq!(app.world().get::<Arsenal>(b).unwrap().reload_remaining, 0.0);
+}
+
+#[test]
+fn mechanics_gates_cancel_before_and_after_magazine_commits_without_rollback() {
+    use common::humanoid::{PhysicalMode, PoseState};
+    for gate in ["stale", "fall", "arm", "death"] {
+        for fraction in [0.24, 0.26, 0.69, 0.71, 0.91] {
+            let (mut app, player, _) = physical_fixture();
+            let (magazines, chamber, inserted, total) = {
+                let mut arsenal = app.world_mut().get_mut::<Arsenal>(player).unwrap();
+                let weapon = arsenal.equipped_mut(EquipmentSlot::Primary).unwrap();
+                weapon.set_ammunition(0, 90).unwrap();
+                assert!(weapon.mechanics_mut().start_reload(2.4));
+                weapon.advance(2.4 * fraction);
+                let state = weapon.mechanics();
+                (
+                    state.magazines().to_vec(),
+                    state.chamber(),
+                    state.inserted().map(|m| m.id),
+                    state.total_rounds(),
+                )
+            };
+            match gate {
+                "stale" => {
+                    app.world_mut()
+                        .get_mut::<LastInput>(player)
+                        .unwrap()
+                        .received_at = -100.0
+                }
+                "fall" => {
+                    let mut pose = app.world_mut().get_mut::<PoseState>(player).unwrap();
+                    pose.mode = PhysicalMode::Recovering;
+                    pose.mode_time = 0.0;
+                }
+                "arm" => {
+                    app.world_mut()
+                        .get_mut::<BodyHealth>(player)
+                        .unwrap()
+                        .anatomy
+                        .regions[Region::RightArm as usize] = 0.0
+                }
+                "death" => {
+                    app.world_mut()
+                        .get_mut::<BodyHealth>(player)
+                        .unwrap()
+                        .anatomy
+                        .organs[0] = 0.0
+                }
+                _ => unreachable!(),
+            }
+            if gate == "stale" {
+                steps(&mut app, 2);
+            } else {
+                held_steps(&mut app, player, 2);
+            }
+            let state = app
+                .world()
+                .get::<Arsenal>(player)
+                .unwrap()
+                .current()
+                .mechanics();
+            assert!(state.action().is_none(), "{gate} at {fraction}");
+            assert_eq!(state.magazines(), magazines);
+            assert_eq!(state.chamber(), chamber);
+            assert_eq!(state.inserted().map(|m| m.id), inserted);
+            assert_eq!(state.total_rounds(), total);
+            assert!(
+                !app.world()
+                    .resource::<WorldState>()
+                    .fired_projectiles
+                    .iter()
+                    .any(|s| s.shooter == 7)
+            );
+        }
+    }
+}
+
+#[test]
+fn mechanics_injured_handling_uses_one_clock_for_commits_and_pose() {
+    use common::humanoid::PoseState;
+    let (mut app, healthy, injured) = physical_fixture();
+    app.world_mut()
+        .get_mut::<BodyHealth>(injured)
+        .unwrap()
+        .anatomy
+        .regions[Region::LeftArm as usize] = 0.0;
+    for player in [healthy, injured] {
+        let mut arsenal = app.world_mut().get_mut::<Arsenal>(player).unwrap();
+        let weapon = arsenal.equipped_mut(EquipmentSlot::Primary).unwrap();
+        weapon.set_ammunition(0, 90).unwrap();
+        assert!(weapon.mechanics_mut().start_reload(2.4));
+    }
+    for _ in 0..90 {
+        let now = app.world().resource::<Time>().elapsed_secs();
+        for player in [healthy, injured] {
+            app.world_mut()
+                .get_mut::<LastInput>(player)
+                .unwrap()
+                .received_at = now;
+        }
+        steps(&mut app, 1);
+    }
+    let healthy_state = app
+        .world()
+        .get::<Arsenal>(healthy)
+        .unwrap()
+        .current()
+        .mechanics()
+        .snapshot();
+    let injured_state = app
+        .world()
+        .get::<Arsenal>(injured)
+        .unwrap()
+        .current()
+        .mechanics()
+        .snapshot();
+    assert!(healthy_state.fraction > injured_state.fraction);
+    assert!(!healthy_state.magazine_inserted);
+    assert!(injured_state.magazine_inserted);
+    assert!((injured_state.fraction / healthy_state.fraction - 0.725).abs() < 0.01);
+    for (player, state) in [(healthy, healthy_state), (injured, injured_state)] {
+        let pose = app.world().get::<PoseState>(player).unwrap();
+        assert!(pose.reload_empty);
+        assert!((pose.reload_fraction - state.fraction).abs() < 0.01);
+        assert_eq!(
+            app.world()
+                .get::<Arsenal>(player)
+                .unwrap()
+                .current()
+                .mechanics()
+                .total_rounds(),
+            90
+        );
+    }
 }
 
 #[test]
@@ -1890,6 +2036,19 @@ fn close_hip_and_ads_muzzle_rays_hit_actual_heads_without_capsule_redirection() 
                     };
                     input.aim = aiming;
                 }
+                for _ in 0..120 {
+                    held_steps(&mut app, a, 1);
+                    let arsenal = app.world().get::<Arsenal>(a).unwrap();
+                    if arsenal.current().spec().class == weapon
+                        && arsenal.current().mechanics().equipped()
+                        && arsenal.current().mechanics().action().is_none()
+                    {
+                        break;
+                    }
+                }
+                let arsenal = app.world().get::<Arsenal>(a).unwrap();
+                assert_eq!(arsenal.current().spec().class, weapon);
+                assert!(arsenal.current().mechanics().equipped());
                 held_steps(&mut app, a, 64);
                 let eye = app.world().get::<Transform>(a).unwrap().translation
                     + Vec3::Y * PLAYER_VIEW_HEIGHT;
@@ -2449,5 +2608,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
         common::map::destroyed_ids(&snapshot.destroyed_cells),
         vec![cell.id]
     );
-    assert_eq!(PROTOCOL_ID, 9);
+    assert_eq!(PROTOCOL_ID, 10);
 }
