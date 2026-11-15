@@ -156,6 +156,39 @@ impl Configuration {
 pub struct CachedConfiguration {
     pub packet: Configuration,
     pub resolved: ResolvedWeapon,
+    /// Bounded variants resolved once on reliable publication. The currently
+    /// handled magazine may differ from the installed one during a reload.
+    magazine_variants: BTreeMap<crate::catalog::DefinitionId, ResolvedWeapon>,
+}
+
+impl CachedConfiguration {
+    pub fn presented_magazine(
+        &self,
+        mechanics: &crate::catalog::MechanicalSnapshot,
+    ) -> Option<crate::catalog::MagazineInstanceId> {
+        if self.resolved.definition != crate::WeaponId::M4A1 {
+            return None;
+        }
+        self.packet
+            .magazine(crate::weapon_animation::m4a1::magazine(mechanics)?)
+            .map(|m| m.id)
+    }
+
+    pub fn visual(
+        &self,
+        magazine: Option<crate::catalog::MagazineInstanceId>,
+    ) -> Option<&ResolvedWeapon> {
+        let Some(id) = magazine else {
+            return Some(&self.resolved);
+        };
+        let definition = self
+            .packet
+            .magazines
+            .iter()
+            .find(|m| m.id == id)?
+            .definition;
+        self.magazine_variants.get(&definition)
+    }
 }
 
 /// Shared receive boundary used by the native client and headless transports.
@@ -347,13 +380,52 @@ impl ConfigurationCache {
         let resolved = catalog
             .resolve(&packet.weapon)
             .map_err(ConfigurationError::Invalid)?;
-        packet
-            .kit(catalog)?
-            .resolve(catalog)
-            .map_err(ConfigurationError::Invalid)?;
+        let mut magazine_variants = BTreeMap::new();
+        let kit = packet.kit(catalog)?;
+        let magazine_node = packet
+            .weapon
+            .components
+            .iter()
+            .find(|part| {
+                catalog
+                    .component(part.definition)
+                    .is_some_and(|c| c.kind == crate::catalog::ComponentKind::Magazine)
+            })
+            .ok_or(ConfigurationError::Bounds)?
+            .node;
+        for definition in packet.magazines.iter().map(|m| m.definition) {
+            if magazine_variants.contains_key(&definition) {
+                continue;
+            }
+            if !catalog
+                .component(definition)
+                .is_some_and(|part| part.kind == crate::catalog::ComponentKind::Magazine)
+            {
+                return Err(ConfigurationError::Bounds);
+            }
+            let mut weapon = kit.weapon.clone();
+            weapon
+                .components
+                .iter_mut()
+                .find(|p| p.node == magazine_node)
+                .unwrap()
+                .definition = definition;
+            magazine_variants.insert(
+                definition,
+                catalog
+                    .resolve(&weapon)
+                    .map_err(ConfigurationError::Invalid)?,
+            );
+        }
         // The complete tree and all derived properties become visible together.
-        self.entries
-            .insert(packet.handle, CachedConfiguration { packet, resolved });
+        self.entries.insert(
+            packet.handle,
+            CachedConfiguration {
+                packet,
+                resolved,
+                magazine_variants,
+            },
+        );
         Ok(true)
     }
 }

@@ -81,6 +81,9 @@ pub(crate) struct ConfiguredWeapon {
     pub epoch: u64,
     pub handle: u32,
     pub view_model: bool,
+    /// A physical magazine from this configuration's reliable pool. Only its
+    /// visual/contact variant is selected; installed gameplay stats stay intact.
+    pub magazine: Option<common::catalog::MagazineInstanceId>,
 }
 
 #[derive(Clone)]
@@ -280,9 +283,12 @@ pub(super) fn assemble(
             {
                 return Err("stale configuration revision".into());
             }
-            let contacts = WeaponContacts::from_assembly(&entry.resolved.assembly)
+            let visual = entry
+                .visual(request.magazine)
+                .ok_or("magazine is not in the owned pool")?;
+            let contacts = WeaponContacts::from_assembly(&visual.assembly)
                 .map_err(|e| format!("weapon contacts: {e:?}"))?;
-            let pieces = bindings.pieces(&entry.resolved)?;
+            let pieces = bindings.pieces(visual)?;
             Ok((entry, contacts, pieces))
         };
         let (entry, contacts, pieces) = match prepare() {

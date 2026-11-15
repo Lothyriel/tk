@@ -185,6 +185,20 @@ impl EquippedWeapon {
         &self.resolved
     }
 
+    /// Anatomical hand contacts follow the physical magazine being handled,
+    /// while ballistics and weapon properties continue to use the installed spec.
+    pub fn presentation_spec(&self) -> &ResolvedWeapon {
+        if self.resolved.definition == WeaponId::M4A1 {
+            if let Some(magazine) =
+                crate::weapon_animation::m4a1::magazine(&self.mechanics().snapshot())
+                    .and_then(|reference| self.mechanics().magazines().get(reference.pool_index()?))
+            {
+                return &self.magazine_variants[&magazine.definition];
+            }
+        }
+        &self.resolved
+    }
+
     /// Selection matching this assembly and owned pool, ignoring spent rounds.
     /// During a detached-magazine phase the configuration still identifies the
     /// last installed definition, which remains in the retained pool.

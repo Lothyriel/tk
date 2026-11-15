@@ -776,7 +776,9 @@ fn animate(
                     p.body.anatomy.capacity(Region::LeftLeg),
                     p.body.anatomy.capacity(Region::RightLeg),
                 ],
-                &entry.resolved,
+                entry
+                    .visual(entry.presented_magazine(&p.mechanics))
+                    .unwrap_or(&entry.resolved),
                 &p.mechanics,
                 feedback.responses.get(&p.id).and_then(|r| r.action),
                 Some(common::humanoid::configured::shoulder_cover(&p.armor)),
@@ -942,11 +944,12 @@ fn animate(
                     p.pose.reload_empty,
                 )
             });
-        let request = if displayed == p.weapon {
+        let mut request = if displayed == p.weapon {
             ConfiguredWeapon {
                 epoch: session.configurations.cache.epoch(),
                 handle: p.configuration,
                 view_model: false,
+                magazine: None,
             }
         } else if let Some(previous) = previous {
             *previous
@@ -961,7 +964,13 @@ fn animate(
             *visible = Visibility::Hidden;
             continue;
         };
-        if let Ok(contacts) = handling::WeaponContacts::from_assembly(&entry.resolved.assembly) {
+        if displayed == p.weapon {
+            request.magazine = entry.presented_magazine(&p.mechanics);
+        }
+        let Some(visual) = entry.visual(request.magazine) else {
+            continue;
+        };
+        if let Ok(contacts) = handling::WeaponContacts::from_assembly(&visual.assembly) {
             preferred = common::humanoid::configured::preferred_root(
                 &cache.poses[&p.id],
                 pose[Segment::Thorax.index()].position.into(),
@@ -971,7 +980,7 @@ fn animate(
         }
         let recoil = feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
         preferred.translation.z += recoil;
-        let mut input = configured::native::action(&entry.resolved, action, recoil, &p.mechanics);
+        let mut input = configured::native::action(visual, action, recoil, &p.mechanics);
         input.preflight_error = posture_errors.get(&p.id).cloned();
         input.preferred_root = preferred;
         input.shoulders = [Segment::LeftUpperArm, Segment::RightUpperArm].map(|segment| {

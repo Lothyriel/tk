@@ -52,11 +52,12 @@ pub(super) fn prepare(
         if weapon.weapon != displayed {
             continue;
         }
-        let request = if displayed == player.weapon {
+        let mut request = if displayed == player.weapon {
             ConfiguredWeapon {
                 epoch: session.configurations.cache.epoch(),
                 handle: player.configuration,
                 view_model: true,
+                magazine: None,
             }
         } else if let Some(previous) = previous {
             *previous
@@ -70,10 +71,16 @@ pub(super) fn prepare(
         else {
             continue;
         };
-        let mut input = native::action(&entry.resolved, action, response.recoil, &player.mechanics);
+        if displayed == player.weapon {
+            request.magazine = entry.presented_magazine(&player.mechanics);
+        }
+        let Some(visual) = entry.visual(request.magazine) else {
+            continue;
+        };
+        let mut input = native::action(visual, action, response.recoil, &player.mechanics);
         if let Err(error) = native::brace_view(
             &mut input,
-            &entry.resolved,
+            visual,
             response.ads,
             common::humanoid::configured::shoulder_cover(&player.armor),
         ) {
@@ -107,19 +114,18 @@ pub(super) fn prepare(
         // rejection and retains its previously accepted hierarchy/pose.
         if (displayed == WeaponKind::Pistol
             || (response.ads > 0.0
-                && entry
-                    .resolved
+                && visual
                     .assembly
                     .anchors
                     .contains_key(&common::catalog::AnchorKind::Sight)))
-            && let Ok((points, solved_root)) = assets.preview(&entry.resolved, &input)
+            && let Ok((points, solved_root)) = assets.preview(visual, &input)
         {
             if displayed != WeaponKind::Pistol {
                 // A shorter stock moves the solved weapon relative to its fixed
                 // shoulder pocket. Frame the entire rigid rig from that accepted
                 // pose, otherwise the receiver/rear iron crosses the near plane.
                 // This preserves all palm/stock contacts and authored eye relief.
-                let sight = entry.resolved.assembly.anchors[&common::catalog::AnchorKind::Sight];
+                let sight = visual.assembly.anchors[&common::catalog::AnchorKind::Sight];
                 let offset = input.preferred_root.transform_point(sight.translation)
                     - solved_root.transform_point(sight.translation);
                 let correction = view.rotation

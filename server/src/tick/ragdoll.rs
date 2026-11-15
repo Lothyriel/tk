@@ -40,7 +40,7 @@ pub(super) fn evaluate(
         Some(arsenal) => common::humanoid::configured::evaluate(
             pose,
             legs,
-            arsenal.current().spec(),
+            arsenal.current().presentation_spec(),
             &arsenal.current().mechanics().snapshot(),
             None,
             Some(armor.map_or(0.0, common::humanoid::configured::shoulder_cover)),

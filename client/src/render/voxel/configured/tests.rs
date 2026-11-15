@@ -175,6 +175,7 @@ fn spawn(app: &mut App, view_model: bool, transform: Transform) -> Entity {
     app.world_mut()
         .spawn((
             ConfiguredWeapon {
+                magazine: None,
                 epoch: 1,
                 handle: 1,
                 view_model,
