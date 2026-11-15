@@ -109,11 +109,11 @@ fn aim_barrel(input: &mut ClientInput, local: &ClientData, target: Vec3) {
                 } else {
                     0.0
                 });
-    input.camera = barrel_aim(eye, target, input.weapon);
+    input.camera = barrel_aim(eye, target, input.weapon_id());
 }
 
 /// Exact zero-roll offset-ray solution. Fixed-point look-at iteration oscillates near the muzzle.
-fn barrel_aim(eye: Vec3, target: Vec3, weapon: WeaponKind) -> CameraInput {
+fn barrel_aim(eye: Vec3, target: Vec3, weapon: WeaponId) -> CameraInput {
     let d = target - eye;
     let b = Vec3::from(weapon.spec().barrel_offset);
     let h = (d.length_squared() - b.x * b.x - b.y * b.y)
@@ -213,7 +213,7 @@ fn drive(
         && flashes.iter().any(|v| *v == Visibility::Inherited)
     {
         driver.flash_captures |= 1 << local.weapon.index();
-        let name = format!("confirmed-{}-flash", local.weapon.spec().catalog_key);
+        let name = format!("confirmed-{}-flash", local.weapon_id.spec().catalog_key);
         capture(&mut commands, &name);
         info!(
             "CONFIRMED FLASH EVIDENCE {:?} ammo={} visible_flash_entities={}",
@@ -237,11 +237,7 @@ fn drive(
         );
     }
     let desired = Loadout {
-        primary: if peer {
-            WeaponKind::Smg
-        } else {
-            WeaponKind::Rifle
-        },
+        primary: if peer { WeaponId::MP5 } else { WeaponId::M4A1 },
         ammo: AmmoKind::Ap,
         armor: ArmorKind::Heavy,
         helmet: true,
@@ -388,7 +384,6 @@ fn drive(
                 animation::ReviewFrame {
                     elapsed,
                     peer,
-                    primary: desired.primary,
                     world_fov,
                 },
             );
@@ -495,9 +490,9 @@ fn drive(
                 ..default()
             };
             input.weapon = if (4.1..7.1).contains(&elapsed) {
-                WeaponKind::Pistol
+                EquipmentSlot::Sidearm
             } else {
-                desired.primary
+                EquipmentSlot::Primary
             };
             if elapsed < 3.25 {
                 input.fire = true;
@@ -549,7 +544,7 @@ fn drive(
                 }
             }
             if elapsed > 10.0 {
-                assert_eq!(local.weapon, desired.primary);
+                assert_eq!(local.weapon_id, desired.primary);
                 assert_eq!(local.ammo_in_mag, desired.primary.spec().magazine_size);
                 assert_eq!(local.reload_remaining, 0.0);
                 info!(
@@ -594,7 +589,7 @@ fn drive(
                 let target = Vec3::from(target.pos) + Vec3::Y * 0.68;
                 // Aim the actual offset barrel at the smaller anatomical head, not the old broad capsule.
                 input.camera = barrel_aim(origin, target, desired.primary);
-                input.weapon = desired.primary;
+                input.weapon = EquipmentSlot::Primary;
                 input.fire = true;
                 if local.ammo_in_mag == 0 {
                     input.reload_sequence = input.reload_sequence.wrapping_add(1);
@@ -771,9 +766,9 @@ fn drive(
                 );
             } else {
                 input.weapon = if !peer && elapsed > 18.0 {
-                    desired.primary
+                    EquipmentSlot::Primary
                 } else {
-                    WeaponKind::Pistol
+                    EquipmentSlot::Sidearm
                 };
                 let mut segment = if elapsed < 7.0 {
                     if peer {
@@ -976,7 +971,7 @@ mod tests {
                 Vec3::new(4.0, 0.1, -10.0),
             ] {
                 let target = eye + offset;
-                let input = barrel_aim(eye, target, weapon);
+                let input = barrel_aim(eye, target, weapon.definition());
                 let rotation = Quat::from(&input);
                 let muzzle = eye + rotation * Vec3::from(weapon.spec().barrel_offset);
                 let direction = rotation * (-Vec3::Z);

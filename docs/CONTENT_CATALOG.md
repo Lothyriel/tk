@@ -15,8 +15,19 @@ once with `catalog()`. The server does not load a mesh, texture or audio file.
 - Instance IDs are nonzero `u64` values assigned by the owning simulation. Two
   instances of the same definition have independent ammunition and configuration.
 - Equipment slots select an instance; they are not weapon identities.
+- Instance IDs are allocated monotonically for the running simulation. Persisting
+  a world must also persist its allocator high-water mark before restoring instances.
 - General items extend this document and namespace. Inventory references the
   existing weapon instance instead of duplicating its ammunition state.
+
+Protocol 9 inputs select `Primary`/`Sidearm` slots. Loadouts carry a stable
+weapon definition ID; equipped snapshots carry definition/instance IDs and
+confirmed shots carry only the definition ID. Repeating instance IDs and class
+metadata in every recent shot exceeds the existing worst-case snapshot budget.
+The legacy player class field remains a procedural presentation profile, checked
+against the definition at the receive boundary. It never selects ammunition.
+The lobby cycles registry primaries; new definitions need no selector match.
+Local view templates are created on first equip rather than all at startup.
 
 ## Resolution
 

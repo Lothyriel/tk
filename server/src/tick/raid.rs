@@ -44,8 +44,11 @@ pub(super) fn lobby_tick(
     let previous_phase = raid.phase;
     let mut return_requested = false;
     for (_, input, mut player, ..) in &mut players {
-        if raid.phase == RaidPhase::Lobby && !player.ready {
-            player.loadout = input.loadout.validated();
+        if raid.phase == RaidPhase::Lobby
+            && !player.ready
+            && let Some(loadout) = input.loadout.validated()
+        {
+            player.loadout = loadout;
         }
         if player.last_command == input.lobby_sequence {
             continue;
@@ -135,7 +138,7 @@ pub(super) fn lobby_tick(
     if started {
         for (i, position) in BOT_POSITIONS.into_iter().enumerate() {
             let loadout = Loadout {
-                primary: WeaponKind::Smg,
+                primary: WeaponId::MP5,
                 armor: ArmorKind::Light,
                 helmet: false,
                 ..default()

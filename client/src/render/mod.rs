@@ -38,6 +38,9 @@ impl bevy::prelude::Plugin for Plugin {
                 sync_local_player_rotation,
                 sync_local_view,
                 sync_local_alive_visibility,
+                ensure_weapon_view
+                    .before(feedback::animate_local)
+                    .before(sync_view_weapon_visibility),
                 sync_view_weapon_visibility.after(feedback::advance),
                 sync_ammo_hud,
                 sync_barrel_laser.after(feedback::advance),
@@ -152,41 +155,14 @@ fn aimed_fov(base: f32, weapon: WeaponKind, ads: f32) -> f32 {
     (a + (b - a) * common::weapon_animation::ease(ads)).atan() * 2.0
 }
 
-fn spawn_view_model(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut lobby: ResMut<Lobby>,
-    player_id: Res<PlayerId>,
-) {
+fn spawn_view_model(mut commands: Commands, mut lobby: ResMut<Lobby>, player_id: Res<PlayerId>) {
     let player = commands
         .spawn((
             Client { id: player_id.0 },
             LocalPlayer,
             Transform::from_xyz(0.0, 1.0, 0.0),
             Visibility::default(),
-            children![
-                world_camera(),
-                view_model_camera(),
-                weapon_view_model(
-                    &mut meshes,
-                    &mut materials,
-                    WeaponKind::Rifle,
-                    Visibility::Inherited,
-                ),
-                weapon_view_model(
-                    &mut meshes,
-                    &mut materials,
-                    WeaponKind::Pistol,
-                    Visibility::Hidden,
-                ),
-                weapon_view_model(
-                    &mut meshes,
-                    &mut materials,
-                    WeaponKind::Smg,
-                    Visibility::Hidden
-                ),
-            ],
+            children![world_camera(), view_model_camera(),],
             PlayerVisualState {
                 alive: true,
                 weapon: WeaponKind::Rifle,
@@ -196,6 +172,35 @@ fn spawn_view_model(
         .id();
 
     lobby.players.insert(player_id.0, player);
+}
+
+/// The current procedural assets are class templates. Instantiate only a template
+/// actually equipped by the local actor, independent of catalog size.
+fn ensure_weapon_view(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    session: Res<ClientSession>,
+    id: Res<PlayerId>,
+    roots: Query<Entity, With<LocalPlayer>>,
+    views: Query<&WeaponViewModel>,
+) {
+    let Some(player) = session.local(id.0) else {
+        return;
+    };
+    if views.iter().any(|view| view.weapon == player.weapon) {
+        return;
+    }
+    let Ok(root) = roots.single() else { return };
+    let view = commands
+        .spawn(weapon_view_model(
+            &mut meshes,
+            &mut materials,
+            player.weapon,
+            Visibility::Hidden,
+        ))
+        .id();
+    commands.entity(root).add_child(view);
 }
 
 fn world_camera() -> impl Bundle {
@@ -668,6 +673,64 @@ fn sync_loot_visuals(
 mod view_tests {
     use super::*;
     #[test]
+    fn catalog_view_models_are_instantiated_on_demand_and_reused() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<ClientSession>()
+            .insert_resource(PlayerId(7))
+            .add_systems(Update, ensure_weapon_view);
+        app.world_mut()
+            .spawn((LocalPlayer, Transform::default(), Visibility::default()));
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&WeaponViewModel>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+        app.world_mut()
+            .resource_mut::<ClientSession>()
+            .players
+            .push(common::ClientData {
+                id: 7,
+                weapon: WeaponKind::Pistol,
+                weapon_id: common::WeaponId::M1911,
+                ..default()
+            });
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&WeaponViewModel>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&WeaponViewModel>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.players[0].weapon = WeaponKind::Rifle;
+            session.players[0].weapon_id = common::WeaponId::M4A1;
+        }
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&WeaponViewModel>()
+                .iter(app.world())
+                .count(),
+            2
+        );
+    }
+
+    #[test]
     fn local_cameras_shift_sideways_with_the_upper_body_lean() {
         let mut app = App::new();
         app.insert_resource(LocalInput(common::ClientInput {
@@ -714,7 +777,7 @@ mod view_tests {
                 .insert_resource(PlayerId(7))
                 .insert_resource(LocalInput(common::ClientInput {
                     aim: true,
-                    weapon: WeaponKind::Rifle,
+                    weapon: common::EquipmentSlot::Primary,
                     ..default()
                 }))
                 .init_resource::<Time>()

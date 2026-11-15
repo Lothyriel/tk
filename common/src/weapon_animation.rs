@@ -65,7 +65,12 @@ pub fn ads_offset(weapon: WeaponKind) -> Vec3 {
 }
 
 pub fn barrel_offset(weapon: WeaponKind, ads: f32) -> Vec3 {
-    Vec3::from(weapon.spec().barrel_offset).lerp(
+    resolved_barrel_offset(weapon.spec(), ads)
+}
+
+pub fn resolved_barrel_offset(spec: &crate::catalog::ResolvedWeapon, ads: f32) -> Vec3 {
+    let weapon = spec.class;
+    Vec3::from(spec.barrel_offset).lerp(
         ads_offset(weapon) + WeaponRig::for_weapon(weapon).muzzle,
         ease(ads),
     )

@@ -9,10 +9,11 @@ pub mod weapon_animation;
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_rapier3d::prelude::*;
 use bevy_renet2::{netcode::NetcodeTransportError, prelude::ClientId};
+pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 8;
+pub const PROTOCOL_ID: u64 = 9;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
 pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;
@@ -39,6 +40,7 @@ pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut bevy::prelude::App) {
+        catalog::catalog();
         app.init_resource::<Lobby>()
             .add_plugins(RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule())
             .add_systems(Update, report_transport_errors);
@@ -69,6 +71,9 @@ pub struct ClientData {
     pub alive: bool,
     pub health: f32,
     pub weapon: WeaponKind,
+    pub weapon_id: WeaponId,
+    pub weapon_instance: WeaponInstanceId,
+    pub weapon_slot: EquipmentSlot,
     pub ammo_in_mag: u32,
     pub reserve_ammo: u32,
     pub reload_remaining: f32,
@@ -95,8 +100,14 @@ pub struct ClientInput {
     pub aim: bool,
     pub fire_pressed_sequence: u32,
     pub reload_sequence: u32,
-    pub weapon: WeaponKind,
+    pub weapon: EquipmentSlot,
     pub camera: CameraInput,
+}
+
+impl ClientInput {
+    pub fn weapon_id(&self) -> WeaponId {
+        self.loadout.weapon(self.weapon)
+    }
 }
 
 /// Presentation/mechanism family, not a catalog identity or equipment slot.
@@ -188,9 +199,10 @@ pub struct ProjectileData {
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 pub struct FiredProjectileData {
+    // Keep the two 64-bit fields together to avoid padding per retained shot.
     pub id: u64,
-    pub weapon: WeaponKind,
     pub shooter: u64,
+    pub weapon: WeaponId,
     pub time: f32,
     pub muzzle: [f32; 3],
     pub direction: [f32; 3],
@@ -225,6 +237,22 @@ pub struct WorldSnapshot {
     pub fired_projectiles: Vec<FiredProjectileData>,
     pub physics_pieces: Vec<PhysicsPieceData>,
     pub simulation_time: f32,
+}
+
+impl WorldSnapshot {
+    /// Validate content references before presentation can dereference IDs.
+    pub fn catalog_valid(&self) -> bool {
+        let catalog = catalog::catalog();
+        self.players.iter().all(|p| {
+            catalog
+                .weapon(p.weapon_id)
+                .is_some_and(|w| w.class == p.weapon)
+                && p.participant.loadout.validated().is_some()
+        }) && self
+            .fired_projectiles
+            .iter()
+            .all(|s| catalog.weapon(s.weapon).is_some())
+    }
 }
 
 #[derive(Debug, Default, Resource)]

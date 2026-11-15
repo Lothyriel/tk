@@ -19,7 +19,7 @@ pub(super) fn bot_tick(
     };
     for (entity, transform, body, mut input, mut bot) in &mut bots {
         input.fire = false;
-        input.weapon = WeaponKind::Pistol;
+        input.weapon = EquipmentSlot::Sidearm;
         if raid.phase != RaidPhase::Active || !body.alive() {
             continue;
         }

@@ -101,7 +101,7 @@ struct LastInput {
 #[derive(Debug, Component)]
 struct Projectile {
     id: u64,
-    weapon: WeaponKind,
+    weapon: WeaponId,
     velocity: Vec3,
     damage: f32,
     penetration: f32,
@@ -201,7 +201,7 @@ fn validated_input(bytes: &[u8]) -> Option<ClientInput> {
     input.camera.pitch = input.camera.pitch.clamp(-1.56, 1.56);
     input.camera.roll = input.camera.roll.clamp(-0.3, 0.3);
     input.camera.yaw %= std::f32::consts::TAU;
-    input.loadout = input.loadout.validated();
+    input.loadout = input.loadout.validated()?;
     Some(input)
 }
 
@@ -354,9 +354,12 @@ fn send_world_snapshot(
                     && participant.status == RaidStatus::Active
                     && raid.phase == RaidPhase::Active,
                 health: body.total(),
-                weapon: arsenal.active,
-                ammo_in_mag: arsenal.magazines[arsenal.active.index()],
-                reserve_ammo: arsenal.reserves[arsenal.active.index()],
+                weapon: arsenal.current().spec().class,
+                weapon_id: arsenal.current().spec().definition,
+                weapon_instance: arsenal.current().instance().id,
+                weapon_slot: arsenal.active,
+                ammo_in_mag: arsenal.current().rounds(),
+                reserve_ammo: arsenal.current().reserve(),
                 reload_remaining: arsenal.reload_remaining,
                 body: body.clone(),
                 armor: armor.clone(),

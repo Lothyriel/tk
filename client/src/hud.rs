@@ -175,7 +175,7 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
                 session.raid.seconds_left as u32 / 60, session.raid.seconds_left as u32 % 60,
                 body.parts[0], body.parts[1], body.parts[2], body.parts[3],
                 local.armor.vest, local.armor.helmet, body.last_hit,
-                local.weapon.spec().name, p.loadout.ammo, local.ammo_in_mag, local.reserve_ammo,
+                local.weapon_id.spec().name, p.loadout.ammo, local.ammo_in_mag, local.reserve_ammo,
                 if local.reload_remaining > 0.0 { "[RELOADING]" } else { "" },
                 p.carried, p.secured, exit, local.pos[0], local.pos[2],
             ));

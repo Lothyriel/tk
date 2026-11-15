@@ -127,6 +127,10 @@ fn recv_players_pos(
         let Ok(snapshot) = data::try_decode::<WorldSnapshot>(&message) else {
             continue;
         };
+        if !snapshot.catalog_valid() {
+            warn!("Rejected snapshot with unknown or inconsistent catalog identity");
+            continue;
+        }
         if loss.every > 0 && snapshot.sequence % loss.every == 0 {
             loss.dropped += 1;
             if loss.dropped % 60 == 1 {
@@ -293,7 +297,7 @@ mod tests {
         let shots: Vec<_> = (0..10)
             .map(|id| common::FiredProjectileData {
                 id,
-                weapon: common::WeaponKind::Smg,
+                weapon: common::WeaponId::MP5,
                 shooter: 7,
                 time: id as f32 * 0.1,
                 muzzle: [0.0; 3],
@@ -316,7 +320,7 @@ mod tests {
         let shots: Vec<_> = (1..=3)
             .map(|id| common::FiredProjectileData {
                 id,
-                weapon: common::WeaponKind::Rifle,
+                weapon: common::WeaponId::M4A1,
                 shooter: 7,
                 time: 1.0 - id as f32 * 0.01,
                 muzzle: [0.0; 3],

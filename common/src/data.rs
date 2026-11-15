@@ -58,7 +58,11 @@ mod tests {
     #[test]
     fn persistent_anatomy_pose_and_piece_state_roundtrip_with_bounded_snapshot() {
         use crate::{combat::*, humanoid::*, *};
-        let mut player = ClientData { id: 7, ..default() };
+        let mut player = ClientData {
+            id: 7,
+            weapon_instance: WeaponInstanceId(73),
+            ..default()
+        };
         player.body.anatomy.separate(Segment::LeftForearm);
         player.body.anatomy.organs[Organ::Heart as usize] = 25.0;
         player.pose.mode = PhysicalMode::Fallen;
@@ -76,7 +80,7 @@ mod tests {
         };
         let shot = FiredProjectileData {
             id: 44,
-            weapon: WeaponKind::Smg,
+            weapon: WeaponId::MP5,
             shooter: 7,
             time: 3.8,
             muzzle: [0.2, 1.2, 0.0],
@@ -98,7 +102,22 @@ mod tests {
             physics_pieces: vec![piece],
             simulation_time: 4.0,
         };
-        let decoded = try_decode::<WorldSnapshot>(&encode(&snapshot)).unwrap();
+        let mut decoded = try_decode::<WorldSnapshot>(&encode(&snapshot)).unwrap();
+        assert!(decoded.catalog_valid());
+        assert_eq!(decoded.fired_projectiles[0].weapon, WeaponId::MP5);
+        assert_eq!(decoded.players[0].weapon_instance, WeaponInstanceId(73));
+        decoded.players[0].weapon_id = WeaponId(9999);
+        assert!(!decoded.catalog_valid());
+        decoded.players[0].weapon_id = WeaponId::M1911;
+        assert!(
+            !decoded.catalog_valid(),
+            "known definition with a false class must be rejected"
+        );
+        decoded.players[0].weapon_id = WeaponId::M4A1;
+        decoded.fired_projectiles[0].weapon = WeaponId(9999);
+        assert!(!decoded.catalog_valid());
+        decoded.fired_projectiles[0].weapon = WeaponId::MP5;
+        assert!(decoded.catalog_valid());
         assert_eq!(
             crate::map::destroyed_ids(&decoded.destroyed_cells),
             vec![0, 17, 175]

@@ -15,7 +15,6 @@ pub(super) struct Sequence {
 pub(super) struct ReviewFrame {
     pub elapsed: f64,
     pub peer: bool,
-    pub primary: WeaponKind,
     pub world_fov: f32,
 }
 
@@ -30,7 +29,6 @@ pub(super) fn drive(
     let ReviewFrame {
         elapsed,
         peer,
-        primary,
         world_fov,
     } = frame;
     let observe = if peer {
@@ -58,9 +56,9 @@ pub(super) fn drive(
     }
     let t = elapsed - if peer { 29.0 } else { 0.0 };
     input.weapon = if t < 14.0 {
-        WeaponKind::Pistol
+        EquipmentSlot::Sidearm
     } else {
-        primary
+        EquipmentSlot::Primary
     };
     input.camera = CameraInput {
         pitch: 0.55,
@@ -175,10 +173,10 @@ pub(super) fn drive(
         }
     }
     if (9.0..9.6).contains(&t) {
-        input.weapon = primary;
+        input.weapon = EquipmentSlot::Primary;
     }
     if (24.0..24.6).contains(&t) {
-        input.weapon = WeaponKind::Pistol;
+        input.weapon = EquipmentSlot::Sidearm;
     }
     for (index, (at, name)) in [
         (0.8, "m1911-draw"),
@@ -213,7 +211,7 @@ pub(super) fn drive(
                 assert_eq!(local.ammo_in_mag, 0, "{name}");
             }
             if name.ends_with("return") {
-                assert_eq!(local.ammo_in_mag, local.weapon.spec().magazine_size);
+                assert_eq!(local.ammo_in_mag, local.weapon_id.spec().magazine_size);
                 assert_eq!(local.reload_remaining, 0.0);
             }
         }
