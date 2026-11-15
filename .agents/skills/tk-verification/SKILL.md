@@ -21,7 +21,7 @@ python scripts/verify.py --mode docs --feature FEATURE
 - `docs`: diff/tooling checks, no Cargo. Use for documentation-only edits.
 - Optional `--feature NAME`: validate that feature's spec and tasks if present, using project-local TLC validators. Replace FEATURE with the actual feature name, or omit this option when no formal spec exists. This does not run the final completion validator or prove a feature complete.
 
-All modes print commands, stream output and stop at the first failure. See CONTRIBUTING.md for arguments and setup. None launches a game, network harness or recorder. Reuse the debug build/cache, including caller-supplied `CARGO_TARGET_DIR`; do not clean or switch profiles/target directories repeatedly. Missing prerequisites are blockers, not reasons to weaken checks.
+All modes print commands, stream output and stop at the first failure. See AGENTS.md for setup and use `python scripts/verify.py --help` for arguments. None launches a game, network harness or recorder. Reuse the debug build/cache, including caller-supplied `CARGO_TARGET_DIR`; do not clean or switch profiles/target directories repeatedly. Missing prerequisites are blockers, not reasons to weaken checks.
 
 ## Real physics without a window
 

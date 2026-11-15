@@ -2,7 +2,9 @@
 
 ## Start here
 
-Activate `tk-workflow` for project work. It selects only the relevant local skills; do not load every skill for every request or turn analysis into implementation. Read [CONTRIBUTING.md](CONTRIBUTING.md) for contributor setup and commit conventions.
+Activate `tk-workflow` for project work. It selects only the relevant local skills; do not load every skill for every request or turn analysis into implementation.
+
+Use the Rust toolchain selected by `rust-toolchain.toml` and the committed `Cargo.lock`. On x86_64 Linux, install `clang` and `/usr/bin/mold`. Python 3.12+ is used by verification and playtest tools.
 
 | Skill | Owns |
 | --- | --- |
@@ -33,6 +35,7 @@ This is a three-crate Rust workspace; root `Cargo.toml` owns shared dependency v
 ## Always-on safety and verification rules
 
 - Preserve unrelated local/staged work. Never reset/discard it or include it without authorization. Stage explicit paths/hunks; preserve normal Git hooks and identity.
+- Use English Conventional Commits, such as `fix(input): correct lean direction`.
 - Integrate branches by rebasing the topic branch onto the target, then fast-forwarding the target to the rebased commit. Never create merge commits or use a non-fast-forward merge.
 - Derive tests from acceptance criteria. Do not weaken, delete or skip tests just to pass. Commit verified coherent tasks with related tests and task/spec status updates together.
 - **Physics/gameplay iteration is headless-first. Do not open the game or run rendered harnesses by default. Video capture is opt-in, not a normal test artifact.** Use assertions, numerical measurements and logs; see `tk-verification` for exceptions and fixture details.

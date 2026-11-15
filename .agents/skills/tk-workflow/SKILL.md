@@ -21,7 +21,7 @@ Routes can compose: for a physics bugfix use TLC + verification, then contributi
 
 ## Before acting
 
-Read the root AGENTS.md and only the relevant portion of CONTRIBUTING.md. For resumed work, compare `.specs/STATE.md` with the real branch, status, commits and task evidence; propose the reconciled next step before edits. Preserve unexplained work and report blockers instead of discarding it. Archived handoffs and old permissions do not authorize current actions.
+Read the root AGENTS.md. For resumed work, compare `.specs/STATE.md` with the real branch, status, commits and task evidence; propose the reconciled next step before edits. Preserve unexplained work and report blockers instead of discarding it. Archived handoffs and old permissions do not authorize current actions.
 
 Activate child skills by their exact IDs; supporting files and scripts resolve relative to their loaded skill directory. The project-local TLC snapshot is authoritative for this repository; do not download updates or depend on a personal installation. If a required skill cannot load, report the blocker. Do not substitute a different workflow silently.
 

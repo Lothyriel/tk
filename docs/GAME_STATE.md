@@ -118,7 +118,7 @@ python scripts/verify.py --package server --filter ragdoll_running_and_resting_c
 python scripts/verify.py
 ```
 
-Use a focused test during physics iteration, then the broader suite; the first build can still take time. `python scripts/verify.py --mode full` adds workspace formatting/check/Clippy/tests, without starting an application; `--mode docs` is the Cargo-free path for documentation-only edits. These checks validate engine/tooling state, not visible animation, camera framing, interpolation or real network delivery. See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup and command details. The short `AGENTS.md` guide routes agents and `/goals` through the local `tk-workflow` skill, with separate TLC, verification, contribution and game-state procedures.
+Use a focused test during physics iteration, then the broader suite; the first build can still take time. `python scripts/verify.py --mode full` adds workspace formatting/check/Clippy/tests, without starting an application; `--mode docs` is the Cargo-free path for documentation-only edits. These checks validate engine/tooling state, not visible animation, camera framing, interpolation or real network delivery. `AGENTS.md` summarizes setup, verification and contribution rules; local skills provide detailed workflows.
 
 ### Rendered end-to-end acceptance
 

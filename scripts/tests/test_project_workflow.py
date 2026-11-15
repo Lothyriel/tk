@@ -25,7 +25,8 @@ class ProjectWorkflowTests(unittest.TestCase):
         references = list((vendor / "references").glob("*.md"))
         scripts = list((vendor / "scripts").glob("*.py"))
         self.assertEqual(len(references), 12)
-        self.assertEqual(len(scripts), 5)
+        self.assertEqual(len(scripts), 4)
+        self.assertFalse((vendor / "scripts/check_commit.py").exists())
         for script in scripts:
             ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
         origin = (vendor / "UPSTREAM.md").read_text(encoding="utf-8")
@@ -56,7 +57,7 @@ class ProjectWorkflowTests(unittest.TestCase):
             self.assertNotIn("C:/Users/", text)
 
     def test_guides_resolve_relative_local_links(self):
-        guides = [ROOT / "AGENTS.md", ROOT / "CONTRIBUTING.md", SKILLS / "tk-contribution/SKILL.md"]
+        guides = [ROOT / "AGENTS.md", SKILLS / "tk-contribution/SKILL.md"]
         for guide in guides:
             for target in re.findall(r"\]\(([^)]+)\)", guide.read_text(encoding="utf-8")):
                 if "://" not in target and not target.startswith("#"):
