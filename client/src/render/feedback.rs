@@ -10,7 +10,7 @@ impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Feedback>().add_systems(
             Update,
-            (advance, animate_local)
+            (advance, animate_local, frame_local_pistol)
                 .chain()
                 .after(super::sync_local_view)
                 .in_set(ClientSystems::Present),
@@ -35,6 +35,7 @@ pub(super) struct Response {
     landing: f32,
     pub(super) ads: f32,
     was_alive: bool,
+    frame_offset: Vec3,
 }
 impl Response {
     fn step(&mut self, dt: f32) {
@@ -324,6 +325,7 @@ pub(super) fn animate_local(
         if weapon.weapon != displayed {
             continue;
         }
+        let base = *t;
         t.translation += locomotion_offset(phase, speed, response.ads)
             + action.root.translation
             + Vec3::new(response.sway.x * 0.2, -swap_drop * 0.34, response.recoil);
@@ -339,6 +341,22 @@ pub(super) fn animate_local(
             response.sway.x * motion_weight,
             (injury - response.sway.x * 0.5) * motion_weight,
         );
+        if displayed == WeaponKind::Pistol {
+            let aspect = if let Projection::Perspective(p) = &**projection {
+                p.aspect_ratio
+            } else {
+                1.0
+            };
+            let offset = super::weapons::framed_offset(displayed, aspect).lerp(
+                common::weapon_animation::ads_offset(displayed),
+                common::weapon_animation::ease(response.ads),
+            );
+            // Cant about the receiver, not the eye. Rotating the 60cm child
+            // offset swept the pistol out of the right edge during reload.
+            t.translation = base.translation
+                + base.rotation * (t.translation - base.translation)
+                + t.rotation * (offset - action.root.rotation * offset);
+        }
         t.rotation *= action.root.rotation;
         t.translation.y -= physical_drop * 0.34;
         t.rotation *= Quat::from_rotation_x(physical_drop * 0.6);
@@ -475,9 +493,393 @@ fn camera_height_feedback(pose: &common::humanoid::PoseState) -> f32 {
     pose.root_drop - fall_blend(pose) * (1.15 - pose.crouch * 0.48) - pose.landing * 0.04
 }
 
+// Sleeves intentionally leave the bottom of the view; only the manipulated
+// weapon, gloves and visible magazine define the presentation envelope.
+#[derive(Component, Clone, Copy)]
+pub(super) struct ViewFrameBounds(pub [Vec3; 8]);
+
+fn frame_local_pistol(
+    time: Res<Time>,
+    id: Res<PlayerId>,
+    session: Res<ClientSession>,
+    mut feedback: ResMut<Feedback>,
+    camera: Single<
+        (&Transform, &Projection),
+        (
+            With<ViewModelCamera>,
+            Without<WeaponViewModel>,
+            Without<WeaponMeshRoot>,
+            Without<ViewFrameBounds>,
+            Without<Forearm>,
+            Without<UpperArm>,
+        ),
+    >,
+    mut views: Query<
+        (&WeaponViewModel, &mut Transform),
+        (
+            With<LocalView>,
+            Without<ViewModelCamera>,
+            Without<WeaponMeshRoot>,
+            Without<ViewFrameBounds>,
+            Without<Forearm>,
+            Without<UpperArm>,
+        ),
+    >,
+    roots: Query<
+        (Entity, &ChildOf, &Transform),
+        (
+            With<WeaponMeshRoot>,
+            Without<ViewFrameBounds>,
+            Without<Forearm>,
+            Without<UpperArm>,
+        ),
+    >,
+    parts: Query<
+        (&ChildOf, &Transform, &ViewFrameBounds, &Visibility),
+        (
+            Without<WeaponMeshRoot>,
+            Without<WeaponViewModel>,
+            Without<Forearm>,
+            Without<UpperArm>,
+        ),
+    >,
+    mut arms: Query<
+        (
+            &ChildOf,
+            Option<&Forearm>,
+            Option<&UpperArm>,
+            &mut Transform,
+        ),
+        (
+            Or<(With<Forearm>, With<UpperArm>)>,
+            Without<WeaponMeshRoot>,
+            Without<WeaponViewModel>,
+            Without<ViewFrameBounds>,
+            Without<ViewModelCamera>,
+        ),
+    >,
+    hands: Query<
+        (&ChildOf, &Transform),
+        (
+            With<SupportHand>,
+            Without<WeaponViewModel>,
+            Without<WeaponMeshRoot>,
+            Without<Forearm>,
+            Without<UpperArm>,
+        ),
+    >,
+) {
+    let (eye, projection) = *camera;
+    let Projection::Perspective(projection) = projection else {
+        return;
+    };
+    let Some(response) = feedback.responses.get_mut(&id.0) else {
+        return;
+    };
+    if response.displayed != Some(WeaponKind::Pistol) {
+        return;
+    }
+    for (root_entity, root_parent, root) in &roots {
+        let Ok((weapon, mut view)) = views.get_mut(root_parent.0) else {
+            continue;
+        };
+        if weapon.weapon != WeaponKind::Pistol {
+            continue;
+        }
+        let composed = view.mul_transform(*root);
+        let to_eye = eye.to_matrix().inverse() * composed.to_matrix();
+        let points: Vec<_> = parts
+            .iter()
+            .filter(|(parent, _, _, visibility)| {
+                parent.0 == root_entity && **visibility != Visibility::Hidden
+            })
+            .flat_map(|(_, pose, bounds, _)| {
+                bounds
+                    .0
+                    .map(|p| to_eye.transform_point3(pose.transform_point(p)))
+            })
+            .collect();
+        let lowering = response.swap > 0.05
+            || session.local(id.0).is_none_or(|p| {
+                !p.alive
+                    || !matches!(
+                        p.pose.mode,
+                        PhysicalMode::Standing | PhysicalMode::Stumbling
+                    )
+            });
+        let correction = if lowering {
+            response.frame_offset * (-time.delta_secs() * 14.0).exp()
+        } else {
+            pistol_frame_correction(&points, projection, response.ads)
+        };
+        response.frame_offset = correction;
+        view.translation += eye.rotation * correction;
+        let composed = view.mul_transform(*root);
+        let to_local = composed.to_matrix().inverse();
+        for (parent, forearm, upper, mut pose) in &mut arms {
+            if parent.0 != root_entity {
+                continue;
+            }
+            let support = forearm.map_or_else(|| upper.unwrap().support, |arm| arm.support);
+            let grip = if support {
+                *hands
+                    .iter()
+                    .find(|(parent, _)| parent.0 == root_entity)
+                    .unwrap()
+                    .1
+            } else {
+                Transform::from_translation(WeaponRig::for_weapon(weapon.weapon).trigger)
+            };
+            let wrist = grip.transform_point(Vec3::Z * 0.055);
+            let anchor = to_local.transform_point3(eye.transform_point(Vec3::new(
+                if support { -0.26 } else { 0.27 },
+                -0.34,
+                -0.16,
+            )));
+            let elbow = body_side_elbow(wrist, anchor);
+            *pose = if forearm.is_some() {
+                forearm_pose(wrist, elbow)
+            } else {
+                forearm_pose(elbow, anchor)
+            };
+        }
+    }
+}
+
+fn pistol_frame_correction(points: &[Vec3], projection: &PerspectiveProjection, ads: f32) -> Vec3 {
+    if points.is_empty() {
+        return Vec3::ZERO;
+    }
+    let vertical = (projection.fov * 0.5).tan() * 0.94;
+    let horizontal = vertical * projection.aspect_ratio;
+    let mut left = f32::NEG_INFINITY;
+    let mut right = f32::INFINITY;
+    let mut bottom = f32::NEG_INFINITY;
+    let mut top = f32::INFINITY;
+    let mut depth = 0.0_f32;
+    for p in points {
+        left = left.max(horizontal * p.z - p.x);
+        right = right.min(-horizontal * p.z - p.x);
+        bottom = bottom.max(vertical * p.z - p.y);
+        top = top.min(-vertical * p.z - p.y);
+        depth = depth.max(p.z + projection.near + 0.01);
+    }
+    depth = depth.max((left - right) / (2.0 * horizontal));
+    depth = depth.max((bottom - top) / (2.0 * vertical));
+    let min = left - horizontal * depth;
+    let max = right + horizontal * depth;
+    let x = 0.0_f32.max(min).min(max) * (1.0 - common::weapon_animation::ease(ads));
+    let y = 0.0_f32
+        .max(bottom - vertical * depth)
+        .min(top + vertical * depth)
+        * (1.0 - common::weapon_animation::ease(ads));
+    // ADS may retreat along the sight line, never move the aligned sights off
+    // centre just to include the bottom of a glove in the image.
+    for p in points {
+        depth = depth
+            .max(p.z + (p.x + x).abs() / horizontal)
+            .max(p.z + (p.y + y).abs() / vertical);
+    }
+    Vec3::new(x, y, -depth)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn actual_pistol_reload_vertices_stay_inside_the_final_camera_from_portrait_to_ultrawide() {
+        use bevy::mesh::VertexAttributeValues;
+        let weapon = WeaponKind::Pistol;
+        for aspect in [9.0 / 16.0, 4.0 / 3.0, 1.6, 16.0 / 9.0, 21.0 / 9.0] {
+            for empty in [false, true] {
+                let mut app = App::new();
+                let mut session = ClientSession::default();
+                session.players.push(ClientData {
+                    id: 7,
+                    alive: true,
+                    weapon,
+                    ..default()
+                });
+                app.insert_resource(session)
+                    .init_resource::<Feedback>()
+                    .insert_resource(PlayerId(7))
+                    .init_resource::<Time>()
+                    .init_resource::<LocalInput>()
+                    .add_systems(
+                        Update,
+                        (
+                            advance,
+                            super::super::fit_view_aspect,
+                            animate_local,
+                            frame_local_pistol,
+                        )
+                            .chain(),
+                    );
+                app.world_mut().resource_mut::<Feedback>().responses.insert(
+                    7,
+                    Response {
+                        weapon: Some(weapon),
+                        displayed: Some(weapon),
+                        was_alive: true,
+                        action: Some(reload_action(weapon, 0.0, empty)),
+                        ..default()
+                    },
+                );
+                let projection = PerspectiveProjection {
+                    fov: 65.0_f32.to_radians(),
+                    aspect_ratio: aspect,
+                    ..default()
+                };
+                let base = Transform::from_xyz(0.0, PLAYER_VIEW_HEIGHT, 0.0)
+                    .with_rotation(Quat::from_euler(EulerRot::YXZ, 0.0, 0.85, -0.18));
+                let camera = app
+                    .world_mut()
+                    .spawn((ViewModelCamera, base, Projection::from(projection.clone())))
+                    .id();
+                let world_camera = app.world_mut().spawn((WorldModelCamera, base)).id();
+                let mut meshes = Assets::<Mesh>::default();
+                let mut materials = Assets::<StandardMaterial>::default();
+                let root = app
+                    .world_mut()
+                    .spawn((
+                        WeaponMeshRoot,
+                        super::super::weapons::assembly(
+                            &mut meshes,
+                            &mut materials,
+                            weapon,
+                            Vec3::ZERO,
+                        ),
+                    ))
+                    .id();
+                let view = app
+                    .world_mut()
+                    .spawn((LocalView, WeaponViewModel { weapon }, base))
+                    .add_child(root)
+                    .id();
+                let entities: Vec<_> = app
+                    .world_mut()
+                    .query_filtered::<Entity, With<Mesh3d>>()
+                    .iter(app.world())
+                    .collect();
+                for entity in entities {
+                    app.world_mut()
+                        .entity_mut(entity)
+                        .insert(Visibility::Inherited);
+                }
+                let mut previous = None;
+                // The real 120Hz feedback path includes bounded root travel;
+                // injecting raw curves would bypass the presentation filter.
+                for i in 0..=300 {
+                    let fraction = if i <= 180 { i as f32 / 180.0 } else { 0.0 };
+                    app.world_mut()
+                        .resource_mut::<Time>()
+                        .advance_by(std::time::Duration::from_secs_f32(1.0 / 120.0));
+                    {
+                        let mut session = app.world_mut().resource_mut::<ClientSession>();
+                        session.players[0].ammo_in_mag = if empty && i < 180 { 0 } else { 12 };
+                        session.players[0].reload_remaining = if i < 180 {
+                            weapon.spec().reload_seconds * (1.0 - fraction)
+                        } else {
+                            0.0
+                        };
+                    }
+                    app.world_mut().resource_mut::<LocalInput>().aim = i > 180;
+                    app.world_mut().resource_mut::<LocalInput>().weapon = weapon;
+                    app.world_mut().entity_mut(camera).insert(base);
+                    app.world_mut().entity_mut(world_camera).insert(base);
+                    app.world_mut().entity_mut(view).insert(base);
+                    app.update();
+                    let view_pose = *app.world().get::<Transform>(view).unwrap();
+                    let eye = *app.world().get::<Transform>(camera).unwrap();
+                    let composed =
+                        view_pose.mul_transform(*app.world().get::<Transform>(root).unwrap());
+                    let to_eye = eye.to_matrix().inverse() * composed.to_matrix();
+                    let mut parts = app.world_mut().query_filtered::<(&Mesh3d, &Transform, &Visibility), With<ViewFrameBounds>>();
+                    let mut count = 0;
+                    for (mesh, pose, visible) in parts.iter(app.world()) {
+                        if *visible == Visibility::Hidden {
+                            continue;
+                        }
+                        let Some(VertexAttributeValues::Float32x3(vertices)) = meshes
+                            .get(&mesh.0)
+                            .unwrap()
+                            .attribute(Mesh::ATTRIBUTE_POSITION)
+                        else {
+                            panic!("actual vertices required")
+                        };
+                        for vertex in vertices {
+                            let p =
+                                to_eye.transform_point3(pose.transform_point(Vec3::from(*vertex)));
+                            let vertical = (projection.fov * 0.5).tan();
+                            assert!(
+                                p.z <= -projection.near,
+                                "near-plane clipping aspect={aspect} empty={empty} t={fraction}: {p:?}"
+                            );
+                            assert!(
+                                p.x.abs() <= -p.z * vertical * aspect * 0.941,
+                                "horizontal clipping aspect={aspect} empty={empty} t={fraction}: {p:?}"
+                            );
+                            assert!(
+                                p.y.abs() <= -p.z * vertical * 0.941,
+                                "vertical clipping aspect={aspect} empty={empty} t={fraction}: {p:?}"
+                            );
+                            count += 1;
+                        }
+                    }
+                    assert!(
+                        count > 1000,
+                        "the assembled weapon and both gloves must be checked"
+                    );
+                    if i <= 180 {
+                        if let Some(previous) = previous {
+                            assert!(
+                                view_pose.translation.distance(previous) < 0.035,
+                                "framing must not snap as the magazine changes visibility: aspect={aspect} empty={empty} t={fraction} before={previous:?} after={:?}",
+                                view_pose.translation
+                            );
+                        }
+                        previous = Some(view_pose.translation);
+                    }
+                    if i == 300 {
+                        let sight = to_eye.transform_point3(Vec3::new(0.0, 0.118, 0.005));
+                        assert!(
+                            sight.x.abs() < 0.0001 && sight.y.abs() < 0.0001,
+                            "framing must preserve centred ADS: {sight:?}"
+                        );
+                        let Projection::Perspective(actual_projection) =
+                            app.world().get::<Projection>(camera).unwrap()
+                        else {
+                            panic!("perspective camera required")
+                        };
+                        assert_eq!(
+                            actual_projection.fov, projection.fov,
+                            "framing must not change the lens"
+                        );
+                    }
+                }
+                let before = app.world().resource::<Feedback>().responses[&7].frame_offset;
+                app.world_mut().resource_mut::<ClientSession>().players[0]
+                    .pose
+                    .mode = PhysicalMode::Fallen;
+                app.world_mut().resource_mut::<ClientSession>().players[0]
+                    .pose
+                    .mode_time = 0.3;
+                app.world_mut()
+                    .resource_mut::<Time>()
+                    .advance_by(std::time::Duration::from_secs_f32(1.0 / 120.0));
+                app.world_mut().entity_mut(camera).insert(base);
+                app.world_mut().entity_mut(world_camera).insert(base);
+                app.world_mut().entity_mut(view).insert(base);
+                app.update();
+                let after = app.world().resource::<Feedback>().responses[&7].frame_offset;
+                assert!(
+                    after.distance(before * (-14.0_f32 / 120.0).exp()) < 0.00001,
+                    "falling must ease out framing, never recenter a deliberately lowered weapon"
+                );
+            }
+        }
+    }
+
     #[test]
     fn composed_view_forearms_keep_anatomical_length_and_actual_glove_contact_in_ads_and_reload() {
         for weapon in [WeaponKind::Pistol, WeaponKind::Smg, WeaponKind::Rifle] {
@@ -513,11 +915,12 @@ mod tests {
                         .insert_resource(PlayerId(7))
                         .init_resource::<Time>()
                         .init_resource::<LocalInput>()
-                        .add_systems(Update, animate_local);
+                        .add_systems(Update, (animate_local, frame_local_pistol).chain());
                     app.world_mut().spawn((
                         ViewModelCamera,
                         Transform::default(),
                         Projection::from(PerspectiveProjection {
+                            fov: 65.0_f32.to_radians(),
                             aspect_ratio: 1.6,
                             ..default()
                         }),

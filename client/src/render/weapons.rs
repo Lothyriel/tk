@@ -276,6 +276,40 @@ fn part(
     )
 }
 
+fn framed_part(
+    meshes: &mut Assets<Mesh>,
+    mesh: Mesh,
+    material: Handle<StandardMaterial>,
+    transform: Transform,
+) -> impl Bundle {
+    let bounds = view_frame_bounds(&mesh);
+    (bounds, part(meshes.add(mesh), material, transform))
+}
+
+fn view_frame_bounds(mesh: &Mesh) -> feedback::ViewFrameBounds {
+    let Some(bevy::mesh::VertexAttributeValues::Float32x3(vertices)) =
+        mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+    else {
+        unreachable!("voxel parts have position vertices")
+    };
+    let min = vertices
+        .iter()
+        .map(|p| Vec3::from(*p))
+        .fold(Vec3::splat(f32::INFINITY), Vec3::min);
+    let max = vertices
+        .iter()
+        .map(|p| Vec3::from(*p))
+        .fold(Vec3::splat(f32::NEG_INFINITY), Vec3::max);
+    let bounds = std::array::from_fn(|i| {
+        Vec3::new(
+            if i & 1 == 0 { min.x } else { max.x },
+            if i & 2 == 0 { min.y } else { max.y },
+            if i & 4 == 0 { min.z } else { max.z },
+        )
+    });
+    feedback::ViewFrameBounds(bounds)
+}
+
 pub(super) fn assembly(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
@@ -287,7 +321,9 @@ pub(super) fn assembly(
     let trim = materials.add(trim(w));
     let leather = materials.add(Color::srgb(0.11, 0.14, 0.10));
     let sleeve = materials.add(Color::srgb(0.12, 0.31, 0.32));
-    let hand = meshes.add(glove());
+    let hand_mesh = glove();
+    let hand_bounds = view_frame_bounds(&hand_mesh);
+    let hand = meshes.add(hand_mesh);
     let flash = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.75, 0.1),
         emissive: LinearRgba::rgb(14.0, 6.0, 0.5),
@@ -298,31 +334,36 @@ pub(super) fn assembly(
         Transform::from_translation(offset),
         Visibility::Inherited,
         children![
-            part(meshes.add(receiver(w)), metal.clone(), Transform::default()),
-            part(meshes.add(furniture(w)), trim, Transform::default()),
+            framed_part(meshes, receiver(w), metal.clone(), Transform::default()),
+            framed_part(meshes, furniture(w), trim, Transform::default()),
             (
                 feedback::Bolt,
-                part(meshes.add(bolt(w)), metal.clone(), Transform::default())
+                framed_part(meshes, bolt(w), metal.clone(), Transform::default())
             ),
             (
                 feedback::Control,
-                part(meshes.add(control(w)), metal.clone(), Transform::default())
+                framed_part(meshes, control(w), metal.clone(), Transform::default())
             ),
             (
                 feedback::Magazine,
-                part(
-                    meshes.add(magazine(w)),
+                framed_part(
+                    meshes,
+                    magazine(w),
                     metal,
                     Transform::from_translation(rig.magazine)
                 )
             ),
-            part(
-                hand.clone(),
-                leather.clone(),
-                Transform::from_translation(rig.trigger)
+            (
+                hand_bounds,
+                part(
+                    hand.clone(),
+                    leather.clone(),
+                    Transform::from_translation(rig.trigger)
+                )
             ),
             (
                 feedback::SupportHand,
+                hand_bounds,
                 part(hand, leather, Transform::from_translation(rig.support))
             ),
             (

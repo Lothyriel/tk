@@ -89,6 +89,14 @@ The latest M1911 visibility guard uses real assembled sleeve mesh bounds and act
 
 The independent [preliminary static review](../.specs/features/animation-ragdoll/validation-static.md) is preserved as a point-in-time report, not a current completion verdict. Its line references and16.8s timing observations predate the latest wrist change and user-approved AD-011. Remaining coverage distinctions include final-state/ID convergence versus quantitatively bounded displayed interpolation, and sampled/end-state physical assertions versus exhaustive intermediate trajectories/opposite-force cases. Final native review, matched performance, isolated fault-injection verification and honest artistic UAT remain required; a pushed checkpoint is not acceptance.
 
+## Candidate16 and pistol-framing follow-up
+
+`target/playtest/animations-ads-candidate-16/` froze published source at `c0c6af3`, passed formatting/check/111tests and the full diagnostic two-client UDP raid with peer snapshot loss. The approved actual-recovery observation and unchanged fatal-shot assertions passed; both videos fully decode (3098/3045real samples,129.64s each). Actual1280x800 frames and adjacent boards remain under `dual/`. The clearer M1911 slide still cropped at the right edge during empty reload; this is a visual failure, not artistic acceptance.
+
+The client-only correction pivots the M1911 cant about its receiver instead of rotating its60cm eye offset. Cached corners of actual weapon, glove and magazine meshes provide a conservative envelope in the final camera, after recoil/pitch/roll feedback. Fit translation leaves a6% screen-edge margin without changing the65degree weapon lens; ADS fitting retreats along the sight line, never moves the sights off centre. Deliberate fall/swap lowering eases out the previous correction instead of pulling the weapon back into view. Sleeves are intentionally allowed to leave the image at the body and are rebuilt from their corrected glove cuffs to camera-relative torso anchors.
+
+The added GPU-free assembled-rig regression uses the real120Hz feedback/fit/animation schedule across9:16,4:3,16:10,16:9and21:9, both reload types and ADS. It projects every actual displayed weapon/glove/magazine vertex, checks near-plane and viewport bounds, keeps the lens fixed and sights centred, limits adjacent framing motion and verifies fall-fit decay. Existing actual cuff/elbow and2/3slide-visibility assertions remain. This does not certify all primary geometry, fingers or normal-speed artistic quality. Exact indexed gates and the scratch-only disabled-framing negative control are retained in `target/playtest/commit-gates/06-pistol-framing/`; fresh candidate17 native footage and the remaining matched performance/matrix acceptance are still required.
+
 ## Reference inspection
 
 Public reference clips from `https://www.youtube.com/watch?v=mXTHXXcj2Z4` are retained locally in `target/playtest/animation-references/` for analysis only, never imported into game assets. A portable yt-dlp wheel was downloaded there without installing or updating global Python packages. The initial combined-format request failed; the available video-only 720p60 stream succeeded with local Node/FFmpeg, without enabling remote solver code.
@@ -105,4 +113,4 @@ Public reference clips from `https://www.youtube.com/watch?v=mXTHXXcj2Z4` are re
 - `client/src/render/weapons.rs`: geometry test asserts detailed weapon/glove meshes and all grip/muzzle anchors within 65° vertical hand FOV at 4:3 (ANIM-01 and FOV edge case).
 - `client/src/render/feedback.rs`: interruption/swap test asserts bounded pose change, nonzero retained reload pose, old model before holster boundary, new model afterwards, unchanged ammo (ANIM-03); original confirmed-shot/deduplication tests remain (ANIM-04).
 
-No blood/fluid rendering, ammo/cadence/damage changes, remote publication or user-file cleanup is included.
+No blood/fluid rendering, ammo/cadence/damage changes, merge/deploy/release or user-file cleanup is included; authorized commits are pushed only to the existing feature branch.

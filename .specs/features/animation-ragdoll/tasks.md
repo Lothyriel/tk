@@ -75,6 +75,7 @@ Preliminary independent review after the102-test run found local ADS/weapon lowe
 **Additional requirement**: ANIM-13, ANIM-14
 **Done when**:
 - [ ] M1911 native sequence reviewed at real speed and adjacent frames; contact, slide, magazine and flash tests pass.
+- [x] First-person pistol framing regression covers actual weapon/glove/visible-magazine vertices across five aspect ratios, empty/tactical reloads, centred ADS, fixed lens and continuous fall lowering; existing cuff/elbow and slide-visibility assertions remain.
 **Tests**: unit + native integration
 **Gate**: Full
 
@@ -92,7 +93,7 @@ Historical T4 checkpoint: shared-contact/geometry tests passed in the70-test gat
 
 Historical protocol4 checkpoints: continuous candidates03/06/07 completed reciprocal weapon sequences and the full raid; later candidate10 passed its healthy physical matrix but the user rejected weapon motion/reload/FOV quality. Those technical passes are not final artistic acceptance.
 
-Current protocol5 adds ADS and five shared weapon parts. Candidate14 passed its110-test gate and full continuous dual/loss raid; candidate15's111tests passed but native15 failed the old16.8s recovery observation, leading to AD-011. Newest wrist/slide-visibility and approved observation changes await candidate16 native review. T3/T4 remain open for normal-speed visual review and user artistic acceptance.
+Current protocol5 adds ADS and five shared weapon parts. Candidate16 passed111tests and the complete diagnostic dual/loss raid, including the approved18.2s actual-recovery observation and fatal shot. Both videos fully decoded (3098/3045real samples,129.64s). Its slide was clearer but the pistol cropped at the right edge; the first-person cant had rotated the entire60cm eye offset. The framing follow-up pivots about the receiver, fits cached mesh bounds in the final camera, preserves ADS centring and eases fitting away during deliberate lowering. Focused tests pass; indexed full gates and a disabled-framing negative control are retained in commit-gates/06-pistol-framing. Fresh candidate17 native review is required. T3/T4 artistic acceptance remains open.
 
 ### T5: Weight transfer and supported locomotion
 **What**: Refine shared pose weight/feet and server support inputs, with planted foot and finite-joint tests.
