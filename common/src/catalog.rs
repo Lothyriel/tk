@@ -8,6 +8,8 @@ mod instance;
 pub use instance::*;
 mod assembly;
 pub use assembly::*;
+mod mechanics;
+pub use mechanics::*;
 
 pub const CATALOG_VERSION: u32 = 2;
 pub const CATALOG_FILE: &str = "common/data/catalog.ron";
@@ -39,6 +41,7 @@ macro_rules! id {
 id!(WeaponId, u32);
 id!(DefinitionId, u32);
 id!(WeaponInstanceId, u64, Default);
+id!(MagazineInstanceId, u64);
 
 impl Default for WeaponId {
     fn default() -> Self {
