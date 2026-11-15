@@ -177,7 +177,16 @@ pub(super) fn corpse(
             // the torso has settled. Use physical torque damping, with no spring
             // target, so a configured handoff can still fall to a new rest pose.
             joint.set_motor_model(axis, MotorModel::ForceBased);
-            joint.set_motor_velocity(axis, 0.0, 2.5);
+            // A foot loaded against a step has a longer contact lever than a
+            // wrist. Extra passive ankle drag prevents late limit oscillation
+            // after the torso settles, without a positional spring or velocity
+            // clamp (and still permits the captured running momentum).
+            let drag = if matches!(segment, Segment::LeftFoot | Segment::RightFoot) {
+                4.0
+            } else {
+                2.5
+            };
+            joint.set_motor_velocity(axis, 0.0, drag);
         }
         joint.set_contacts_enabled(false);
         commands.entity(b).insert(ImpulseJoint::new(a, joint));

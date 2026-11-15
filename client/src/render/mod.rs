@@ -517,22 +517,56 @@ fn change_fov(
 
 fn fit_view_aspect(
     projection: Single<&Projection, With<ViewModelCamera>>,
-    mut roots: Query<(&ChildOf, &mut Transform), With<WeaponMeshRoot>>,
+    mut roots: Query<
+        (
+            &ChildOf,
+            &mut Transform,
+            Option<&voxel::configured::ConfiguredWeapon>,
+        ),
+        With<WeaponMeshRoot>,
+    >,
     weapons: Query<&WeaponViewModel>,
     id: Res<PlayerId>,
     feedback: Res<feedback::Feedback>,
+    session: Res<ClientSession>,
 ) {
     let Projection::Perspective(projection) = &**projection else {
         return;
     };
-    for (parent, mut root) in &mut roots {
+    for (parent, mut root, configured) in &mut roots {
         if let Ok(weapon) = weapons.get(parent.0) {
             let ads = feedback
                 .responses
                 .get(&id.0)
                 .map_or(0.0, |r| common::weapon_animation::ease(r.ads));
-            root.translation = self::weapons::framed_offset(weapon.weapon, projection.aspect_ratio)
-                .lerp(common::weapon_animation::ads_offset(weapon.weapon), ads);
+            let spec = configured
+                .and_then(|request| {
+                    session
+                        .configurations
+                        .cache
+                        .get(request.epoch, request.handle)
+                })
+                .map_or_else(|| weapon.weapon.spec(), |entry| &entry.resolved);
+            if spec
+                .assembly
+                .anchors
+                .contains_key(&common::catalog::AnchorKind::Bore)
+            {
+                root.translation = spec
+                    .assembly
+                    .hip_from_root
+                    .translation
+                    .lerp(spec.assembly.ads_from_root.translation, ads);
+                root.rotation = spec
+                    .assembly
+                    .hip_from_root
+                    .rotation
+                    .slerp(spec.assembly.ads_from_root.rotation, ads);
+            } else {
+                root.translation =
+                    self::weapons::framed_offset(weapon.weapon, projection.aspect_ratio)
+                        .lerp(common::weapon_animation::ads_offset(weapon.weapon), ads);
+            }
         }
     }
 }

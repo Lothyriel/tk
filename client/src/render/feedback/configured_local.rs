@@ -161,11 +161,8 @@ pub(super) fn flash(
             Visibility::Hidden
         };
         *transform = pose
-            .solution
-            .root
-            .mul_transform(Transform::from_translation(
-                WeaponRig::for_weapon(weapon.weapon).muzzle - Vec3::Z * 0.05,
-            ));
+            .muzzle
+            .mul_transform(Transform::from_translation(Vec3::NEG_Z * 0.05));
     }
 }
 

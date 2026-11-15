@@ -282,6 +282,27 @@ impl Catalog {
                 "resolved center of mass/balance exceeds limits".into(),
             ));
         }
+        let ads_from_root = if root.ads_at_sight {
+            if root.ads_from_root != RigidPose::default() {
+                return Err(fail("ADS eye binding also has an explicit pose".into()));
+            }
+            let eye = anchors
+                .get(&AnchorKind::Sight)
+                .ok_or_else(|| fail("ADS eye binding requires Sight anchor".into()))?;
+            Transform::from_matrix(eye.to_matrix().inverse())
+        } else {
+            root.ads_from_root.transform()
+        };
+        let pivots = if let Some(name) = &root.geometry.authored_rig {
+            authored_rig(name)
+                .ok_or_else(|| fail(format!("unknown authored rig {name}")))?
+                .pivots
+                .iter()
+                .map(|(name, pose)| (name.clone(), pose.transform()))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
         Ok((
             ResolvedAssembly {
                 parts,
@@ -294,7 +315,8 @@ impl Catalog {
                 anchors,
                 obstruction: solids.into_iter().map(|(_, b)| b).collect(),
                 hip_from_root: root.hip_from_root.transform(),
-                ads_from_root: root.ads_from_root.transform(),
+                ads_from_root,
+                pivots,
             },
             capacity,
         ))

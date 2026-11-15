@@ -20,7 +20,12 @@ pub fn mechanisms(
     mechanics: &MechanicalSnapshot,
 ) -> Mechanisms {
     let mut bolt = bolt_transform(spec.class, &action, recoil, mechanics.reloading());
-    if spec.class == crate::WeaponKind::Pistol && mechanics.bolt_open && !mechanics.reloading() {
+    if matches!(
+        spec.class,
+        crate::WeaponKind::Pistol | crate::WeaponKind::Rifle
+    ) && mechanics.bolt_open
+        && !mechanics.reloading()
+    {
         bolt.translation.z = WeaponRig::for_weapon(spec.class).bolt_travel;
     }
     let magazine = spec
@@ -82,7 +87,22 @@ pub fn configured_contacts(
             } else {
                 parts.bolt
             };
-            motion.mul_transform(rest)
+            // The renderer applies delta after the authored part pivot. Use
+            // the same conjugation here, including off-origin rotating catches.
+            let pivot = spec
+                .assembly
+                .pivots
+                .get(if spec.class == crate::WeaponKind::Rifle {
+                    "control"
+                } else {
+                    "bolt"
+                })
+                .copied()
+                .unwrap_or(Transform::IDENTITY);
+            pivot
+                .mul_transform(motion)
+                .mul_transform(Transform::from_matrix(pivot.to_matrix().inverse()))
+                .mul_transform(rest)
         };
         contacts = contacts.with_support(
             Transform::from_translation(

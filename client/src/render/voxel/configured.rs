@@ -21,13 +21,13 @@ impl Default for VisualBindings {
     fn default() -> Self {
         Self {
             weapons: [
-                (WeaponId::M4A1, "m4a1_baseline".into()),
+                (WeaponId::M4A1, "m4a1_refined".into()),
                 (WeaponId::M1911, "m1911_baseline".into()),
                 (WeaponId::MP5, "mp5_baseline".into()),
             ]
             .into(),
             components: [
-                (DefinitionId(101), "m4a1_magazine_baseline".into()),
+                (DefinitionId(101), "m4a1_magazine_30".into()),
                 (DefinitionId(102), "m1911_magazine_baseline".into()),
                 (DefinitionId(103), "mp5_magazine_baseline".into()),
             ]
@@ -111,6 +111,8 @@ pub(crate) struct ConfiguredHandling {
 pub(crate) struct ConfiguredPose {
     pub solution: handling::HandlingSolution,
     pub shoulders: [Vec3; 2],
+    /// Device outlet in request space, from the last accepted assembly.
+    pub muzzle: Transform,
 }
 
 #[derive(Component)]
@@ -131,6 +133,7 @@ pub(super) struct Instance {
     weapon_root: Entity,
     pieces: BTreeMap<u16, Piece>,
     contacts: WeaponContacts,
+    muzzle: Transform,
     hands: [Entity; 6], // support upper/lower/palm, then trigger
 }
 
@@ -379,6 +382,25 @@ pub(super) fn assemble(
                 weapon_root,
                 pieces,
                 contacts,
+                muzzle: entry
+                    .resolved
+                    .assembly
+                    .anchors
+                    .get(&common::catalog::AnchorKind::DeviceExit)
+                    .or_else(|| {
+                        entry
+                            .resolved
+                            .assembly
+                            .anchors
+                            .get(&common::catalog::AnchorKind::Bore)
+                    })
+                    .copied()
+                    .unwrap_or_else(|| {
+                        Transform::from_translation(
+                            common::weapon_animation::WeaponRig::for_weapon(entry.resolved.class)
+                                .muzzle,
+                        )
+                    }),
                 hands,
             });
     }
@@ -606,6 +628,7 @@ pub(super) fn pose(
                     .insert(ConfiguredPose {
                         solution: solved,
                         shoulders: input.shoulders,
+                        muzzle: solved.root.mul_transform(model.muzzle),
                     });
             }
             Err(error) => report_error(&mut commands, entity, error, old_error),

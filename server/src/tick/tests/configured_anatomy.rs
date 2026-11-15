@@ -51,12 +51,17 @@ fn configured_stock_authority_braces_against_equipped_cover_and_preserves_damage
 fn change_grip(app: &mut App, player: Entity, x: f32, node: u16) {
     // Controlled server registry, as in assembly_authority_*: no mesh or client
     // contacts participate. Change a real configuration node to resolve revision.
-    let source = CATALOG_SOURCE.replacen(
-        "translation: (-0.025, 0.005, -0.35)",
-        &format!("translation: ({x}, 0.02, -0.20)"),
-        1,
-    );
-    let catalog = Catalog::parse("configured-anatomy-fixture", &source).unwrap();
+    let mut document: common::catalog::CatalogDocument = ron::from_str(CATALOG_SOURCE).unwrap();
+    document.weapons[0]
+        .assembly
+        .geometry
+        .anchors
+        .iter_mut()
+        .find(|a| a.kind == common::catalog::AnchorKind::SupportGrip)
+        .unwrap()
+        .pose
+        .translation = [x, 0.02, -0.20];
+    let catalog = Catalog::validate("configured-anatomy-fixture", document).unwrap();
     let mut arsenal = app.world_mut().get_mut::<Arsenal>(player).unwrap();
     let mut config = arsenal.current().instance().configuration.clone();
     config.components[0].node = node;

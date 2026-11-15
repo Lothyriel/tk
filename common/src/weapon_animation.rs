@@ -305,11 +305,7 @@ mod tests {
     }
     #[test]
     fn ads_centres_the_actual_iron_sight_and_preserves_the_hip_barrel() {
-        for (weapon, sight_y) in [
-            (WeaponKind::Pistol, 0.118),
-            (WeaponKind::Smg, 0.136),
-            (WeaponKind::Rifle, 0.175),
-        ] {
+        for (weapon, sight_y) in [(WeaponKind::Pistol, 0.118), (WeaponKind::Smg, 0.136)] {
             let sight = ads_offset(weapon) + Vec3::new(0.0, sight_y, 0.005);
             // User-approved correction: a rear sight belongs near the eye,
             // ahead of the 0.1 m near plane, not arbitrarily beyond 0.4 m.
@@ -324,6 +320,27 @@ mod tests {
             );
             assert!(barrel_offset(weapon, 1.0).x.abs() < 0.0001);
         }
+        let rifle = WeaponKind::Rifle.spec();
+        let aimed = rifle.assembly.ads_from_root;
+        for kind in [
+            crate::catalog::AnchorKind::FrontIron,
+            crate::catalog::AnchorKind::RearIron,
+        ] {
+            let sight = aimed.transform_point(rifle.assembly.anchors[&kind].translation);
+            assert!(sight.x.abs() < 0.00025 && sight.y.abs() < 0.00025);
+            assert!(sight.z < -0.1, "authored sight must clear the near plane");
+        }
+        // Independent published barrel and authored eye-relief measurement.
+        assert!(
+            (barrel_offset(WeaponKind::Rifle, 1.0)
+                - Vec3::new(0.0, -0.066, -0.270 - 14.5 * 0.0254))
+            .length()
+                < 1e-6
+        );
+        assert_eq!(
+            barrel_offset(WeaponKind::Rifle, 0.0),
+            Vec3::from(rifle.barrel_offset)
+        );
     }
     #[test]
     fn empty_reload_has_readable_slide_handle_and_catch_actions_but_tactical_does_not_rack() {

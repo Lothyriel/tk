@@ -2,7 +2,9 @@
 use super::{LocalView, ViewModelCamera, WeaponMeshRoot, WeaponViewModel, WorldModelCamera};
 use crate::{ClientSystems, sync::ClientSession};
 use bevy::{platform::collections::HashMap, prelude::*};
-use common::weapon_animation::{WeaponAction, WeaponRig, reload_action};
+#[cfg(test)]
+use common::weapon_animation::WeaponRig;
+use common::weapon_animation::{WeaponAction, reload_action};
 use common::{humanoid::PhysicalMode, *};
 
 mod configured_local;
