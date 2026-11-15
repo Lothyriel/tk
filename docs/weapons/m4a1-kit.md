@@ -266,3 +266,10 @@ PMAG20, collapsed CTR, RAS, DD10.3, SFMB and AFG-2 at the forward endpoint.
 This is an opt-in acceptance fixture, not a player preset or inventory transfer.
 The runner records the fixture and checks replicated definitions/capacity;
 reload assertions use the replicated configuration's resolved capacity.
+
+ADS framing compensates the accepted solver translation for the whole local
+rig. A collapsed stock shifts the weapon relative to its fixed shoulder target;
+applying the authored eye transform to the unsolved root alone brings the rear
+iron through the near plane. Framing from the accepted pose preserves eye relief,
+rigid arms and all stock/palm contacts. Extreme client fixtures assert both irons
+remain beyond the 100 mm near plane and centered for iron-sight configurations.

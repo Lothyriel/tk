@@ -463,6 +463,27 @@ fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_rel
                 f.step();
                 f.assert_contacts();
             }
+            if aim {
+                let world = f.app.world();
+                let to_eye = world
+                    .get::<GlobalTransform>(f.camera)
+                    .unwrap()
+                    .to_matrix()
+                    .inverse();
+                for name in ["sight.front", "sight.rear"] {
+                    let actual = world
+                        .get::<GlobalTransform>(named(&f.app, f.root, name))
+                        .unwrap();
+                    let eye = to_eye.transform_point3(actual.translation());
+                    assert!(eye.z < -0.1, "{name} near clipping: {eye:?}, short={short}");
+                    if !suppressed {
+                        assert!(
+                            eye.x.abs() < 0.00025 && eye.y.abs() < 0.00025,
+                            "{name}: {eye:?}"
+                        );
+                    }
+                }
+            }
         }
         for kind in [
             ManipulationKind::TacticalReload,
