@@ -27,6 +27,7 @@ Guidelines: AGENTS.md, existing Python standard-library scripts and the TLC exec
 | Quick | T2 CLI implementation | python -m unittest discover -s scripts/tests -v |
 | Docs | T3/T4 documentation | python scripts/verify.py --mode docs --feature developer-standardization |
 | Build | Final integration | python scripts/verify.py --mode full --feature developer-standardization |
+| Delivery | T4 user-approved existing-Clippy exception | python scripts/verify.py --mode docs --feature developer-standardization, baseline comparisons and separate cargo test --workspace -j 4 |
 
 ## Execution Plan
 
@@ -80,9 +81,13 @@ T3 gate: docs mode passed 18 tooling tests and both structural validators with n
 **Depends on**: T3
 **Requirement**: DEV-09, DEV-10
 **Done when**:
-- [ ] Prior handoff/decisions are preserved, current scope and historical-only permissions are explicit, excluded surfaces and Mermaid match baseline, and final integration passes before independent verification.
+- [x] Prior handoff/decisions are preserved, current scope and historical-only permissions are explicit, excluded surfaces and Mermaid match baseline, and the user-approved Delivery gate passes before independent verification, while full remains explicitly blocked by the preexisting Clippy failure.
 **Tests**: structural baseline comparisons + integrated runner
-**Gate**: Build
+**Gate**: Delivery
+
+User decision (2026-11-15): retain the full runner and Clippy `-D warnings` unchanged; document the existing anatomy API lint and continue this standardization delivery without changing Rust. The Build run remains exit 101, not PASS. Run the Delivery commands separately; do not relabel separately executed workspace tests as completion of that stopped full run.
+
+T4 gate: docs mode passed 20 tooling tests and both structural validators (zero errors/warnings). Separately executed workspace tests passed 112 tests (27 client, 42 common, 43 server; no failures/ignored tests), with no application/video launch. Direct baseline comparisons confirmed byte-exact archived STATE, all prior decisions preserved, unchanged Mermaid and no Rust/CI/Cargo/toolchain/linker changes. Evidence logs are ignored target/verification/developer-standardization-{full,workspace-tests}.log; the first remains a failure. Independent feature verification/completion is still pending this task's commit.
 
 ## Diagram-Definition Cross-Check
 

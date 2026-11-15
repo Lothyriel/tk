@@ -54,6 +54,10 @@ Optional `--feature NAME` adds the selected spec/tasks validators to any mode. `
 
 The command resolves its root from its own location, so an absolute script path also works from another directory. It prints each command, streams output, stops on the first failure and returns its exit code; a missing executable returns 127. It inherits normal environment settings such as `CARGO_TARGET_DIR`, so reuse an appropriate build cache instead of cleaning or switching profiles repeatedly. It does not install dependencies, update skills, alter Git configuration, or imply a feature is complete.
 
+### Known baseline lint (2026-11-15)
+
+The current `full` gate is blocked by `clippy::too_many_arguments` in `common/src/combat/anatomy.rs:194`: `hit_anatomy` takes 9 arguments, above the lint's default limit of 7. Formatting and workspace check passed, but `-D warnings` makes Clippy exit 101 and the runner stops before workspace tests. The user approved publishing this developer-standardization delivery with that preexisting issue recorded, without changing Rust or relaxing Clippy. Tests run separately are separate evidence, not a successful full run. This scoped acceptance is not permission to ignore future failures or change lint settings; address the API/lint in a separately authorized task.
+
 Physics iteration uses real Bevy/Rapier engine fixtures with manual time, not sleeps, rendered raids, screenshots or video. None of the verification modes launches the client/server executable or network/video harnesses. Rendered/network acceptance runs separately only when relevant; video is opt-in under the rules in AGENTS.md. No CI workflow is introduced here.
 
 ## Commit conventions
