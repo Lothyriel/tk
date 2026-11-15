@@ -403,6 +403,9 @@ pub struct ConfigurationCommand {
     pub instance: WeaponInstanceId,
     pub expected_revision: u64,
     pub weapon: WeaponConfiguration,
+    /// None conserves the physical pool. Some selects a new free lobby kit;
+    /// the authenticated caller must apply exactly the same ready/phase lock.
+    pub reserves: Option<Vec<crate::catalog::DefinitionId>>,
 }
 
 impl ConfigurationCommand {
@@ -415,10 +418,17 @@ impl ConfigurationCommand {
             || command.request == 0
             || command.instance.0 == 0
             || !configuration_bounds(&command.weapon)
+            || !command.reserves_bounded()
         {
             return Err(ConfigurationError::Bounds);
         }
         Ok(command)
+    }
+
+    fn reserves_bounded(&self) -> bool {
+        self.reserves
+            .as_ref()
+            .is_none_or(|reserves| reserves.len() < crate::catalog::MAX_RETAINED_MAGAZINES)
     }
 }
 
@@ -440,6 +450,7 @@ pub struct CommandResult {
     pub request: u64,
     pub outcome: CommandOutcome,
     pub revision: Option<u64>,
+    pub reason: Option<String>,
 }
 
 /// One ledger per authenticated connection. Reliable ordered delivery permits a
@@ -464,6 +475,7 @@ impl CommandLedger {
             request: command.request,
             outcome: CommandOutcome::EpochMismatch,
             revision: None,
+            reason: None,
         };
         if command.epoch != epoch || epoch == 0 {
             return result;
@@ -486,7 +498,10 @@ impl CommandLedger {
                 return result;
             }
         }
-        result.outcome = if command.request == 0 || !configuration_bounds(&command.weapon) {
+        result.outcome = if command.request == 0
+            || !configuration_bounds(&command.weapon)
+            || !command.reserves_bounded()
+        {
             CommandOutcome::InvalidConfiguration
         } else if let Some(weapon) = arsenal
             .equipped(command.slot)
@@ -498,17 +513,33 @@ impl CommandLedger {
             } else if command.expected_revision != weapon.instance().revision {
                 CommandOutcome::StaleRevision
             } else {
-                match arsenal.reconfigure(
-                    catalog,
-                    command.slot,
-                    command.expected_revision,
-                    command.weapon.clone(),
-                ) {
+                let applied = if let Some(reserves) = &command.reserves {
+                    arsenal.select_kit(
+                        catalog,
+                        command.slot,
+                        command.expected_revision,
+                        crate::catalog::WeaponKit {
+                            weapon: command.weapon.clone(),
+                            reserves: reserves.clone(),
+                        },
+                    )
+                } else {
+                    arsenal.reconfigure(
+                        catalog,
+                        command.slot,
+                        command.expected_revision,
+                        command.weapon.clone(),
+                    )
+                };
+                match applied {
                     Ok(revision) => {
                         result.revision = Some(revision);
                         CommandOutcome::Applied
                     }
-                    Err(_) => CommandOutcome::InvalidConfiguration,
+                    Err(error) => {
+                        result.reason = Some(error.to_string().chars().take(512).collect());
+                        CommandOutcome::InvalidConfiguration
+                    }
                 }
             }
         } else {

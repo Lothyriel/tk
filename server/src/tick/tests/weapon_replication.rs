@@ -2,6 +2,7 @@ use super::*;
 use bevy_renet2::prelude::RenetClient;
 use common::replication::shots::*;
 use common::{catalog::*, replication::*};
+mod kits;
 mod udp;
 
 struct Peer {
@@ -232,6 +233,7 @@ fn replication_production_renet_bootstrap_commands_loss_late_join_and_epoch_rese
         instance: instance.id,
         expected_revision: 0,
         weapon: configuration,
+        reserves: None,
     };
     let mechanical_before = data::encode(&instance.mechanics);
     first
