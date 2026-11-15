@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use super::ClientSession;
 
 // Two intervals bridge one lost update; the third covers tick/delivery/frame jitter.
-const INTERPOLATION_DELAY: f64 = 3.0 / 30.0;
+const INTERPOLATION_DELAY: f64 = 3.0 * common::SNAPSHOT_INTERVAL as f64;
 
 #[derive(Debug)]
 struct Sample {
@@ -196,8 +196,8 @@ mod tests {
                     while (tick + 1) as f64 / 128.0 <= now {
                         tick += 1;
                         snapshot_elapsed += 1.0 / 128.0;
-                        if snapshot_elapsed >= 1.0 / 30.0 {
-                            snapshot_elapsed %= 1.0 / 30.0;
+                        if snapshot_elapsed >= f64::from(common::SNAPSHOT_INTERVAL) {
+                            snapshot_elapsed %= f64::from(common::SNAPSHOT_INTERVAL);
                             sequence += 1;
                             // One missing update and repeatable 0..8 ms delivery jitter.
                             if sequence != 23 {
@@ -267,13 +267,13 @@ mod tests {
     }
 
     #[test]
-    fn local_camera_motion_samples_the_confirmed_3d_path_with_a_100ms_delay() {
+    fn local_camera_motion_samples_the_confirmed_3d_path_with_a_50ms_delay() {
         let mut motion = super::LocalMotion::default();
         motion.record(1.0, Vec3::new(0.0, 1.0, 0.0), 10.0, false);
         motion.record(1.04, Vec3::new(2.0, 2.0, -1.0), 10.04, false);
         assert!(
             motion
-                .position(10.12)
+                .position(10.07)
                 .unwrap()
                 .distance(Vec3::new(1.0, 1.5, -0.5))
                 < 0.00001
@@ -358,7 +358,7 @@ mod tests {
             let stamp = if sequence == 9 {
                 0.0
             } else {
-                sequence as f32 / 30.0
+                sequence as f32 * common::SNAPSHOT_INTERVAL
             };
             deliver(&mut app, &mut server, sequence, stamp, player.clone());
             app.update();

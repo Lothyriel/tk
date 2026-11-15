@@ -118,6 +118,7 @@ fn assembly_authority_rejects_invalid_changes_and_fires_from_cached_properties()
     );
     assert_eq!(arsenal.current().instance().revision, 1);
 }
+mod destruction;
 
 fn app() -> App {
     let mut app = App::new();
@@ -177,6 +178,56 @@ fn steps(app: &mut App, count: usize) {
     for _ in 0..count {
         app.update();
     }
+}
+
+#[test]
+fn snapshots_60hz_preserve_128hz_physics_and_serialize_sixty_updates_per_second() {
+    let mut app = app();
+    add_player(&mut app, 7, Loadout::default());
+    steps(&mut app, 128);
+    assert_eq!(
+        app.world().resource::<Time<Fixed>>().timestep(),
+        Duration::from_secs_f64(1.0 / 128.0)
+    );
+    let before = app.world().resource::<WorldState>().snapshot_sequence;
+    let mut peer = bevy_renet2::prelude::RenetClient::new(data::renet_config(), false);
+    peer.set_connected();
+    app.world_mut()
+        .resource_mut::<RenetServer>()
+        .add_connection(999, false);
+    let mut timestamps = Vec::new();
+    let mut payload_bytes = 0;
+    for _ in 0..128 {
+        app.update();
+        for packet in app
+            .world_mut()
+            .resource_mut::<RenetServer>()
+            .get_packets_to_send(999)
+            .unwrap()
+        {
+            peer.process_packet(packet);
+        }
+        while let Some(bytes) = peer.receive_message(DefaultChannel::Unreliable) {
+            payload_bytes += bytes.len();
+            let snapshot = data::decode::<WorldSnapshot>(&bytes);
+            assert_eq!(snapshot.players.len(), 1);
+            assert_eq!(snapshot.players[0].id, 7);
+            timestamps.push(snapshot.simulation_time);
+        }
+    }
+    assert_eq!(
+        app.world().resource::<WorldState>().snapshot_sequence - before,
+        60
+    );
+    assert_eq!(timestamps.len(), 60);
+    for pair in timestamps.windows(2) {
+        let ticks = (pair[1] - pair[0]) * 128.0;
+        assert!((ticks - 2.0).abs() < 0.0001 || (ticks - 3.0).abs() < 0.0001);
+    }
+    eprintln!(
+        "60 Hz trial: {} snapshots, {payload_bytes} serialized payload bytes/s (one lobby player)",
+        timestamps.len()
+    );
 }
 
 fn held_steps(app: &mut App, entity: Entity, count: usize) {

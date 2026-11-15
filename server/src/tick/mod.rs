@@ -73,6 +73,7 @@ impl bevy::prelude::Plugin for Plugin {
 #[derive(Debug, Default, Resource)]
 struct WorldState {
     destroyed_cells: Vec<u16>,
+    impact_cells: std::collections::BTreeMap<u32, u16>,
     next_projectile_id: u64,
     // Only 256 marks are retained, so wrapping 32-bit IDs stay unique in a snapshot.
     next_mark_id: u32,
@@ -87,7 +88,8 @@ struct WorldState {
 impl WorldState {
     fn impact(&mut self, position: Vec3, normal: Vec3, size_mm: u8) {
         if self.impact_marks.len() == 256 {
-            self.impact_marks.remove(0);
+            let oldest = self.impact_marks.remove(0);
+            self.impact_cells.remove(&oldest.id);
         }
         self.impact_marks.push(ImpactMarkData {
             id: self.next_mark_id,
@@ -96,6 +98,20 @@ impl WorldState {
             size_mm,
         });
         self.next_mark_id = self.next_mark_id.wrapping_add(1);
+    }
+
+    fn impact_on_cell(&mut self, position: Vec3, normal: Vec3, size_mm: u8, cell: Option<u16>) {
+        let id = self.next_mark_id;
+        self.impact(position, normal, size_mm);
+        if let Some(cell) = cell {
+            self.impact_cells.insert(id, cell);
+        }
+    }
+
+    fn remove_cell_marks(&mut self, cell: u16) {
+        self.impact_marks
+            .retain(|mark| self.impact_cells.get(&mark.id) != Some(&cell));
+        self.impact_cells.retain(|_, anchor| *anchor != cell);
     }
 }
 
@@ -356,10 +372,10 @@ fn send_world_snapshot(
 ) {
     let (players, projectiles, pieces) = scene;
     state.snapshot_elapsed += time.delta_secs();
-    if state.snapshot_elapsed < 1.0 / 30.0 {
+    if state.snapshot_elapsed < SNAPSHOT_INTERVAL {
         return;
     }
-    state.snapshot_elapsed %= 1.0 / 30.0;
+    state.snapshot_elapsed %= SNAPSHOT_INTERVAL;
     state.snapshot_sequence += 1;
     if let Err(error) = replication.synchronize_raid(&raid) {
         error!("Cannot publish configuration epoch: {error:?}");
