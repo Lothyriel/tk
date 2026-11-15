@@ -36,6 +36,46 @@ pub(super) fn loaded(local: &ClientData) -> bool {
 }
 
 #[derive(Default)]
+pub(super) struct Injury {
+    clock: Clock,
+}
+
+impl Injury {
+    pub fn control(
+        &mut self,
+        input: &mut ClientInput,
+        local: &ClientData,
+        other: &ClientData,
+        now: f64,
+        peer: bool,
+    ) -> f64 {
+        assert!(now < 40.0, "injury route timed out at {}", self.clock.value);
+        self.clock.advance(
+            now,
+            &[
+                (
+                    2.8,
+                    ready(local, EquipmentSlot::Sidearm)
+                        && loaded(local)
+                        && ready(other, EquipmentSlot::Sidearm)
+                        && loaded(other),
+                ),
+                (18.5, peer || ready(local, EquipmentSlot::Primary)),
+            ],
+        );
+        let t = self.clock.value;
+        if t >= 2.5 {
+            input.weapon = if !peer && t > 18.0 {
+                EquipmentSlot::Primary
+            } else {
+                EquipmentSlot::Sidearm
+            };
+        }
+        t
+    }
+}
+
+#[derive(Default)]
 pub(super) struct Selector {
     requested_from: Option<FireMode>,
 }
@@ -218,6 +258,55 @@ mod tests {
                 44.0
             };
             70.0 + (aimed - 70.0) * self.received.pose.ads
+        }
+    }
+
+    #[test]
+    fn mechanics_injury_waits_for_both_equips_before_consuming_the_shot_edge() {
+        let mut legacy = Actor::new(catalog(), WeaponId::M4A1);
+        for step in 0..512 {
+            let t = step as f64 / 128.0;
+            if t >= 2.5 {
+                legacy.input.weapon = EquipmentSlot::Sidearm;
+            }
+            if step == 384 {
+                legacy.input.fire_pressed_sequence += 1;
+            }
+            legacy.tick(step, 1.0);
+        }
+        assert_eq!(legacy.shots, 0, "the old 3s cue fires during equip");
+        assert!(ready(&legacy.received, EquipmentSlot::Sidearm));
+
+        let mut actors = [
+            Actor::new(catalog(), WeaponId::M4A1),
+            Actor::new(catalog(), WeaponId::MP5),
+        ];
+        let mut routes = [Injury::default(), Injury::default()];
+        let mut fired = [false; 2];
+        for step in 0..768 {
+            let snapshots = [actors[0].received.clone(), actors[1].received.clone()];
+            for index in 0..2 {
+                let t = routes[index].control(
+                    &mut actors[index].input,
+                    &snapshots[index],
+                    &snapshots[1 - index],
+                    step as f64 / 128.0,
+                    index == 1,
+                );
+                if t >= 3.0 && !fired[index] {
+                    assert!(snapshots.iter().all(|s| ready(s, EquipmentSlot::Sidearm)));
+                    actors[index].input.fire_pressed_sequence += 1;
+                    fired[index] = true;
+                }
+                actors[index].tick(step, if index == 0 { 1.0 } else { 0.55 });
+            }
+        }
+        assert_eq!(fired, [true; 2]);
+        for actor in actors {
+            assert_eq!(
+                actor.shots, 1,
+                "one accepted shot despite snapshot delay/loss"
+            );
         }
     }
 

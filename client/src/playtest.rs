@@ -1,8 +1,5 @@
 //! Optional native end-to-end driver. It sends exactly the same inputs as a player.
-use bevy::{
-    prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
-};
+use bevy::prelude::*;
 use common::{combat::*, map::*, raid::*, *};
 
 use crate::{ClientSystems, input::InputCapture, sync::ClientSession};
@@ -60,6 +57,7 @@ struct Driver {
     flash_captures: u8,
     animation: animation::Sequence,
     weapons: mechanics::Weapons,
+    injury: mechanics::Injury,
     physical: physical::Review,
     fall_ids: Vec<u64>,
     recovery_seen: bool,
@@ -75,20 +73,9 @@ impl Driver {
 }
 
 fn capture(commands: &mut Commands, name: &str) {
-    if std::env::var_os("TK_PLAYTEST_VIDEO").is_some() {
-        let name = name.to_owned();
-        commands.queue(move |world: &mut World| {
-            world.resource_mut::<video::CaptureQueue>().0.push(name)
-        });
-        return;
-    }
-    let root = std::env::var("TK_PLAYTEST_DIR").unwrap_or_else(|_| "target/playtest".into());
-    std::fs::create_dir_all(&root).expect("Create playtest evidence directory");
+    let name = name.to_owned();
     commands
-        .spawn(Screenshot::primary_window())
-        .observe(save_to_disk(
-            std::path::Path::new(&root).join(format!("{name}.png")),
-        ));
+        .queue(move |world: &mut World| world.resource_mut::<video::CaptureQueue>().0.push(name));
 }
 
 fn move_toward(input: &mut ClientInput, position: [f32; 3], target: [f32; 3]) -> f32 {
@@ -663,10 +650,13 @@ fn drive(
         }
         Step::Injury => {
             use common::humanoid::*;
-            let elapsed = now - driver.since;
             let Some(other) = session.players.iter().find(|p| !p.bot && p.id != id.0) else {
                 return;
             };
+            let since = driver.since;
+            let elapsed = driver
+                .injury
+                .control(&mut input, local, other, now - since, peer);
             // LIVE_RAGDOLL_PROOF_BEGIN
             let victim = if peer { local } else { other };
             let mut body_ids: Vec<_> = session
@@ -750,11 +740,6 @@ fn drive(
                     },
                 );
             } else {
-                input.weapon = if !peer && elapsed > 18.0 {
-                    EquipmentSlot::Primary
-                } else {
-                    EquipmentSlot::Sidearm
-                };
                 let mut segment = if elapsed < 7.0 {
                     if peer {
                         Segment::RightShin
@@ -774,11 +759,24 @@ fn drive(
                 if other.body.anatomy.missing & (1 << segment.index()) != 0 {
                     segment = Segment::Thorax;
                 }
-                let rig = evaluate_pose(
+                let entry = session
+                    .configurations
+                    .cache
+                    .get(session.configurations.cache.epoch(), other.configuration)
+                    .expect("injury target configuration");
+                let rig = configured::evaluate(
                     &other.pose,
-                    other.body.anatomy.capacity(Region::LeftLeg),
-                    other.body.anatomy.capacity(Region::RightLeg),
-                );
+                    [
+                        other.body.anatomy.capacity(Region::LeftLeg),
+                        other.body.anatomy.capacity(Region::RightLeg),
+                    ],
+                    &entry.resolved,
+                    &other.mechanics,
+                    None,
+                    Some(configured::shoulder_cover(&other.armor)),
+                )
+                .expect("injury target anatomy")
+                .segments;
                 let target = Vec3::from(other.pos)
                     + Quat::from_rotation_y(other.rot.yaw)
                         * Vec3::from(rig[segment.index()].position);
@@ -798,6 +796,10 @@ fn drive(
                         {
                             input.fire_pressed_sequence =
                                 input.fire_pressed_sequence.wrapping_add(1);
+                            info!(
+                                "INJURY SHOT cue={at} target={segment:?} weapon={:?} mechanics={:?}",
+                                local.weapon, local.mechanics
+                            );
                         }
                     }
                 }
