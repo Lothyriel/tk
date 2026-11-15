@@ -185,3 +185,6 @@ class VoxelBakeTests(unittest.TestCase):
             (output / "pipeline_fixture.json").write_text("{}")
             with self.assertRaisesRegex(bake.InvalidAsset, "stale bake"):
                 bake.build(sources, output, check=True)
+            (output / "orphan.json").write_text("{}")
+            with self.assertRaisesRegex(bake.InvalidAsset, "orphaned bakes"):
+                bake.build(sources, output, check=True)

@@ -11,3 +11,5 @@ bevy = { workspace = true }
 bevy_renet2 = { workspace = true }
 dotenvy = "0.15"
 rand = "0.10"
+serde = { workspace = true }
+serde_json = { workspace = true }

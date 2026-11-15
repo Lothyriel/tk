@@ -22,5 +22,6 @@ bevy_rapier3d = { version = "0.37.0", default-features = false, features = ["dim
 rkyv = { version = "0.8.18", features = ["bytecheck"] }
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 ron = "0.12.3"
 serde_path_to_error = "0.1"

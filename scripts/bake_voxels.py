@@ -282,6 +282,8 @@ def build(sources=SOURCES, output=OUTPUT, check=False):
         results.append((path, baked, canonical(baked)))
     # Validate the complete set before writing anything. Never leave a partial
     # successful build when the last asset is invalid.
+    extras = {p.stem for p in output.glob("*.json")} - ids
+    require(not extras, str(output), f"orphaned bakes have no source: {sorted(extras)}")
     for path, baked, data in results:
         destination = output / f"{baked['id']}.json"
         if check:

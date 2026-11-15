@@ -99,6 +99,40 @@ boxes, adjacent solids, overlaps, concave steps and material boundaries; they
 also check winding, continuous pivots/sockets, moving-part separation, limits,
 stale artifacts and diagnostic failures. A new piece/material uses data only.
 
-The first increment provides the offline source/bake/build contract. Shared
-Bevy handle loading and world/view LOD selection are the next TAR-21 increment;
-the current in-game legacy weapons are not yet migrated to these buffers.
+## Bevy consumer and shared cache
+
+`client::render::voxel::Plugin` is wired into the renderer. Insert `VoxelModel`
+on a root with `Transform` and `Visibility`, providing an asset ID and
+`view_model` flag. The build generates an embedded registry from all checked
+bakes; adding an asset or part needs no renderer branch. Orphaned baked files
+without sources fail the build, so the registry cannot silently include an
+obsolete asset.
+
+Loading is lazy and occurs once per requested asset. One `VoxelCache` owns strong
+handles for its lifetime. Both perspectives and every actor clone these handles,
+not mesh buffers. Each part/material pair becomes one indexed Bevy mesh and
+uses its authored PBR material. Render layers and view-model shadow exclusion
+are instance properties; they do not create another copy of the asset.
+
+Each instance has one owned container, named part pivots, named socket children,
+and material surfaces beneath their pivot. `VoxelPart`, `MovableVoxelPart` and
+`VoxelSocket` mark the integration points for mechanics. Animate a pivot and its
+surfaces/sockets follow through Bevy's normal hierarchy propagation. The fixture
+has 13 child entities, regardless of its voxel occupancy.
+
+Only a changed `VoxelModel` requests assembly. An identical assignment is a
+no-op. An invalid replacement records `VoxelLoadError` and preserves the last
+valid hierarchy; no partial replacement or handle allocation is published.
+Changing a valid model/perspective replaces its owned hierarchy. Removing the
+component or despawning the root removes the owned entities. Cached buffers
+remain available for future instances.
+
+Minimal Bevy app tests verify identical handles across two world actors and a
+view-model, stable allocations over 60 updates, PBR/buffer fidelity, precise
+socket propagation during magazine movement and rotated roots, atomic invalid
+replacement, perspective replacement and recursive cleanup. They use real
+`Assets`, `Mesh3d`, material handles and transform systems without a window.
+
+World/view LOD selection and its cost calibration are the next TAR-21 increment.
+The current legacy weapon presentation is not yet migrated to this data-driven
+assembler; configured weapon/hand integration belongs to TAR-23.
