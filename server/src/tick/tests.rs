@@ -1645,3 +1645,352 @@ fn ads_barrel_beyond_a_concrete_panel_cannot_fire_through_the_panel() {
     );
     assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 29);
 }
+
+// ANIM-15: solve the specified muzzle ray, not an eye-origin approximation.
+fn aim_offset_ray(eye: Vec3, target: Vec3, barrel: Vec3) -> CameraInput {
+    let d = target - eye;
+    let h = (d.length_squared() - barrel.x * barrel.x - barrel.y * barrel.y).sqrt();
+    let pitch = (d.y / (h * h + barrel.y * barrel.y).sqrt())
+        .clamp(-1.0, 1.0)
+        .asin()
+        - barrel.y.atan2(h);
+    let local_z = barrel.y * pitch.sin() - h * pitch.cos();
+    CameraInput {
+        pitch,
+        yaw: (-d.x).atan2(-d.z) + barrel.x.atan2(-local_z),
+        roll: 0.0,
+    }
+}
+
+#[test]
+fn close_hip_and_ads_muzzle_rays_hit_actual_heads_without_capsule_redirection() {
+    use common::humanoid::*;
+    for weapon in [WeaponKind::Rifle, WeaponKind::Smg, WeaponKind::Pistol] {
+        for aiming in [false, true] {
+            for distance in [1.05, 1.25, 1.45, 2.0] {
+                let (mut app, a, b) = physical_fixture();
+                if weapon == WeaponKind::Smg {
+                    let loadout = Loadout {
+                        primary: weapon,
+                        armor: ArmorKind::None,
+                        helmet: false,
+                        ..default()
+                    };
+                    *app.world_mut().get_mut::<Arsenal>(a).unwrap() = Arsenal::new(loadout);
+                }
+                let origin = app.world().get::<Transform>(a).unwrap().translation;
+                app.world_mut().get_mut::<Transform>(b).unwrap().translation =
+                    origin - Vec3::Z * distance;
+                {
+                    let mut input = app.world_mut().get_mut::<ClientInput>(a).unwrap();
+                    input.weapon = weapon;
+                    input.aim = aiming;
+                }
+                held_steps(&mut app, a, 64);
+                let eye = app.world().get::<Transform>(a).unwrap().translation
+                    + Vec3::Y * PLAYER_VIEW_HEIGHT;
+                let root = *app.world().get::<Transform>(b).unwrap();
+                let rig = evaluate_pose(app.world().get::<PoseState>(b).unwrap(), 1.0, 1.0);
+                let target = root.transform_point(rig[Segment::Head.index()].position.into());
+                let ads = app.world().get::<PoseState>(a).unwrap().ads;
+                let barrel = common::weapon_animation::barrel_offset(weapon, ads);
+                let camera = aim_offset_ray(eye, target, barrel);
+                let expected = eye + Quat::from(&camera) * barrel;
+                {
+                    let mut input = app.world_mut().get_mut::<ClientInput>(a).unwrap();
+                    input.camera = camera;
+                    input.fire = true;
+                    input.fire_pressed_sequence += 1;
+                }
+                held_steps(&mut app, a, 1);
+                app.world_mut().get_mut::<ClientInput>(a).unwrap().fire = false;
+                held_steps(&mut app, a, 12);
+                let body = app.world().get::<BodyHealth>(b).unwrap();
+                assert!(
+                    body.anatomy.regions[Region::Head as usize] < REGION_MAX[Region::Head as usize],
+                    "clear posed head missed: {weapon:?} ADS={aiming} distance={distance} body={:?}",
+                    body.anatomy
+                );
+                assert!(
+                    (body.anatomy.regions[Region::Head as usize]
+                        - (REGION_MAX[Region::Head as usize] - weapon.spec().damage).max(0.0))
+                    .abs()
+                        < 0.01,
+                    "one close shot must retain the specified damage: {weapon:?} ADS={aiming} distance={distance}"
+                );
+                assert_eq!(
+                    app.world().get::<Arsenal>(a).unwrap().magazines[weapon.index()],
+                    weapon.spec().magazine_size - 1
+                );
+                let shot = app
+                    .world()
+                    .resource::<WorldState>()
+                    .fired_projectiles
+                    .iter()
+                    .find(|shot| shot.shooter == 7)
+                    .unwrap();
+                assert!(
+                    Vec3::from(shot.muzzle).distance(expected) < 0.001,
+                    "free muzzle anchor changed"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn muzzle_beyond_a_close_actor_cannot_skip_its_actual_anatomy_in_hip_or_ads() {
+    use common::humanoid::*;
+    for aiming in [false, true] {
+        let (mut app, a, b) = physical_fixture();
+        let origin = app.world().get::<Transform>(a).unwrap().translation;
+        app.world_mut().get_mut::<Transform>(b).unwrap().translation = origin - Vec3::Z * 0.72;
+        app.world_mut().get_mut::<ClientInput>(a).unwrap().aim = aiming;
+        held_steps(&mut app, a, 64);
+        let eye =
+            app.world().get::<Transform>(a).unwrap().translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
+        let barrel = common::weapon_animation::barrel_offset(
+            WeaponKind::Rifle,
+            app.world().get::<PoseState>(a).unwrap().ads,
+        );
+        let root = *app.world().get::<Transform>(b).unwrap();
+        let rig = evaluate_pose(app.world().get::<PoseState>(b).unwrap(), 1.0, 1.0);
+        assert!(
+            !ray_segments(
+                root.rotation.inverse() * (eye - root.translation),
+                root.rotation.inverse() * barrel.normalize(),
+                barrel.length(),
+                &rig,
+                0
+            )
+            .is_empty(),
+            "fixture must put actual anatomy, not merely a capsule, before the muzzle"
+        );
+        app.world_mut().get_mut::<ClientInput>(a).unwrap().fire = true;
+        held_steps(&mut app, a, 1);
+        app.world_mut().get_mut::<ClientInput>(a).unwrap().fire = false;
+        held_steps(&mut app, a, 12);
+        assert_ne!(
+            app.world().get::<BodyHealth>(b).unwrap().anatomy.regions,
+            REGION_MAX,
+            "shot spawned beyond the close body: ADS={aiming}"
+        );
+        assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 29);
+    }
+}
+
+#[test]
+fn narrow_concrete_on_eye_to_muzzle_path_stops_hip_and_ads_without_parallel_eye_bypass() {
+    for aiming in [false, true] {
+        let (mut app, a, b) = physical_fixture();
+        app.world_mut().get_mut::<ClientInput>(a).unwrap().aim = aiming;
+        held_steps(&mut app, a, 64);
+        let eye =
+            app.world().get::<Transform>(a).unwrap().translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
+        let barrel = common::weapon_animation::barrel_offset(
+            WeaponKind::Rifle,
+            app.world()
+                .get::<common::humanoid::PoseState>(a)
+                .unwrap()
+                .ads,
+        );
+        let centre = eye + barrel * 0.5;
+        app.world_mut().spawn((
+            SurfaceKind::Concrete,
+            Collider::cuboid(0.04, 0.015, 0.04),
+            Transform::from_translation(centre),
+        ));
+        let mut target = app.world_mut().get_mut::<Transform>(b).unwrap();
+        target.translation.x = eye.x + barrel.x;
+        drop(target);
+        held_steps(&mut app, a, 3);
+        app.world_mut().get_mut::<ClientInput>(a).unwrap().fire = true;
+        held_steps(&mut app, a, 1);
+        app.world_mut().get_mut::<ClientInput>(a).unwrap().fire = false;
+        held_steps(&mut app, a, 12);
+        assert_eq!(
+            app.world().get::<BodyHealth>(b).unwrap().anatomy.regions,
+            REGION_MAX,
+            "narrow cover was bypassed: ADS={aiming}"
+        );
+        assert!(
+            app.world()
+                .resource::<WorldState>()
+                .impact_marks
+                .iter()
+                .any(|mark| Vec3::from(mark.pos).distance(centre) < 0.10),
+            "missing actual clearance impact"
+        );
+        assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 29);
+    }
+}
+
+fn clearance_fixture() -> (App, Entity, Entity) {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, TransformPlugin, common::Plugin))
+        .add_message::<bevy_renet2::netcode::NetcodeTransportError>()
+        .insert_resource(Time::<Fixed>::from_hz(128.0))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+            1.0 / 128.0,
+        )))
+        .init_resource::<WorldState>()
+        .add_systems(FixedUpdate, projectiles_tick.after(PhysicsSet::Writeback));
+    app.update();
+    let owner = app.world_mut().spawn_empty().id();
+    let mut participant = Participant::default();
+    participant.begin();
+    let target = app
+        .world_mut()
+        .spawn((
+            BodyHealth::default(),
+            ArmorState::default(),
+            MovementState::default(),
+            participant,
+            Collider::capsule_y(PLAYER_COLLIDER_HALF_HEIGHT, PLAYER_COLLIDER_RADIUS),
+            CollisionGroups::new(Group::GROUP_3, Group::ALL),
+            Transform::from_xyz(0.0, 1.0, 4.0),
+        ))
+        .id();
+    (app, owner, target)
+}
+
+#[test]
+fn pre_muzzle_wood_attenuates_once_across_clearance_and_normal_flight() {
+    let (mut app, owner, target) = clearance_fixture();
+    app.world_mut().spawn((
+        SurfaceKind::Wood,
+        Collider::cuboid(1.0, 1.0, 0.12),
+        Transform::from_xyz(0.0, 1.0, 2.0),
+    ));
+    steps(&mut app, 3);
+    app.world_mut().spawn((
+        Projectile {
+            id: 991,
+            velocity: Vec3::Z * 100.0,
+            damage: 50.0,
+            penetration: 30.0,
+            lifetime: 3.0,
+            owner_entity: owner,
+            penetrated: Vec::new(),
+        },
+        MuzzleClearance(Vec3::new(0.0, 1.0, 3.0)),
+        Transform::from_xyz(0.0, 1.0, 0.0),
+    ));
+    steps(&mut app, 12);
+    let health = app
+        .world()
+        .get::<BodyHealth>(target)
+        .unwrap()
+        .anatomy
+        .regions[Region::Thorax as usize];
+    // Same original 0.24m wood / 30 energy / 50damage contract: exactly42 damage.
+    assert!(
+        (health - 43.0).abs() < 0.1,
+        "clearance charged wood twice or bypassed it: {health}"
+    );
+    assert_eq!(app.world().resource::<WorldState>().impact_marks.len(), 2);
+    assert_eq!(
+        app.world_mut()
+            .query::<&Projectile>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn pre_muzzle_ray_through_a_posed_leg_gap_does_not_hit_the_movement_capsule() {
+    use common::humanoid::*;
+    let (mut app, owner, target) = clearance_fixture();
+    app.world_mut()
+        .get_mut::<Transform>(target)
+        .unwrap()
+        .translation
+        .z = 2.0;
+    let start = Vec3::new(0.0, 0.45, 0.0);
+    let rig = evaluate_pose(&PoseState::default(), 1.0, 1.0);
+    assert!(ray_segments(start - Vec3::new(0.0, 1.0, 2.0), Vec3::Z, 4.0, &rig, 0).is_empty());
+    steps(&mut app, 3);
+    let shot = app
+        .world_mut()
+        .spawn((
+            Projectile {
+                id: 992,
+                velocity: Vec3::Z * 100.0,
+                damage: 50.0,
+                penetration: 30.0,
+                lifetime: 3.0,
+                owner_entity: owner,
+                penetrated: Vec::new(),
+            },
+            MuzzleClearance(Vec3::new(0.0, 0.45, 3.0)),
+            Transform::from_translation(start),
+        ))
+        .id();
+    steps(&mut app, 1);
+    assert!(
+        app.world().get::<Transform>(shot).unwrap().translation.z > 3.5,
+        "a clear gap must continue from its original muzzle, not the eye"
+    );
+    assert!(
+        app.world().get::<MuzzleClearance>(shot).is_none(),
+        "clearance must be consumed once"
+    );
+    steps(&mut app, 12);
+    assert_eq!(
+        app.world()
+            .get::<BodyHealth>(target)
+            .unwrap()
+            .anatomy
+            .regions,
+        REGION_MAX
+    );
+    assert!(app.world().resource::<WorldState>().impact_marks.is_empty());
+}
+
+#[test]
+fn muzzle_inside_the_same_wood_keeps_penetration_ids_across_both_paths() {
+    let (mut app, owner, target) = clearance_fixture();
+    app.world_mut().spawn((
+        SurfaceKind::Wood,
+        Collider::cuboid(1.0, 1.0, 0.12),
+        Transform::from_xyz(0.0, 1.0, 2.0),
+    ));
+    steps(&mut app, 3);
+    app.world_mut().spawn((
+        Projectile {
+            id: 993,
+            velocity: Vec3::Z * 100.0,
+            damage: 50.0,
+            penetration: 30.0,
+            lifetime: 3.0,
+            owner_entity: owner,
+            penetrated: Vec::new(),
+        },
+        MuzzleClearance(Vec3::new(0.0, 1.0, 2.0)),
+        Transform::from_xyz(0.0, 1.0, 0.0),
+    ));
+    steps(&mut app, 12);
+    let health = app
+        .world()
+        .get::<BodyHealth>(target)
+        .unwrap()
+        .anatomy
+        .regions[Region::Thorax as usize];
+    assert!(
+        (health - 43.0).abs() < 0.1,
+        "same wood charged twice at path boundary: {health}"
+    );
+    assert_eq!(
+        app.world().resource::<WorldState>().impact_marks.len(),
+        2,
+        "flight must not emit another entry/exit while starting inside penetrated wood"
+    );
+    assert_eq!(
+        app.world_mut()
+            .query::<&Projectile>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+}
