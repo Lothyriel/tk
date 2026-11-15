@@ -464,10 +464,12 @@ pub(super) fn projectiles_tick(
                         projectile.id, hit.time_of_impact, hit.point
                     );
                 }
-                world_state.impact(
+                let cell_id = voxels.get(hit_entity).ok().map(|cell| cell.id);
+                world_state.impact_on_cell(
                     hit.point,
                     hit.normal,
                     impact_mark_size_mm(projectile.weapon),
+                    cell_id,
                 );
                 let Ok((surface, collider, surface_transform)) = surfaces.get(hit_entity) else {
                     stopped = true;
@@ -477,6 +479,7 @@ pub(super) fn projectiles_tick(
                     voxel.health = (voxel.health - projectile.damage).max(0.0);
                     if voxel.health == 0.0 {
                         world_state.destroyed_cells.push(voxel.id);
+                        world_state.remove_cell_marks(voxel.id);
                         commands.entity(hit_entity).insert(ColliderDisabled);
                     }
                 }
@@ -504,11 +507,14 @@ pub(super) fn projectiles_tick(
                 projectile.damage *= energy / projectile.penetration;
                 projectile.penetration = energy;
                 projectile.penetrated.push(hit_entity);
-                world_state.impact(
-                    exit.point,
-                    exit.normal,
-                    impact_mark_size_mm(projectile.weapon),
-                );
+                if !voxels.get(hit_entity).is_ok_and(|cell| cell.health <= 0.0) {
+                    world_state.impact_on_cell(
+                        exit.point,
+                        exit.normal,
+                        impact_mark_size_mm(projectile.weapon),
+                        cell_id,
+                    );
+                }
                 let traveled = hit.time_of_impact + 0.002;
                 start = hit.point + direction * 0.002;
                 remaining -= traveled;

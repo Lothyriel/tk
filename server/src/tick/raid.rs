@@ -157,6 +157,7 @@ pub(super) fn lobby_tick(
         }
         world_state.destroyed_cells.clear();
         world_state.impact_marks.clear();
+        world_state.impact_cells.clear();
         world_state.fired_projectiles.clear();
     }
     if started {
