@@ -107,7 +107,21 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 
 ## Automated playtest and evidence
 
-From the root:
+### Fast engine-only checks
+
+Physics and authoritative gameplay can be tested without opening the game. The fixtures in `server/src/tick/tests.rs` run the real Bevy/Rapier systems with `MinimalPlugins` and a manual 1/128-second timestep, advancing simulation as fast as the CPU allows without rendering, a GPU context, real-time waits or a listening UDP socket. From the root:
+
+```sh
+cargo test -p server real_rapier -- --nocapture
+cargo test -p server ragdoll_running_and_resting_contact_matrix -- --nocapture
+cargo test -p common -p server -j 4
+```
+
+Use a focused test during physics iteration, then the broader suite; the first build can still take time. These checks validate engine state, not visible animation, camera framing, interpolation or real network delivery. See `AGENTS.md` for the headless-first workflow used by agents and `/goals`.
+
+### Rendered end-to-end acceptance
+
+When the change requires visible or real-network acceptance, run the relevant harness after headless checks, not on every solver iteration. From the root:
 
 ```sh
 cargo check --workspace
@@ -119,13 +133,13 @@ The harness builds isolated executable outputs (so it does not replace a running
 
 Logs, `result.txt`, and actual 1280×800 screenshots (`lobby.png`, `raid.png`, `extracting.png`, `debrief.png`, `return-lobby.png`) are written to `target/playtest/`. Use `--no-build` after a successful `cargo build --workspace`; `--output PATH` chooses another evidence directory. Screenshots from earlier runs cannot satisfy a new run's checks. A successful run prints `PASS`; failures return a nonzero exit code.
 
-For native continuous video evidence, add `--video` and use a fresh output directory. This records real framebuffer PNGs plus `frame-times.csv`, then uses `imageio-ffmpeg` to encode `raid-review.mp4` for each client without inventing intermediate gameplay frames. Keep the PNGs for adjacent-frame inspection. `--clients 2 --animation-review` adds a reciprocal continuous M1911/primary handling route through ordinary UDP inputs before the normal extraction run. Recording has measurable capture/encoding overhead; compare performance with equivalent capture settings and also run without video. Animation and ragdoll polish is currently in progress, not accepted as production-quality art.
+Video is **off by default**: do not add `--video` for physics tests or ordinary rendered acceptance. Use assertions/logs for simulation and only the necessary screenshots for static visual checks; record video only on explicit request or for a visual/temporal criterion that requires continuous evidence. When required, add `--video` and use a fresh output directory. This records real framebuffer PNGs plus `frame-times.csv`, then uses `imageio-ffmpeg` to encode `raid-review.mp4` for each client without inventing intermediate gameplay frames. Keep the PNGs for adjacent-frame inspection. `--clients 2 --animation-review` adds a reciprocal continuous M1911/primary handling route through ordinary UDP inputs before the normal extraction run. Recording has measurable capture/encoding overhead; measure ordinary performance without capture, and compare capture runs only with equivalent settings. Animation and ragdoll polish is currently in progress, not accepted as production-quality art.
 
 The optional video/frame-index/performance helpers use Python3.12+; video encoding needs `imageio-ffmpeg` and contact sheets need `Pillow` in your Python environment (for example, install them in a virtual environment). The ordinary no-video raid runner uses the standard library. No helper installs global packages automatically.
 
 For the full physical-humanoid suite, run `python scripts/validate_humanoids.py`; it runs formatting/check/tests, bounded physics/snapshot tests, a normal raid and two real UDP clients without changing source between gates. The dual scenario additionally captures directional poses, weapon cycles, lateral injuries, balance correction, fall/recovery, separation and ragdoll. See [PHYSICAL_HUMANOIDS.md](PHYSICAL_HUMANOIDS.md) for the seven-criterion evidence index, before/after measurements and manual anatomical shot placement. Tests use normal network input; the remote review camera hides only its local view-model overlay, not actors or simulation.
 
-The ongoing polish evidence is indexed in [ANIMATION_RAGDOLL.md](ANIMATION_RAGDOLL.md). `python scripts/review_animation_frames.py PATH` indexes all 17 continuous action timestamps and adjacent native frames from both the acting and observing clients. `python scripts/playtest_physical.py --server-path PATH --client-path PATH --output PATH --video` runs healthy rest/run deaths on flat ground and near a wall on isolated UDP 19081; it checks 17 segment IDs and resting position/orientation agreement under peer snapshot loss. This focused matrix does not replace the normal loot/extraction acceptance. Failing baseline cases stay failures even when `--keep-going` retains their videos.
+The ongoing polish evidence is indexed in [ANIMATION_RAGDOLL.md](ANIMATION_RAGDOLL.md). For an explicitly required continuous visual review, `python scripts/review_animation_frames.py PATH` indexes all 17 action timestamps and adjacent native frames from existing recordings of both the acting and observing clients. `python scripts/playtest_physical.py --server-path PATH --client-path PATH --output PATH` runs healthy rest/run deaths on flat ground and near a wall on isolated UDP 19081 without video; it still launches rendered clients and checks 17 segment IDs and resting position/orientation agreement under peer snapshot loss. Use the headless engine matrix instead for solver iteration. This focused network matrix does not replace the normal loot/extraction acceptance. Failing baseline cases stay failures even when `--keep-going` retains their evidence.
 
 ## Playtest limitations
 
@@ -148,4 +162,4 @@ The ongoing polish evidence is indexed in [ANIMATION_RAGDOLL.md](ANIMATION_RAGDO
 - `client/src/render/feedback.rs`: per-weapon recoil impulse, spring/damping, flash lifetime, reload/swap and camera feedback. Audio assets in `assets/sound/` are intentionally retained but not loaded by firing.
 - `common/src/weapon_animation.rs` and `client/src/render/weapons.rs`: original grip/muzzle anchors, per-weapon empty/tactical choreography, and cached first-person weapon assemblies; curves do not grant ammo or actions.
 
-**Latest review.** On 2026-11-14, the unchanged Mermaid flow and PR #2's extraction/ADS/anatomy/recovery paths were reviewed with its runtime equality and112-test/native gates, then candidate17's complete dual/loss raid, approved recovery, pistol reload/ADS/get-up frames and independent static framing review were checked; matched performance, normal-speed artistic UAT and final independent acceptance remain open.
+**Latest review.** On 2026-11-14, the headless-first/no-default-video workflow was checked against the entry points, production Rapier schedule and capture flags, with the eight-case ragdoll matrix and two projectile/cover tests passing without a client; gameplay and the Mermaid flow are unchanged, and prior visual/performance acceptance gaps remain open.

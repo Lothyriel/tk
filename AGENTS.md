@@ -189,11 +189,38 @@ Example flow:
 
 ## Validation expectations
 
-After changing behavior:
+After changing behavior, start with the smallest relevant headless test, then run the final checks once on the completed change:
 
-- run `cargo check`
-- run `cargo test`
+- run `cargo check --workspace`
+- run `cargo test --workspace -j 4`
 - if networking or app boot changed, verify the relevant binary still starts (`cargo run --bin client` or `cargo run --bin server`)
+
+### Headless-first physics testing (including `/goals`)
+
+**Default to engine-only tests for physics and authoritative gameplay. Do not open the client, record video, or run a rendered playtest on each iteration.** The existing tests already execute real Bevy ECS schedules and Rapier physics without a window, rendering, GPU initialization, or a listening UDP socket.
+
+Use this fast feedback loop:
+
+1. Find the relevant test in `server/src/tick/tests.rs` or the shared tests in `common`. Run only that test or a focused name filter while iterating. Use `cargo test -p server -- --list` to discover names, and verify the run actually executes matching tests (zero tests is not evidence).
+2. Add a headless regression when coverage is missing. Reuse `app()`, `physical_fixture()`, `steps()` and `held_steps()` rather than creating a second physics implementation. `app()` uses `MinimalPlugins`, `TransformPlugin`, `common::Plugin` (the real Rapier plugin), and the production `tick::Plugin`. It supplies Renet resources/messages in memory, not a network transport.
+3. Keep `TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 128.0))` and the production 128 Hz fixed schedule. Advance with `app.update()`/`steps()` as fast as the CPU allows, with no sleeps or real-time countdown waits. Do not increase the timestep, reduce solver quality, disable collisions, or mock the physics to make a test faster. Use `held_steps()` for sustained input so the normal stale-input timeout does not invalidate the scenario.
+4. Set up explicit, reproducible initial conditions and drive the real systems. Assert outcomes from ECS state: finite transforms/velocities, ground and wall contacts, joint limits/gaps, settling and late drift, segment identity/count, damage and recovery. For stability claims, sample the relevant time window, not just one final frame. Bound tick counts and use justified numerical tolerances; do not assume bit-identical physics across platforms. Fixture-only injury/impulse setup is valid for a solver regression, but is not evidence for the complete firing/network path.
+5. Reuse the debug build/cache; do not run `cargo clean`, switch profiles/target directories repeatedly, rebuild the rendered client, or rerun the entire acceptance suite for each solver adjustment. Run the broader headless suite after the focused tests pass, and the workspace checks once before delivery. Documentation-only changes need documentation/diff checks, not a full gameplay run.
+
+Examples from the repository (all run without opening the game):
+
+```sh
+# Focused real-Rapier projectile/cover tests
+cargo test -p server real_rapier -- --nocapture
+# Existing rest/run, floor/wall/corner/step ragdoll matrix
+cargo test -p server ragdoll_running_and_resting_contact_matrix -- --nocapture
+# Broader shared-rules and server-engine regression suite
+cargo test -p common -p server -j 4
+```
+
+Headless simulation does **not** certify rendered animation, camera/FOV, clipping, interpolation, artistic quality, or actual UDP delivery/loss. Only launch the smallest relevant rendered/network scenario when an acceptance criterion requires it or a headless result cannot reproduce the defect; explain that reason first. `scripts/playtest.py`, `scripts/playtest_physical.py`, and `scripts/validate_humanoids.py` include rendered clients and are not headless shortcuts. Reserve full raid/dual-client acceptance for the final relevant gate (or an explicit user request), not the inner physics loop. Preserve any required final acceptance gates and report unexecuted visual/network criteria as unverified rather than claiming headless tests cover them.
+
+**Video capture is opt-in, not a default test artifact, including during final rendered acceptance.** For physics, use assertions, numerical measurements and text logs, not videos or framebuffer dumps. Do not pass `--video`, run recording/encoding/frame-review helpers, or generate continuous screenshots/contact sheets just to prove simulation behavior. For a static visual check, prefer the minimum relevant screenshots. Record continuous video only when the user requests it or a specific visual/temporal acceptance criterion genuinely requires it; state that criterion before recording and keep capture scoped to it. Do not record merely because a harness supports it or older validation notes used it. Measure performance without capture overhead unless capture itself is the subject of the measurement.
 
 ## Game state documentation
 
