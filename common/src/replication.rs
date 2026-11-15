@@ -36,11 +36,21 @@ impl ConfigurationMessage {
 }
 
 /// Content compatibility marker, not an authentication/security hash. The exact
-/// bundled document must agree, including definitions not present in a packet.
+/// bundled document and generated rig contract must agree, including definitions
+/// not present in a packet. Otherwise equal configuration IDs could resolve to
+/// different grips or ballistic origins on either side.
 pub fn catalog_fingerprint(source: &str) -> u64 {
-    source.bytes().fold(0xcbf29ce484222325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-    })
+    content_fingerprint(source, crate::catalog::LOGICAL_RIGS_SOURCE)
+}
+
+fn content_fingerprint(source: &str, rigs: &str) -> u64 {
+    source
+        .bytes()
+        .chain([0])
+        .chain(rigs.bytes())
+        .fold(0xcbf29ce484222325, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]

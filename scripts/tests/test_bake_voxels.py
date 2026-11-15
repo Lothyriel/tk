@@ -3,6 +3,7 @@ import copy
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 import sys
 import tempfile
@@ -225,9 +226,40 @@ class VoxelBakeTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 bake.build(sources, output)
                 bake.build(sources, output, check=True)
+            logical = output / "logical_rigs.ron"
+            original = logical.read_bytes()
+            logical.write_text("{}")
+            with self.assertRaisesRegex(bake.InvalidAsset, "stale logical rig"):
+                bake.build(sources, output, check=True)
+            logical.write_bytes(original)
             (output / "pipeline_fixture.json").write_text("{}")
             with self.assertRaisesRegex(bake.InvalidAsset, "stale bake"):
                 bake.build(sources, output, check=True)
             (output / "orphan.json").write_text("{}")
             with self.assertRaisesRegex(bake.InvalidAsset, "orphaned bakes"):
                 bake.build(sources, output, check=True)
+
+    def test_logical_export_composes_nested_pivots_and_rotated_socket_axes(self):
+        asset = cube_source()
+        root = asset["parts"][0]
+        root["pivot"] = {"translation": [1, 0, 0],
+                         "rotation": [0, 0, math.sqrt(0.5), math.sqrt(0.5)]}
+        child = copy.deepcopy(root)
+        child.update(id="child", parent=root["id"],
+                     pivot={"translation": [0.1, 0, 0],
+                            "rotation": [math.sqrt(0.5), 0, 0, math.sqrt(0.5)]})
+        asset["parts"].append(child)
+        asset["sockets"] = [{"id": "test", "part": "child",
+                             "pose": {"translation": [0, 0.2, 0],
+                                      "rotation": [0, 0, 0, 1]}}]
+        result = compiled(asset)
+        rig = bake.logical_rigs([result])[asset["id"]]
+        # X rotation sends local Y to Z, then parent Z rotation leaves Z fixed.
+        for actual, expected in zip(rig["sockets"]["test"]["translation"], [1, 0.1, 0.2]):
+            self.assertAlmostEqual(actual, expected)
+        for actual in rig["sockets"]["test"]["rotation"]:
+            self.assertAlmostEqual(actual, 0.5)
+        self.assertAlmostEqual(rig["pivots"]["child"]["translation"][1], 0.1)
+        reversed_result = copy.deepcopy(result)
+        reversed_result["parts"].reverse()
+        self.assertEqual(bake.logical_ron([result]), bake.logical_ron([reversed_result]))

@@ -61,6 +61,18 @@ fn epoch_message(epoch: u64) -> bytes::Bytes {
 }
 
 #[test]
+fn replication_rejects_same_catalog_with_different_authored_rigs() {
+    let mut receiver = ConfigurationReceiver::default();
+    let changed = crate::catalog::LOGICAL_RIGS_SOURCE.replace("-0.3683", "-0.4683");
+    assert_ne!(changed, crate::catalog::LOGICAL_RIGS_SOURCE);
+    let fingerprint = content_fingerprint(CATALOG_SOURCE, &changed);
+    assert_eq!(
+        receiver.message(&epoch_message(1), catalog(), fingerprint),
+        Err(ConfigurationError::Catalog)
+    );
+}
+
+#[test]
 fn replication_receiver_waits_for_latest_snapshot_configuration_in_both_arrival_orders() {
     for config_first in [false, true] {
         let packet = packet();

@@ -12,11 +12,32 @@ python scripts/verify.py --mode docs
 ```
 
 Sources live in `assets/voxel/`; committed generated buffers and manifests live
-in `assets/baked/`. The client Cargo build runs the same `--check` gate; malformed
-sources and stale bakes fail compilation with file/field diagnostics. Python
+in `assets/baked/`. The common Cargo build runs the same `--check` gate for both
+client and headless server; malformed sources and stale bakes fail compilation
+with file/field diagnostics. Python
 3.12+ is already a project prerequisite; `PYTHON` can select its executable for
 Cargo. This build step checks artifacts without modifying the working tree.
 The central runner discovers the baker acceptance tests in every mode.
+
+The baker also writes `assets/baked/logical_rigs.ron`: root-local socket and
+part-pivot transforms only. This mesh-free contract lets the catalogue consume
+authored contacts without copying offsets into RON or loading renderer data.
+Geometry can map anchor kinds and attachment socket keys to named asset sockets:
+
+```ron
+authored: Some((
+    asset: "m4a1_refined",
+    anchors: [(Bore, "bore.muzzle"), (TriggerGrip, "grip.trigger")],
+    sockets: [("magazine", "magazine.seat")],
+))
+```
+
+Attachment sockets still declare compatibility and capacity in the catalogue.
+An authored socket binding requires its target socket to exist and have no
+non-identity explicit pose; duplicate anchor/binding names and missing references
+are errors. Deserialization expands the references into ordinary geometry before
+catalogue validation. The replication fingerprint includes this generated
+contract, so unchanged IDs cannot silently resolve to different authored poses.
 
 The comparison was limited to `pipeline_fixture.json`: receiver, magazine,
 bolt, four material families and two sockets. It is an original engineering
