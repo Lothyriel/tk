@@ -7,7 +7,7 @@ import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILLS = ROOT / ".opencode/skills"
+SKILLS = ROOT / ".agents/skills"
 
 
 class ProjectWorkflowTests(unittest.TestCase):

@@ -162,4 +162,4 @@ The ongoing polish evidence is indexed in [ANIMATION_RAGDOLL.md](ANIMATION_RAGDO
 - `client/src/render/feedback.rs`: per-weapon recoil impulse, spring/damping, flash lifetime, reload/swap and camera feedback. Audio assets in `assets/sound/` are intentionally retained but not loaded by firing.
 - `common/src/weapon_animation.rs` and `client/src/render/weapons.rs`: original grip/muzzle anchors, per-weapon empty/tactical choreography, and cached first-person weapon assemblies; curves do not grant ammo or actions.
 
-**Latest review.** On 2026-11-15, independent verification passed the local tooling/routing/memory scope with 20 tooling tests, 112 separately run Rust tests and three killed scratch mutations while full remains blocked by the documented preexisting Clippy lint; gameplay and the Mermaid flow are unchanged, and prior visual/performance acceptance gaps remain open.
+**Latest review.** On 2026-11-15, reviewed the project skill/data relocation and active path references; gameplay is unchanged, the Mermaid flow still matches the guide, and prior visual/performance acceptance gaps remain open.

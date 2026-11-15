@@ -10,9 +10,9 @@ The current Rust toolchain is a floating `nightly`: its first installation/updat
 
 ## Spec-driven changes
 
-The project-local [tk-workflow skill](.opencode/skills/tk-workflow/SKILL.md) routes agent work to the smallest relevant procedure: `tlc-spec-driven` for planning/implementation, `tk-verification` for tests, `tk-contribution` for authorized commits/publication and `game-state` for the guide. The router does not load everything or add a second framework over TLC. Essential safety/architecture rules remain in AGENTS.md even before child skills load.
+The project-local [tk-workflow skill](.agents/skills/tk-workflow/SKILL.md) routes agent work to the smallest relevant procedure: `tlc-spec-driven` for planning/implementation, `tk-verification` for tests, `tk-contribution` for authorized commits/publication and `game-state` for the guide. The router does not load everything or add a second framework over TLC. Essential safety/architecture rules remain in AGENTS.md even before child skills load.
 
-The [tlc-spec-driven skill](.opencode/skills/tlc-spec-driven/SKILL.md) supplies the development workflow and validators. Its [source record](.opencode/skills/tlc-spec-driven/UPSTREAM.md) documents the upstream version, licenses and retained local changes. OpenCode discovers project skills under `.opencode/skills` without a personal installation.
+The [tlc-spec-driven skill](.agents/skills/tlc-spec-driven/SKILL.md) supplies the development workflow and validators. Its [source record](.agents/skills/tlc-spec-driven/UPSTREAM.md) documents the upstream version, licenses and retained local changes. Project skills live under `.agents/skills` and do not require a personal installation.
 
 1. Reconcile `.specs/STATE.md` against Git and the current request. Preserve unrelated work; historical session/process IDs and authorizations are not current instructions.
 2. Define acceptance criteria before implementation. Small changes can use inline requirements/atomic steps; larger changes use `.specs/features/<feature>/spec.md` and formal tasks when needed. Skip unnecessary design/context artifacts.
@@ -23,10 +23,10 @@ The [tlc-spec-driven skill](.opencode/skills/tlc-spec-driven/SKILL.md) supplies 
 For formally tracked features, run these from the repository root, replacing `FEATURE` with the actual directory name:
 
 ```sh
-python .opencode/skills/tlc-spec-driven/scripts/validate_spec.py FEATURE
-python .opencode/skills/tlc-spec-driven/scripts/validate_tasks.py FEATURE
+python .agents/skills/tlc-spec-driven/scripts/validate_spec.py FEATURE
+python .agents/skills/tlc-spec-driven/scripts/validate_tasks.py FEATURE
 # After the independent verifier writes validation.md:
-python .opencode/skills/tlc-spec-driven/scripts/validate_state.py FEATURE
+python .agents/skills/tlc-spec-driven/scripts/validate_state.py FEATURE
 ```
 
 Run `validate_tasks.py` only when the feature has a formal tasks.md. These structural validators supplement, not replace, outcome-based tests and review. Update [docs/GAME_STATE.md](docs/GAME_STATE.md) and review its Mermaid flow using `game-state`, unless the user opted out.
@@ -80,7 +80,7 @@ docs(testing): explain headless verification
 Validate a message before committing:
 
 ```sh
-python .opencode/skills/tlc-spec-driven/scripts/check_commit.py --message "docs(testing): explain headless verification"
+python .agents/skills/tlc-spec-driven/scripts/check_commit.py --message "docs(testing): explain headless verification"
 ```
 
 This is a repository-local validator, not an automatically installed hook. Approval to implement or commit is not approval to push, open a PR, merge, release or deploy. Use only the current request's explicitly authorized action/branch; old `.specs` records do not grant standing permissions.

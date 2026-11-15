@@ -12,7 +12,7 @@ Activate `tk-workflow` for project work. It selects only the relevant local skil
 | `tk-contribution` | Safe incremental English Conventional Commits and explicitly authorized publishing |
 | `game-state` | Current game guide and Mermaid review after project changes |
 
-All project skills live in `.opencode/skills/`. Activate them by ID; do not depend on personal paths or fetch updates during a task. If a required skill is unavailable, report the blocker. The TLC snapshot's origin, licenses and retained local changes are in [UPSTREAM.md](.opencode/skills/tlc-spec-driven/UPSTREAM.md).
+All project skills live in `.agents/skills/`. Activate them by ID; do not depend on personal paths or fetch updates during a task. If a required skill is unavailable, report the blocker. The TLC snapshot's origin, licenses and retained local changes are in [UPSTREAM.md](.agents/skills/tlc-spec-driven/UPSTREAM.md).
 
 ## Project map and architectural rules
 

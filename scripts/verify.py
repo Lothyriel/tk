@@ -42,7 +42,7 @@ def commands_for(args, root):
         feature = (root / ".specs/features" / args.feature).resolve()
         if not feature.is_relative_to((root / ".specs/features").resolve()) or not (feature / "spec.md").is_file():
             raise ValueError(f"feature spec not found inside .specs/features: {args.feature}")
-        validators = root / ".opencode/skills/tlc-spec-driven/scripts"
+        validators = root / ".agents/skills/tlc-spec-driven/scripts"
         for artifact in ["spec", "tasks"]:
             if (feature / f"{artifact}.md").is_file():
                 commands.append([sys.executable, str(validators / f"validate_{artifact}.py"),

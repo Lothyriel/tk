@@ -83,7 +83,7 @@ class VerifyTests(unittest.TestCase):
 
     def test_feature_validators_use_local_absolute_paths(self):
         commands = self.commands("--mode", "docs", "--feature", "developer-standardization")
-        skill = verify.ROOT / ".opencode/skills/tlc-spec-driven/scripts"
+        skill = verify.ROOT / ".agents/skills/tlc-spec-driven/scripts"
         for validator in ["validate_spec.py", "validate_tasks.py"]:
             self.assertIn([sys.executable, str(skill / validator), "developer-standardization", "--root", str(verify.ROOT)], commands)
         self.assertEqual(self.cargo(commands), [])
