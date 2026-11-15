@@ -18,6 +18,7 @@ OUTPUT = ROOT / "assets/baked"
 MAX_BYTES = 1_048_576
 MAX_CELLS = 262_144
 MAX_VERTICES = 100_000
+MAX_LOD_DEVIATION = 0.002
 AXES = "right_handed_y_up_negative_z_forward"
 
 
@@ -30,9 +31,9 @@ def require(condition, path, message):
         raise InvalidAsset(f"{path}: {message}")
 
 
-def fields(value, names, path):
+def fields(value, names, path, optional=""):
     require(isinstance(value, dict), path, "expected object")
-    require(set(value) == set(names.split()), path,
+    require(set(names.split()) <= set(value) <= set((names + " " + optional).split()), path,
             f"expected fields [{names}], got {sorted(value)}")
 
 
@@ -92,23 +93,28 @@ def validate(source):
     parts = {}
     for i, part in enumerate(source["parts"]):
         path = f"parts[{i}]"
-        fields(part, "id parent pivot movable boxes", path)
+        fields(part, "id parent pivot movable boxes", path, "far_boxes")
         name(part["id"], f"{path}.id")
         require(part["id"] not in parts, path, "duplicate part ID")
         require(part["parent"] is None or isinstance(part["parent"], str),
                 f"{path}.parent", "expected part ID or null")
         require(type(part["movable"]) is bool, f"{path}.movable", "expected boolean")
         transform(part["pivot"], f"{path}.pivot")
-        sequence(part["boxes"], 1, 256, f"{path}.boxes")
-        for j, box in enumerate(part["boxes"]):
-            loc = f"{path}.boxes[{j}]"
-            fields(box, "min max material", loc)
-            vector(box["min"], 3, -8, 8, f"{loc}.min")
-            vector(box["max"], 3, -8, 8, f"{loc}.max")
-            require(all(b - a >= 0.00001 for a, b in zip(box["min"], box["max"])),
-                    loc, "extent must be at least 0.01 mm on every axis")
-            require(isinstance(box["material"], str) and box["material"] in materials,
-                    f"{loc}.material", "unknown material reference")
+        for level in ("boxes", "far_boxes"):
+            if level not in part:
+                continue
+            sequence(part[level], 1, 256, f"{path}.{level}")
+            for j, box in enumerate(part[level]):
+                loc = f"{path}.{level}[{j}]"
+                fields(box, "min max material", loc)
+                vector(box["min"], 3, -8, 8, f"{loc}.min")
+                vector(box["max"], 3, -8, 8, f"{loc}.max")
+                require(all(b - a >= 0.00001 for a, b in zip(box["min"], box["max"])),
+                        loc, "extent must be at least 0.01 mm on every axis")
+                require(isinstance(box["material"], str) and box["material"] in materials,
+                        f"{loc}.material", "unknown material reference")
+        require(not part["movable"] or "far_boxes" not in part, path,
+                "movable mechanisms retain near geometry at every LOD")
         parts[part["id"]] = part
     require(sum(p["parent"] is None for p in parts.values()) == 1,
             "parts", "expected exactly one root")
@@ -207,12 +213,48 @@ def surface(part):
                         mesh["positions"].append(p)
                         mesh["normals"].append(normal.copy())
                     mesh["indices"].extend(base + n for n in (0, 1, 2, 0, 2, 3))
+    for mesh in meshes.values():
+        mesh["bounds"] = bounds(mesh["positions"])
     return [meshes[key] for key in sorted(meshes)], exposed
 
 
 def bounds(points):
     return {"min": [min(p[d] for p in points) for d in range(3)],
             "max": [max(p[d] for p in points) for d in range(3)]}
+
+
+def lod_deviation(part):
+    """Conservative bidirectional solid Hausdorff bound, not a vertex sample.
+
+    On the shared compressed grid occupancy is constant in every cell. For
+    each differing cell, one target cuboid must contain all its points within
+    the tolerance. Distance to a convex box reaches its maximum at a corner,
+    so this also bounds the complete cell, including the interior.
+    """
+    if "far_boxes" not in part:
+        return 0
+    near, far = part["boxes"], part["far_boxes"]
+    axes = [sorted({b[edge][d] for b in near + far for edge in ("min", "max")}) for d in range(3)]
+    require(math.prod(len(a) - 1 for a in axes) <= MAX_CELLS,
+            f"parts.{part['id']}.far_boxes", "LOD comparison exceeds compressed cell limit")
+    error = 0
+    for indices in itertools.product(*(range(len(a) - 1) for a in axes)):
+        low = [axes[d][indices[d]] for d in range(3)]
+        high = [axes[d][indices[d] + 1] for d in range(3)]
+        center = [(a + b) / 2 for a, b in zip(low, high)]
+        occupied = [any(all(b["min"][d] <= center[d] < b["max"][d] for d in range(3))
+                        for b in boxes) for boxes in (near, far)]
+        if occupied[0] == occupied[1]:
+            continue
+        target = far if occupied[0] else near
+        corners = list(itertools.product(*zip(low, high)))
+        distance = min(max(math.sqrt(sum(
+            max(b["min"][d] - p[d], 0, p[d] - b["max"][d]) ** 2 for d in range(3)))
+                           for p in corners) for b in target)
+        error = max(error, distance)
+        require(error <= MAX_LOD_DEVIATION + 1e-9, f"parts.{part['id']}.far_boxes",
+                f"silhouette deviation {error:.6f} m exceeds {MAX_LOD_DEVIATION} m")
+    return error
 
 
 def canonical(value):
@@ -226,27 +268,45 @@ def bake(source, source_bytes):
     total_vertices = 0
     for part in sorted(source["parts"], key=lambda p: p["id"]):
         meshes, exposed = surface(part)
+        deviation = lod_deviation(part)
+        far_meshes, _ = surface({"id": part["id"], "boxes": part.get("far_boxes", part["boxes"])})
+        require([m["material"] for m in meshes] == [m["material"] for m in far_meshes],
+                f"parts.{part['id']}.far_boxes", "LOD must preserve visible material groups")
         positions = [point for mesh in meshes for point in mesh["positions"]]
         vertices = len(positions)
         total_vertices += vertices
         require(total_vertices <= MAX_VERTICES, "parts", f"asset exceeds {MAX_VERTICES} vertices")
         index_count = sum(len(mesh["indices"]) for mesh in meshes)
         item = {key: part[key] for key in ("id", "parent", "pivot", "movable")}
-        item.update(bounds=bounds(positions), meshes=meshes)
+        far_vertices = sum(len(m["positions"]) for m in far_meshes)
+        far_indices = sum(len(m["indices"]) for m in far_meshes)
+        require(far_vertices <= vertices and far_indices <= index_count,
+                f"parts.{part['id']}.far_boxes", "far LOD must not increase geometry cost")
+        item.update(bounds=bounds(positions + [p for m in far_meshes for p in m["positions"]]),
+                    meshes=meshes, far_meshes=far_meshes, lod_deviation=deviation)
         baked.append(item)
         manifest.append({"id": part["id"], "bounds": item["bounds"], "vertices": vertices,
                          "triangles": index_count // 3, "draw_calls": len(meshes),
                          "mesh_bytes": vertices * 24 + index_count * 4,
-                         "exposed_cells": exposed, "quads": index_count // 6})
+                         "exposed_cells": exposed, "quads": index_count // 6,
+                         "far_vertices": far_vertices, "far_triangles": far_indices // 3,
+                         "far_mesh_bytes": far_vertices * 24 + far_indices * 4,
+                         "lod_deviation": deviation,
+                         "cached_mesh_bytes": vertices * 24 + index_count * 4 + sum(
+                             len(f["positions"]) * 24 + len(f["indices"]) * 4
+                             for n, f in zip(meshes, far_meshes) if n != f)})
     sockets = sorted(source["sockets"], key=lambda s: s["id"])
-    return {"version": 1, "baker_version": 1, "id": source["id"], "units": source["units"],
+    return {"version": 1, "baker_version": 2, "id": source["id"], "units": source["units"],
             "axes": source["axes"], "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
             "provenance": source["provenance"],
             "materials": sorted(source["materials"], key=lambda m: m["id"]),
             "parts": baked, "sockets": sockets,
             "manifest": {"parts": manifest, "sockets": sockets,
                          **{k: sum(p[k] for p in manifest)
-                            for k in ("vertices", "triangles", "draw_calls", "mesh_bytes")}}}
+                            for k in ("vertices", "triangles", "draw_calls", "mesh_bytes",
+                                      "far_vertices", "far_triangles", "far_mesh_bytes",
+                                      "cached_mesh_bytes")},
+                         "lod_deviation": max(p["lod_deviation"] for p in manifest)}}
 
 
 def reject_duplicates(pairs):

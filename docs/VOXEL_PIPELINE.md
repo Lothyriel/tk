@@ -33,18 +33,19 @@ The comparison does not claim `.vox` lacks hierarchy or materials. A future
 importer could target this source contract, but there is one executable bake
 route today and no second importer to maintain.
 
-A centre-sampled occupancy probe over each exemplar part measured:
+A centre-sampled occupancy probe over each part of the original baseline
+(before adding the LOD test's 2 mm receiver ridge) measured:
 
 | Cell | Occupied cells | XYZI records only (4 B/cell) | Maximum pivot/socket error if snapped |
 | --- | --- | --- | --- |
 | 2 mm | 60,152 | 240,608 B | 0.995 mm |
 | 4 mm | 7,238 | 28,952 B | 2.302 mm |
 
-The source is 2,211 B. XYZI measurements exclude scene chunks, palette, material
+That baseline source was 2,211 B. XYZI measurements exclude scene chunks, palette, material
 and sidecar costs; they are a format comparison, not total file benchmarks.
-The selected bake preserves all authored coordinates exactly as JSON numbers:
+The baseline bake preserved all authored coordinates exactly as JSON numbers:
 168 vertices, 84 triangles, 7 part/material draw submissions, 5,040 B of
-position/normal/u32-index data. Mesh memory excludes JSON text, engine allocation
+position/normal/u32-index data. Final LOD fixture costs are below. Mesh memory excludes JSON text, engine allocation
 overhead, GPU alignment and materials. Compare complete in-game costs at the
 M4 slice gate before accepting production content budgets.
 
@@ -71,7 +72,7 @@ not dimensions silently multiplied by an import scale.
   part boundary, even where two pieces touch; removing a magazine must reveal
   its previously hidden mating faces.
 - Sockets reference a part and retain full translation/quaternion precision.
-  They are metadata, not vertices, and must survive future LOD changes.
+  They are metadata, not vertices, and are shared by both LODs.
 
 Hard limits guard malformed or unexpectedly expensive input: 1 MiB/source,
 64 parts, 256 boxes/part, 32 materials, 128 sockets, depth 16, 262,144 compressed
@@ -92,7 +93,8 @@ Parts/materials/sockets and traversal are canonically ordered. Reordering source
 arrays leaves geometry unchanged; SHA-256 still records the exact source bytes.
 The entire asset set is validated before any output is written. `--check` also
 requires byte-identical generated artifacts. Manifests include local bounds,
-per-part and total vertices/triangles/submissions/buffer bytes, sockets and hash.
+per-surface and per-part bounds, per-part and total vertices/triangles/submissions/
+buffer bytes, sockets and hash.
 
 Acceptance fixtures independently calculate triangle area and signed volume for
 boxes, adjacent solids, overlaps, concave steps and material boundaries; they
@@ -133,6 +135,57 @@ socket propagation during magazine movement and rotated roots, atomic invalid
 replacement, perspective replacement and recursive cleanup. They use real
 `Assets`, `Mesh3d`, material handles and transform systems without a window.
 
-World/view LOD selection and its cost calibration are the next TAR-21 increment.
+## LOD contract and baseline calibration
+
+Source version 1 accepts optional `far_boxes` on static parts. Baker version 2
+emits both meshes; without an override the same geometry is reused. The override
+must preserve visible material groups and cannot increase vertices or triangles.
+Movable mechanisms always reuse near geometry. One pivot/socket hierarchy serves
+both levels, so switching handles cannot move contacts or rebuild mechanisms.
+
+The baker bounds bidirectional distance between the complete near/far solids to
+**2 mm**, using cells partitioned at both sets of box boundaries. Every differing
+cell must lie within tolerance of a target cuboid: the maximum corner distance
+to that convex cuboid bounds all points of the cell. This conservative test
+may reject a valid simplification, but cannot approve one merely because sampled
+vertices happen to match. The bound limits silhouette displacement, not artistic
+equivalence or topology; authored openings/details still need slice review.
+
+`voxel::lod` runs after global transforms propagate and before Bevy recalculates
+mesh bounds. Each active world perspective camera evaluates transformed part
+corners, viewport resolution, FOV, distance and projected error. The error bound
+includes off-axis depth changes and conservative transform scale under shear.
+All cameras must accept far detail. Missing/invalid projection keeps near detail.
+View-models always use near geometry.
+
+| Transition | Distance | Projected extent | Projected deviation |
+| --- | --- | --- | --- |
+| Near → far (all conditions) | ≥5 m | ≤80 px | ≤0.5 px |
+| Far → near (any condition) | ≤4 m | ≥100 px | ≥0.75 px |
+
+The band holds the previous level under camera jitter. Changes replace only
+`Mesh3d` handles; no entities, buffers or materials are created. Bevy updates
+surface bounds from the selected mesh. Identical near/far buffers share a handle.
+
+The final fixture adds one 2 mm receiver ridge which the far variant omits:
+
+| Level/storage | Vertices | Triangles | Surface submissions | Buffer bytes |
+| --- | --- | --- | --- | --- |
+| Near active | 200 | 100 | 7 | 6,000 |
+| Far active | 168 | 84 | 7 | 5,040 |
+| Unique cached buffers for both | 228 | 114 | 8 stored meshes | 6,840 |
+
+Far detail reduces active geometry/buffer bytes by **16%**. Six of seven
+surfaces share handles across levels, including all moving parts. Both actors
+and view-models reuse the eight cached meshes and four materials. These measured
+fixture budgets calibrate the initial thresholds; full M4 in-game rendering,
+draw batching, frame-time and artistic acceptance remain the slice's gate.
+
+Bevy fixtures drive 3→5.2→4.5→3.9→4.5→6 m transitions, 60 jitter frames, zoom
+60°→15°, 1080p→4320p, multiple cameras and missing/zero-sized projection.
+They assert active triangles 100↔84, unchanged entities/anchors, detailed
+view-models and stable cache allocations. Bake tests reject ±3 mm changes,
+accept ±1 mm, and reject simplified mechanisms or lost material groups.
+
 The current legacy weapon presentation is not yet migrated to this data-driven
 assembler; configured weapon/hand integration belongs to TAR-23.

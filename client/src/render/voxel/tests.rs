@@ -84,7 +84,7 @@ fn voxel_instances_share_surface_handles_across_actors_and_perspectives() {
         app.update();
     }
     assert_eq!(app.world().entities().len(), count);
-    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 7);
+    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 8);
     assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 4);
     assert_eq!(app.world().resource::<VoxelCache>().assets.len(), 1);
     // Even a Changed notification containing identical data is idempotent.
@@ -156,7 +156,7 @@ fn voxel_mechanisms_and_sockets_follow_pivots_without_rebuilding_meshes() {
             .distance(root_pose.transform_point(bolt_before.translation()))
             < 1e-6
     );
-    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 7);
+    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 8);
 }
 
 #[test]
@@ -196,7 +196,7 @@ fn voxel_replacement_and_removal_clean_owned_entities_and_reuse_cached_buffers()
         initial,
         "invalid replacement remains atomic"
     );
-    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 7);
+    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 8);
     *app.world_mut().get_mut::<VoxelModel>(root).unwrap() = VoxelModel {
         asset: "pipeline_fixture".into(),
         view_model: true,
@@ -216,7 +216,7 @@ fn voxel_replacement_and_removal_clean_owned_entities_and_reuse_cached_buffers()
         view_model: false,
     });
     app.update();
-    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 7);
+    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 8);
     let children = descendants(app.world(), root);
     app.world_mut().entity_mut(root).despawn();
     app.update();
@@ -243,13 +243,226 @@ fn voxel_material_properties_and_generated_buffers_match_the_bake() {
             .iter()
             .map(|(_, m)| m.count_vertices())
             .sum::<usize>(),
-        168
+        228
     );
     assert_eq!(
         meshes
             .iter()
             .map(|(_, m)| m.indices().unwrap().len() / 3)
             .sum::<usize>(),
-        84
+        114
+    );
+}
+
+fn active_triangles(app: &App, root: Entity) -> usize {
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    descendants(app.world(), root)
+        .into_iter()
+        .filter_map(|entity| {
+            app.world()
+                .get::<Mesh3d>(entity)
+                .map(|mesh| meshes.get(&mesh.0).unwrap().indices().unwrap().len() / 3)
+        })
+        .sum()
+}
+
+fn lod_camera(app: &mut App, distance: f32) -> Entity {
+    app.world_mut()
+        .spawn((
+            super::super::WorldModelCamera,
+            Camera {
+                viewport: Some(bevy::camera::Viewport {
+                    physical_size: UVec2::new(1920, 1080),
+                    ..default()
+                }),
+                ..default()
+            },
+            Projection::Perspective(PerspectiveProjection {
+                fov: 60.0_f32.to_radians(),
+                aspect_ratio: 1920.0 / 1080.0,
+                ..default()
+            }),
+            Transform::from_xyz(0.0, 0.0, distance),
+        ))
+        .id()
+}
+
+#[test]
+fn voxel_lod_switches_cached_geometry_with_hysteresis_and_keeps_anchors() {
+    let mut app = app();
+    let world = spawn(&mut app, false);
+    let view = spawn(&mut app, true);
+    let camera = lod_camera(&mut app, 3.0);
+    app.update();
+    let children = descendants(app.world(), world);
+    let anchors: Vec<_> = children
+        .iter()
+        .filter(|&&entity| {
+            app.world().get::<VoxelPart>(entity).is_some()
+                || app.world().get::<VoxelSocket>(entity).is_some()
+        })
+        .map(|&entity| (entity, *app.world().get::<GlobalTransform>(entity).unwrap()))
+        .collect();
+    assert_eq!(active_triangles(&app, world), 100);
+    let entities = app.world().entities().len();
+    for (distance, expected_far) in [
+        (5.2, true),
+        (4.5, true),
+        (3.9, false),
+        (4.5, false),
+        (6.0, true),
+    ] {
+        app.world_mut()
+            .get_mut::<Transform>(camera)
+            .unwrap()
+            .translation
+            .z = distance;
+        app.update();
+        assert_eq!(
+            app.world().get::<VoxelInstance>(world).unwrap().far,
+            expected_far
+        );
+        assert_eq!(
+            active_triangles(&app, world),
+            if expected_far { 84 } else { 100 }
+        );
+        assert_eq!(active_triangles(&app, view), 100);
+        assert_eq!(descendants(app.world(), world), children);
+        for (entity, pose) in &anchors {
+            assert_eq!(app.world().get::<GlobalTransform>(*entity).unwrap(), pose);
+        }
+        for &entity in &children {
+            if let Some(lod) = app.world().get::<lod::SurfaceLod>(entity) {
+                let mesh = app.world().get::<Mesh3d>(entity).unwrap();
+                assert_eq!(
+                    mesh.0,
+                    if expected_far {
+                        lod.far.clone()
+                    } else {
+                        lod.near.clone()
+                    }
+                );
+            }
+        }
+    }
+    // Six of seven surfaces, including every mechanism, share both LODs.
+    assert_eq!(
+        children
+            .iter()
+            .filter(|&&entity| app
+                .world()
+                .get::<lod::SurfaceLod>(entity)
+                .is_some_and(|lod| lod.near == lod.far))
+            .count(),
+        6
+    );
+    for frame in 0..60 {
+        app.world_mut()
+            .get_mut::<Transform>(camera)
+            .unwrap()
+            .translation
+            .z = if frame % 2 == 0 { 4.4 } else { 4.6 };
+        app.update();
+        assert_eq!(active_triangles(&app, world), 84);
+    }
+    assert_eq!(app.world().entities().len(), entities);
+    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 8);
+    assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), 4);
+}
+
+#[test]
+fn voxel_lod_respects_zoom_viewport_multiple_cameras_and_invalid_projection() {
+    let mut app = app();
+    let root = spawn(&mut app, false);
+    let camera = lod_camera(&mut app, 6.0);
+    app.update();
+    assert_eq!(active_triangles(&app, root), 84);
+    *app.world_mut().get_mut::<Projection>(camera).unwrap() =
+        Projection::Perspective(PerspectiveProjection {
+            fov: 15.0_f32.to_radians(),
+            aspect_ratio: 1920.0 / 1080.0,
+            ..default()
+        });
+    app.update();
+    assert_eq!(
+        active_triangles(&app, root),
+        100,
+        "zoom restores detail at the same distance"
+    );
+    *app.world_mut().get_mut::<Projection>(camera).unwrap() =
+        Projection::Perspective(PerspectiveProjection {
+            fov: 60.0_f32.to_radians(),
+            aspect_ratio: 1920.0 / 1080.0,
+            ..default()
+        });
+    app.update();
+    assert_eq!(active_triangles(&app, root), 84);
+    app.world_mut()
+        .get_mut::<Camera>(camera)
+        .unwrap()
+        .viewport
+        .as_mut()
+        .unwrap()
+        .physical_size = UVec2::new(7680, 4320);
+    app.update();
+    assert_eq!(
+        active_triangles(&app, root),
+        100,
+        "pixel error grows with viewport resolution"
+    );
+    app.world_mut()
+        .get_mut::<Camera>(camera)
+        .unwrap()
+        .viewport
+        .as_mut()
+        .unwrap()
+        .physical_size = UVec2::new(1920, 1080);
+    app.update();
+    assert_eq!(active_triangles(&app, root), 84);
+    let close = lod_camera(&mut app, 2.0);
+    app.update();
+    assert_eq!(
+        active_triangles(&app, root),
+        100,
+        "every active camera must accept far"
+    );
+    app.world_mut().entity_mut(close).despawn();
+    app.update();
+    assert_eq!(active_triangles(&app, root), 84);
+    // A scaled parent increases the conservative geometry error.
+    app.world_mut().get_mut::<Transform>(root).unwrap().scale = Vec3::splat(3.0);
+    app.update();
+    assert_eq!(active_triangles(&app, root), 100);
+    app.world_mut().get_mut::<Transform>(root).unwrap().scale = Vec3::ONE;
+    app.update();
+    assert_eq!(active_triangles(&app, root), 84);
+    // A custom narrow aspect amplifies horizontal error even at fixed height.
+    if let Projection::Perspective(p) = &mut *app.world_mut().get_mut::<Projection>(camera).unwrap()
+    {
+        p.aspect_ratio = 0.2;
+    }
+    app.update();
+    assert_eq!(active_triangles(&app, root), 100);
+    if let Projection::Perspective(p) = &mut *app.world_mut().get_mut::<Projection>(camera).unwrap()
+    {
+        p.aspect_ratio = 1920.0 / 1080.0;
+    }
+    app.update();
+    assert_eq!(active_triangles(&app, root), 84);
+    app.world_mut()
+        .get_mut::<Camera>(camera)
+        .unwrap()
+        .viewport
+        .as_mut()
+        .unwrap()
+        .physical_size = UVec2::ZERO;
+    app.update();
+    assert_eq!(active_triangles(&app, root), 100);
+    app.world_mut().entity_mut(camera).despawn();
+    app.update();
+    assert_eq!(
+        active_triangles(&app, root),
+        100,
+        "no camera retains detail"
     );
 }

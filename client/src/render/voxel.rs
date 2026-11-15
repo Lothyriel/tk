@@ -19,12 +19,19 @@ pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<VoxelCache>().add_systems(
-            Update,
-            (remove_models, instantiate)
-                .chain()
-                .in_set(crate::ClientSystems::Present),
-        );
+        app.init_resource::<VoxelCache>()
+            .add_systems(
+                Update,
+                (remove_models, instantiate)
+                    .chain()
+                    .in_set(crate::ClientSystems::Present),
+            )
+            .add_systems(
+                PostUpdate,
+                lod::select
+                    .after(bevy::transform::TransformSystems::Propagate)
+                    .before(bevy::camera::visibility::VisibilitySystems::CalculateBounds),
+            );
     }
 }
 
@@ -40,6 +47,8 @@ pub(crate) struct VoxelModel {
 struct VoxelInstance {
     source: VoxelModel,
     content: Entity,
+    surfaces: Vec<Entity>,
+    far: bool,
 }
 
 /// Named part entities are the animation integration boundary. Their Transform
@@ -77,12 +86,30 @@ struct MaterialSource {
     metallic: f32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct SurfaceSource {
     material: String,
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     indices: Vec<u32>,
+}
+
+impl SurfaceSource {
+    fn mesh(self) -> Mesh {
+        Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
+        .with_inserted_indices(Indices::U32(self.indices))
+    }
+}
+
+#[derive(Deserialize, Clone)]
+struct Bounds {
+    min: [f32; 3],
+    max: [f32; 3],
 }
 
 #[derive(Deserialize)]
@@ -92,6 +119,9 @@ struct PartSource {
     pivot: Pose,
     movable: bool,
     meshes: Vec<SurfaceSource>,
+    far_meshes: Vec<SurfaceSource>,
+    bounds: Bounds,
+    lod_deviation: f32,
 }
 
 #[derive(Deserialize, Clone)]
@@ -114,6 +144,7 @@ struct BakedSource {
 
 struct Surface {
     mesh: Handle<Mesh>,
+    far_mesh: Handle<Mesh>,
     material: Handle<StandardMaterial>,
 }
 
@@ -123,6 +154,8 @@ struct Part {
     pivot: Transform,
     movable: bool,
     surfaces: Vec<Surface>,
+    bounds: Bounds,
+    lod_deviation: f32,
 }
 
 struct CachedAsset {
@@ -154,7 +187,7 @@ impl VoxelCache {
             // Sources/geometry/hierarchy are checked offline before embedding.
             // Reject incompatible envelopes before allocating any handles.
             if source.version != 1
-                || source.baker_version != 1
+                || source.baker_version != 2
                 || source.id != id
                 || source.source_sha256.len() != 64
             {
@@ -184,17 +217,20 @@ impl VoxelCache {
                     let surfaces = part
                         .meshes
                         .into_iter()
-                        .map(|surface| {
-                            let mesh = Mesh::new(
-                                PrimitiveTopology::TriangleList,
-                                RenderAssetUsages::default(),
-                            )
-                            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, surface.positions)
-                            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, surface.normals)
-                            .with_inserted_indices(Indices::U32(surface.indices));
+                        .zip(part.far_meshes)
+                        .map(|(surface, far)| {
+                            let material = palette[&surface.material].clone();
+                            let identical = surface == far;
+                            let mesh = meshes.add(surface.mesh());
+                            let far_mesh = if identical {
+                                mesh.clone()
+                            } else {
+                                meshes.add(far.mesh())
+                            };
                             Surface {
-                                mesh: meshes.add(mesh),
-                                material: palette[&surface.material].clone(),
+                                mesh,
+                                far_mesh,
+                                material,
                             }
                         })
                         .collect();
@@ -204,6 +240,8 @@ impl VoxelCache {
                         pivot: part.pivot.transform(),
                         movable: part.movable,
                         surfaces,
+                        bounds: part.bounds,
+                        lod_deviation: part.lod_deviation,
                     }
                 })
                 .collect();
@@ -271,6 +309,7 @@ fn instantiate(
             .id();
         commands.entity(root).add_child(content);
         let mut parts = BTreeMap::new();
+        let mut surfaces = Vec::new();
         // Allocate all pivots before linking: declaration order is irrelevant.
         for part in &asset.parts {
             let mut entity = commands.spawn((
@@ -291,6 +330,12 @@ fn instantiate(
             for surface in &part.surfaces {
                 let mut entity = commands.spawn((
                     Mesh3d(surface.mesh.clone()),
+                    lod::SurfaceLod {
+                        near: surface.mesh.clone(),
+                        far: surface.far_mesh.clone(),
+                        bounds: part.bounds.clone(),
+                        deviation: part.lod_deviation,
+                    },
                     MeshMaterial3d(surface.material.clone()),
                     layers.clone(),
                     Transform::default(),
@@ -300,6 +345,7 @@ fn instantiate(
                     entity.insert(NotShadowCaster);
                 }
                 let child = entity.id();
+                surfaces.push(child);
                 commands.entity(pivot).add_child(child);
             }
         }
@@ -325,9 +371,12 @@ fn instantiate(
             .insert(VoxelInstance {
                 source: model.clone(),
                 content,
+                surfaces,
+                far: false,
             });
     }
 }
 
+mod lod;
 #[cfg(test)]
 mod tests;
