@@ -24,10 +24,12 @@ The complete previous state, including its handoff, personal paths, session IDs 
 
 ## Handoff
 
-- **Feature**: `.specs/features/voxel-barriers/`.
-- **Branch/baseline**: `main`, b845547; clean tree at implementation start.
-- **Authorization**: User requested destructible barriers and subsequently authorized local commits for both barriers and blood effects. No publishing is authorized.
-- **Implementation**: Shared 176-cell interior cover; wood 20 HP, concrete 100 HP; authoritative projectile damage and collider removal; protocol 8 full 22-byte destruction bitmask snapshots; client visibility and raid reset. Arena floor/walls and loot crates remain intact.
-- **Verification**: Independent scoped PASS, 4/4 ACs and 2/2 scratch mutants killed; completion validator passed. 44 common + 49 server tests passed independently; 39 client tests passed before blood effects. Full fmt/check passed, but the existing common/src/combat/anatomy.rs:194 Clippy too_many_arguments diagnostic blocks a full PASS. See voxel validation.md for all runs and limitations.
-- **Next step**: Commit the separately implemented blood effects with their tests and documentation. Keep the remaining blood changes in the working tree.
-- **Limitations**: No physical rubble/collapse. Rendered and real UDP acceptance remain unverified; earlier animation artistic acceptance remains open.
+- **Features**: `.specs/features/voxel-barriers/` and `.specs/features/blood-effects/`.
+- **Branch/baseline**: `main`, b845547; clean tree at start. Previous developer-standardization handoff is historical; current Git evidence supersedes its next-step publishing instruction.
+- **Authorization**: Implement voxel destructible barriers, then user explicitly requested another agent to add blood/gore. The user subsequently authorized committing both features locally; push/publication is not authorized.
+- **Implementation**: Shared 176-cell interior cover; wood 20 HP, concrete 100 HP, server projectile damage and collider removal; protocol 8 full 22-byte destruction bitmask snapshots; client visibility; full raid reset. Arena floor/walls and loot crates remain intact.
+- **Voxel verification**: Independent scoped PASS, 4/4 ACs and 2/2 scratch mutants killed; completion validator passed. 44 common + 49 server tests passed independently; 39 client tests passed. One overlapping workspace timing run failed (p95 15.043 ms); unchanged case passed alone. Full gate passed fmt/check then stopped at baseline anatomy.rs:194 Clippy too_many_arguments. See voxel validation.md.
+- **Blood effects**: Wound and stump spurts, local/remote/sentry bleeding drips, fresh detached-piece drips, bounded falling voxel droplets and floor stains; cosmetic only. Independent scoped PASS, 4/4 ACs and 3/3 mutants killed after adding an independent world-position assertion. See blood validation.md.
+- **Final checks**: Combined serial workspace test run passed 138 Rust tests (45 client, 44 common, 49 server), none ignored; `/tmp/tk-combined-tests-final.log`. Full gate fmt/workspace check passed, but baseline common/src/combat/anatomy.rs:194 Clippy too_many_arguments blocks a full PASS. An initial post-sensor test run reused a mutated scratch binary from the shared Cargo cache; source hashes were unchanged, and a forced real-source rebuild produced the final passing run. Two candidate verification lessons recorded.
+- **Delivery**: Voxel barriers committed as c2c54be; blood effects and their validation records are recorded in the following local Conventional Commit. No remaining scoped implementation tasks or authorized publishing actions.
+- **Limitations**: No physical rubble/collapse. Blood impacts use the yard floor, without wall decals/fluid simulation. Rendered and real UDP acceptance not executed; headless checks do not certify them. Existing animation artistic acceptance remains open.

@@ -8,6 +8,7 @@ use common::{
 };
 use common::{combat::SurfaceKind, map::*, raid::EXTRACTION_RADIUS};
 pub(crate) mod actors;
+mod blood;
 pub(crate) mod feedback;
 mod weapons;
 
@@ -17,6 +18,7 @@ impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ViewSettings>();
         app.add_plugins(actors::Plugin);
+        app.add_plugins(blood::Plugin);
         app.add_plugins(feedback::Plugin);
         let startup_systems = (
             spawn_view_model,
