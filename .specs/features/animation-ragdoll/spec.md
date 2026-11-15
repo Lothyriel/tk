@@ -114,11 +114,11 @@ Input bounds: existing validation remains. Partial failures: harness exits nonze
 | ANIM-07 | Handoff | T6 | Unit/integration PASS; final native open |
 | ANIM-08 | Force | T6 | Unit/integration PASS; final native open |
 | ANIM-09 | Contacts | T6 | Eight-case integration PASS; final native matrix open |
-| ANIM-10 | Recovery | T6 | Same-ID recovery integration/native07 PASS; final frozen run open |
+| ANIM-10 | Recovery | T6 | Same-ID integration/native14 PASS; actual-completion checkpoint bounded18.2s approved in AD-011; fresh frozen run open |
 | ANIM-11 | Evidence | T1, T7 | Baseline/intermediate evidence retained; final gates/performance open |
 | ANIM-12 | Guide | T7 | Guide/Mermaid updated; final review open |
-| ANIM-13 | ADS | T3–T4, T7 | User-requested refinement; implementing |
-| ANIM-14 | Motion/reload/FOV | T3–T5, T7 | User-rejected candidate10 animation quality; implementing |
+| ANIM-13 | ADS | T3–T4, T7 | Implemented; unit/native14 ADS entry/release PASS; final artistic acceptance open |
+| ANIM-14 | Motion/reload/FOV | T3–T5, T7 | Implemented;111-test checkpoint PASS, newest wrist/slide-visibility guard PASS; native16 and artistic acceptance open |
 | ANIM-15 | Point-blank origin | T8, T7 | Implemented; close hip/ADS/body/cover/wood/gap regressions and native14 fatal-shot flow PASS; final feature acceptance open |
 
 ## Success Criteria

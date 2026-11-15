@@ -67,7 +67,7 @@ T2 workspace gate subsequently passed: 14 client + 33 common + 21 server = 68 te
 ### T3: M1911 continuous first-person slice
 User refinement: include held-RMB ADS with sight alignment, natural movement cadence, stable FPS framing and a readable empty-slide manipulation. Candidate10 models were accepted as a first delivery, but motion/reload/FOV were explicitly rejected; do not mark artistic acceptance complete from the passing native suite.
 
-Preliminary independent review after the102-test run found local ADS/weapon lowering dependent on rig presence (wrong at saturated-budget fallback) and an empty-MP5 handle snapping when authoritative reload ended. Current source now gates local aim by physical mode and preserves the filtered handle after interruption. Two new regressions cover fallback Fallen/Recovering with actual lens/weapon visibility and locked-handle continuity. They await the next gate/native freeze; no existing assertion changed. A composed-render/contact visual review remains mandatory.
+Preliminary independent review after the102-test run found local ADS/weapon lowering dependent on rig presence (wrong at saturated-budget fallback) and an empty-MP5 handle snapping when authoritative reload ended. Mode-gated prediction and residual filtered handle action fixed both; their actual-lens/visibility/handle regressions passed in subsequent111-test checkpoints. The newest overhand wrist also passes a real assembled-mesh camera-facing slide-visibility guard, but needs fresh native review. Artistic acceptance remains mandatory; the separate recovery checkpoint change was explicitly approved as AD-011.
 **What**: Build the original M1911 with articulated parts, gloves and filtered pose transitions; integrate shared curves and confirm in a native continuous route.
 **Where**: `client/src/render/weapons.rs`
 **Depends on**: T2
@@ -88,11 +88,11 @@ Preliminary independent review after the102-test run found local ADS/weapon lowe
 **Tests**: unit + native integration
 **Gate**: Build
 
-T4 shared-contact/geometry tests passed in the 70-test workspace gate (15 client, 34 common, 21 server). Original trigger-arm regression was fixed with an outward elbow pole, not a changed assertion. World weapons now use the same four part meshes, materials, magazine/handle curves and muzzle anchor. PoseState grew persistent empty-reload/contact state and protocol is 3; rebuild both binaries. Frozen native candidate `animations-body-candidate-03` is running independently of subsequent source changes.
+Historical T4 checkpoint: shared-contact/geometry tests passed in the70-test gate (15client/34common/21server). An outward elbow pole fixed the trigger-arm regression without changing its assertion. That protocol3 candidate used four shared weapon parts and completed native capture as candidate03; it is retained historical evidence, not the current protocol5 implementation.
 
-Later evidence: continuous candidates03/06/07 completed both reciprocal weapon sequences and the full raid. Current protocol is **4**, including optional packed actual physical poses. Candidate08 supersedes their presentation for final review; historical protocol3 evidence does not validate protocol4 by itself.
+Historical protocol4 checkpoints: continuous candidates03/06/07 completed reciprocal weapon sequences and the full raid; later candidate10 passed its healthy physical matrix but the user rejected weapon motion/reload/FOV quality. Those technical passes are not final artistic acceptance.
 
-Current revision supersedes those historical states: protocol **5** adds ADS and five shared weapon part meshes. Candidate11's initial ADS continuous dual/loss raid passed (3411/3409real samples;128.60/128.59s, full decode), but primary stock/sleeve framing defects required post11 corrections. Latest102-test workspace suite passes24client+41common+37server with none failed/ignored. Candidate12 native validation is in progress; T3/T4 remain open for actual visual review, including user artistic acceptance.
+Current protocol5 adds ADS and five shared weapon parts. Candidate14 passed its110-test gate and full continuous dual/loss raid; candidate15's111tests passed but native15 failed the old16.8s recovery observation, leading to AD-011. Newest wrist/slide-visibility and approved observation changes await candidate16 native review. T3/T4 remain open for normal-speed visual review and user artistic acceptance.
 
 ### T5: Weight transfer and supported locomotion
 **What**: Refine shared pose weight/feet and server support inputs, with planted foot and finite-joint tests.
@@ -114,7 +114,7 @@ Current revision supersedes those historical states: protocol **5** adds ADS and
 **Tests**: integration + native
 **Gate**: Build
 
-T6 progress: `animations-live-candidate-07/gates/` records fmt/check and84 passing tests (16client/37common/31server). Same-ID living fall/get-up, physical hit volumes, death mid-getup, normal-shot separation reuse, unsupported recovery denial, get-up by wall, original headroom/prone-root assertions and all eight strict death contact scenarios pass. Native07 completed full dual UDP/loss with matching live-recovery.json (15sameIDs), but frame review found own torso/camera clipping and absent-shin observer aim. Both are fixed in candidate08; a new visibility test brings the next complete suite to85. Final frozen visual/death-matrix validation remains open.
+Historical T6 checkpoint07 recorded fmt/check/84tests and native same-ID living recovery, but exposed own-camera clipping and absent-shin observer aim. Those were subsequently corrected. Current integration coverage retains same-ID fall/get-up/death/separation, actual hit volumes, unsupported/headroom denial, wall recovery and all eight strict floor/wall/corner/step rest scenarios. Candidate14's native surviving-recovery proof agrees on15sameIDs under loss; the newest frozen healthy death matrix remains open.
 
 Subsequent T6 evidence: candidate10 continuous recovery and four healthy native death cases passed, with no own-torso camera clipping in the inspected get-up interval. Protocol5 human-cadence changes pass all eight contact integration scenarios using6additional solver iterations; original damping/rest/load bounds retained. A new frozen protocol5 healthy native matrix remains required.
 

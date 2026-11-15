@@ -14,16 +14,23 @@ flowchart TD
     countdown -->|"Anyone cancels"| gear
     countdown --> active["Deploy: 5-minute raid"]
     active --> combat["Move and fight"]
+    combat -->|"Hold RMB"| aimed["Aim down iron sights"]
+    aimed -->|"Release, sprint or reload"| combat
+    aimed -->|"Localized hit"| injured
+    aimed -->|"Support or impulse"| fallen
     combat -->|"F near orange crate"| loot["Carry loot"]
     loot -->|"Hold F in green exit"| extracting["Extract for 5 seconds"]
     extracting -->|"Release F or leave zone"| loot
     extracting --> extracted["Extracted: secure loot"]
     combat -->|"Localized hit"| injured["Muscle, organ or limb injury"]
-    injured -->|"Support or impulse"| fallen["Fall: actions blocked"]
-    fallen -->|"Support and clearance"| recover["Recover standing control"]
+    injured -->|"Support or impulse"| fallen["Articulated fall: actions blocked"]
+    fallen -->|"Rest, support and clearance"| recover["Same-body get-up"]
     recover --> combat
+    fallen -->|"Fatal injury"| ragdoll
+    recover -->|"Fatal injury"| ragdoll
     injured -->|"Limb separation"| fragment["Missing limb and physical piece"]
     fragment --> combat
+    fragment -->|"Balance lost"| fallen
     injured -->|"Brain, vitals or blood loss"| dead["Dead: lose carried loot"]
     injured -->|"Maintain support"| combat
     loot -->|"Fatal injury"| dead
@@ -53,6 +60,8 @@ cargo run --bin client
 
 The client defaults to `127.0.0.1`, UDP port `9080`. No `.env` file is needed, and assets are resolved from the client manifest directory rather than the shell's working directory. For LAN play, set `$env:SERVER_ADDR = "192.168.1.10"` to your server's IP before starting the client (POSIX: `SERVER_ADDR=192.168.1.10 cargo run --bin client`). Allow the server's UDP port through the firewall. Optional `TK_PORT` changes the port on both binaries.
 
+Rebuild both binaries for protocol 5. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
+
 Start additional clients in separate terminals to test multiplayer. All connected players must ready up; solo play also starts normally. The server supports up to 32 clients and assigns distinct spawn positions. A client arriving during an active raid waits for the next lobby.
 
 ### First complete raid
@@ -79,6 +88,7 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | Q / E | Tilt the view left / right |
 | 1 / 2 | Equip your selected primary / pistol |
 | Left mouse button | Hold for rifle/SMG automatic fire; click for pistol semi-automatic fire |
+| Hold right mouse button | Aim down iron sights; release to return to hip fire |
 | R | Manually reload the selected weapon from finite reserve ammo |
 | F | Collect nearby loot; hold in the exit to extract |
 | Escape | Release or recapture the cursor during a raid; lobby/debrief release it automatically |
@@ -87,9 +97,11 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 ## Gameplay
 
 - **Equipment and weapons.** Every loadout has a rifle or SMG plus a pistol. Magazines hold 30/25/17 rounds respectively, with three additional magazine-equivalents in reserve for each equipped weapon. Reload takes 2.4/1.9/1.5 seconds. Switching weapons cancels an unfinished reload. Empty weapons do not auto-reload. Gear is free and restocked for each new raid.
-- **Ammo and penetration.** Ball is the default. AP has 1.8 times the penetration and 85% of the damage. Projectiles travel from the offset barrel, drop under gravity, and use continuous map ray casts plus posed anatomical boxes. A ray between limbs continues to the map or another actor. Wood costs 20 penetration units per metre; concrete stops rounds. A barrel pushed through cover cannot bypass cover. Shots are temporarily **silent**, including sentries. Confirmed shots retain flash, damped weapon recoil, bolt motion, tracers and impact marks; rejected triggers produce none of that firing feedback. The red laser remains cosmetic.
+- **Weapon presentation (in progress).** Both perspectives use original stepped M1911, MP5 and M4A4 assemblies and shared grip/muzzle/action anchors. The models were accepted as a first delivery, but the user requested further movement/reload/FOV polish; this is not final artistic acceptance. The HUD still labels Pistol/SMG/Rifle and the pistol retains 17 rounds. Empty M1911 reloads include an overhand slide release; the MP5 handle retracts/locks and is slapped forward; the M4A4 uses its visible bolt catch. Tactical reloads retain the chamber and do not rack the action. The MP5 handle does not reciprocate on fire. Swaps/interruption blend from the displayed pose. Reduced step cadence, centimetre-scale bob and measured turn-rate sway replace rapid oscillation and snapshot pulses. World FOV defaults to 70 vertical degrees and supports 20–160; the weapon projection stays at 65 degrees rather than changing with world zoom. Arrow-key adjustment is time-based. Final protocol-5 native/visual acceptance remains pending.
+- **Aim down sights.** Hold **RMB** to raise the current weapon onto its actual iron sights, ease world zoom to 52 degrees for the pistol or 44 for primaries, hide the centre dot and reduce weapon bob/mouse sensitivity. Release to ease back to the selected FOV. Sprinting, reload, fall, death or loss of captured active input lowers the sights, including the support-controller fallback at the physical-piece budget. The server replicates aim, centres the aimed barrel on the weapon's shared sight placement and retains cover obstruction checks. Hip-fire origin, ammunition, damage, cadence and reload durations are unchanged; ADS grants no new damage or spread bonus.
+- **Ammo and penetration.** Ball is the default. AP has 1.8 times the penetration and 85% of the damage. Projectiles travel from the offset barrel, drop under gravity, and use continuous map ray casts plus posed anatomical boxes. At point blank, the server first resolves actual body/cover between eye and muzzle, then continues the unchanged muzzle ray if clear; the broad movement capsule no longer shifts an offset-aimed shot back to the eye. A ray between limbs continues to the map or another actor. Wood costs 20 penetration units per metre, once per surface across clearance and flight; concrete stops rounds. A barrel pushed through cover or a nearby body cannot bypass it. Shots are temporarily **silent**, including sentries. Confirmed shots retain flash, damped weapon recoil, bolt motion, tracers and impact marks; rejected triggers produce none of that firing feedback. The red laser remains cosmetic.
 - **Body damage and armor.** Live anatomy has head (35), thorax (85), abdomen (65), separate left/right arms (60 each) and separate left/right legs (70 each). Muscle strength is regional. Leg injury reduces speed/jump and changes that side's gait; further injury never restores speed. Arm injury slows reload and increases weapon sway. Losing the trigger arm disables firing/reload and hides the unusable view weapon; an absent support hand disappears from the first-person view. Vests cover the thorax and helmets cover the head. Armor resolves once per impact: stopped rounds apply 20% blunt tissue damage without internal injury; penetrating armored hits apply 80%, with 40% raw-damage durability wear. Worn armor protects less. Brain destruction kills immediately; heart damage accelerates blood loss, liver injury adds bleeding, and stomach injury worsens vigor use/recovery. The HUD shows lateral capacity, blood loss, vigor, region/organ and physical mode.
-- **Articulation and physical state.** Players and sentries share 17 posed anatomical segment IDs. Voxel clothing, gloves, boots, equipment and damaged interior layers follow that rig. Crouch bends the joints instead of scaling the actor. Effective movement drives directional gait; support probes and impacts drive correction, falling and recovery. Falling blocks firing/reload until support and clearance permit recovery. Death transfers the current pose into Rapier bodies with limited damped joints. Limb separation removes connected volumes once and leaves physical fragments. The server caps physical pieces at 320 and expires them after 35 seconds; raid changes clear them. Remote roots and physical pieces interpolate. Persistent snapshot state reconstructs wounds and absent segments after loss; shot IDs suppress duplicate feedback. Protocol ID is now 2, so rebuild both binaries together.
+- **Articulation and physical state.** Players and sentries share 17 posed anatomical segment IDs. Voxel clothing, gloves, boots, equipment and damaged interior layers follow that rig. Crouch bends the joints instead of scaling the actor. Authoritative world-space stance contacts keep feet planted through starts, brakes and turns, including floor/step probes; acceleration and turn rate drive weight transfer. Living falls use articulated Rapier bodies inherited from the current pose and individual segment velocities. Firing/reload stay blocked until rest, ground support and standing clearance permit a one-second same-body get-up. Death during fall/get-up retains the existing segment IDs and resumes dynamics. Packed actual poses align authoritative damage volumes; separation detaches existing pieces rather than duplicating them. Death from standing also transfers per-segment movement and localized impulse/torque. Knees use anatomical limits, not extra flexion on top of the captured bend. Non-adjacent contacts and six additional solver iterations stabilize the new slower-stride fall poses. The server caps pieces at 320; living attached pieces keep their lifetime, while dead/detached pieces expire after 35 seconds and raid changes clear them. At the saturated budget, the support-controller fall remains a fallback. Roots/pieces interpolate and new visuals begin at the displayed live silhouette. Persistent state reconstructs wounds/absent segments after loss; shot IDs suppress duplicate feedback. Protocol is **5**, so rebuild both binaries together. The earlier protocol-4 dual/matrix evidence does not certify the new ADS/cadence revision.
 - **World and enemies.** The bounded yard has three shared loot crates, wood panels, concrete cover, and one green extraction circle. Rendering and server collision use the same map definition. Two stationary sentries fire pistols when a living participant is visible within 18 metres. They use the same projectile, damage, armor, reload, and ammo rules as players.
 - **Authority and feedback.** Only the server decides equipment, hits, loot availability, extraction, and results. Simulation runs at 128 Hz and snapshots are sent at about 30 Hz. The HUD shows phase/time, weapon, magazine/reserve/reload, health, armor, loot and extraction progress. Stale movement/fire/interaction is neutralized after 0.5 seconds without input. Transport errors no longer crash the game; the HUD reports stale/disconnected state.
 
@@ -107,7 +119,13 @@ The harness builds isolated executable outputs (so it does not replace a running
 
 Logs, `result.txt`, and actual 1280×800 screenshots (`lobby.png`, `raid.png`, `extracting.png`, `debrief.png`, `return-lobby.png`) are written to `target/playtest/`. Use `--no-build` after a successful `cargo build --workspace`; `--output PATH` chooses another evidence directory. Screenshots from earlier runs cannot satisfy a new run's checks. A successful run prints `PASS`; failures return a nonzero exit code.
 
+For native continuous video evidence, add `--video` and use a fresh output directory. This records real framebuffer PNGs plus `frame-times.csv`, then uses `imageio-ffmpeg` to encode `raid-review.mp4` for each client without inventing intermediate gameplay frames. Keep the PNGs for adjacent-frame inspection. `--clients 2 --animation-review` adds a reciprocal continuous M1911/primary handling route through ordinary UDP inputs before the normal extraction run. Recording has measurable capture/encoding overhead; compare performance with equivalent capture settings and also run without video. Animation and ragdoll polish is currently in progress, not accepted as production-quality art.
+
+The optional video/frame-index/performance helpers use Python3.12+; video encoding needs `imageio-ffmpeg` and contact sheets need `Pillow` in your Python environment (for example, install them in a virtual environment). The ordinary no-video raid runner uses the standard library. No helper installs global packages automatically.
+
 For the full physical-humanoid suite, run `python scripts/validate_humanoids.py`; it runs formatting/check/tests, bounded physics/snapshot tests, a normal raid and two real UDP clients without changing source between gates. The dual scenario additionally captures directional poses, weapon cycles, lateral injuries, balance correction, fall/recovery, separation and ragdoll. See [PHYSICAL_HUMANOIDS.md](PHYSICAL_HUMANOIDS.md) for the seven-criterion evidence index, before/after measurements and manual anatomical shot placement. Tests use normal network input; the remote review camera hides only its local view-model overlay, not actors or simulation.
+
+The ongoing polish evidence is indexed in [ANIMATION_RAGDOLL.md](ANIMATION_RAGDOLL.md). `python scripts/review_animation_frames.py PATH` indexes all 17 continuous action timestamps and adjacent native frames from both the acting and observing clients. `python scripts/playtest_physical.py --server-path PATH --client-path PATH --output PATH --video` runs healthy rest/run deaths on flat ground and near a wall on isolated UDP 19081; it checks 17 segment IDs and resting position/orientation agreement under peer snapshot loss. This focused matrix does not replace the normal loot/extraction acceptance. Failing baseline cases stay failures even when `--keep-going` retains their videos.
 
 ## Playtest limitations
 
@@ -115,7 +133,7 @@ For the full physical-humanoid suite, run `python scripts/validate_humanoids.py`
 - Equipment customization means primary/ammo/vest/helmet choices, not attachments, clothing or a grid inventory. Loot is a counter, not individual items. No stash/economy is saved to disk; disconnecting loses that client's secured total.
 - There is one map, one exit, a fixed three-second countdown, a five-minute raid and a five-second extraction hold. Empty-handed extraction is disallowed. No healing, mobile AI or imported/final art. Procedural voxel art and animation are alpha-quality; the recorded native review is reproducible, not a claim of final production art.
 - Multiplayer has friendly fire and no teams. Remote presentation interpolates, but local motion has no prediction and there is no lag compensation. A remote LAN host is not separately tested.
-- Death hides the active body/weapon and shows the authoritative physical body until its lifetime expires. There is no spectator camera or early return while another participant is active; wait for debrief, or reconnect.
+- During a surviving physical fall/get-up, the local head camera hides its own attached body meshes to prevent camera/torso clipping; other clients still see the entire physical body and detached pieces stay visible. Death hides the active body/weapon and shows the authoritative physical body until its lifetime expires. There is no spectator camera or early return while another participant is active; wait for debrief, or reconnect.
 - The default UI is keyboard-driven and shows all controls. Reconnect currently means restarting the client. Graphics/audio need a suitable local device; the automated run uses the same graphics stack as normal play.
 
 ## Visual and gameplay tuning
@@ -123,7 +141,11 @@ For the full physical-humanoid suite, run `python scripts/validate_humanoids.py`
 - `common/src/humanoid.rs`: stable segment IDs, dimensions, joint poses, directional stride and posed ray boxes. Keep render and damage IDs together when changing proportions.
 - `common/src/combat/anatomy.rs`: regional maxima, separation threshold, organ volumes, blood thresholds, bleeding and vigor. `common/src/combat.rs` owns armor and Arsenal cadence/reload.
 - `server/src/tick/physical.rs`: support/impulse thresholds, recovery clearance, ragdoll limits/damping, piece cap/lifetime. The server remains headless at 128 Hz with approximately 30 Hz snapshots.
+- `server/src/tick/locomotion.rs` and `server/src/tick/ragdoll.rs`: planted world contacts, inertial gait inputs, per-segment motion capture and localized impulse/inertia transfer.
+- Stationary large turns release/replant one foot at a time instead of leaving the legs crossed; loose body fragments do not become controller ground support or autosteps.
+- `server/src/tick/live_body.rs`: surviving physical falls, support/clearance checks, same-ID get-up and actual-rig readback.
 - `client/src/render/actors.rs`: cached original voxel meshes/materials, carved damaged shells, interior/organ layers, equipment and world weapons. Replace meshes here without replacing shared anatomical IDs or creating a mesh per actor/frame.
 - `client/src/render/feedback.rs`: per-weapon recoil impulse, spring/damping, flash lifetime, reload/swap and camera feedback. Audio assets in `assets/sound/` are intentionally retained but not loaded by firing.
+- `common/src/weapon_animation.rs` and `client/src/render/weapons.rs`: original grip/muzzle anchors, per-weapon empty/tactical choreography, and cached first-person weapon assemblies; curves do not grant ammo or actions.
 
-**Latest review.** On 2026-11-14, the accepted shared anatomy/pose, authoritative physics and client presentation were rechecked while organizing the authorized commit series using staged-snapshot fmt/check/tests (up to 64 passing), preserving acceptance-11's native UDP evidence and independent PASS; gameplay was unchanged and the Mermaid still matches extraction, injury/recovery, death/debrief and subsequent deployment.
+**Latest review.** On 2026-11-14, input/server/presentation paths and Mermaid injury/ADS/recovery transitions were reviewed using candidate14's passing native raid,111-test indexed workspace gates and the focused slide-visibility regression; the user-approved18.2s recovery checkpoint, fresh native/performance evidence and artistic/independent acceptance remain open.
