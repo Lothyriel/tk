@@ -1,4 +1,5 @@
 use super::*;
+mod weapon_replication;
 
 #[test]
 fn catalog_input_rejects_unknown_definition_without_substituting_a_weapon() {
@@ -2632,5 +2633,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
         common::map::destroyed_ids(&snapshot.destroyed_cells),
         vec![cell.id]
     );
-    assert_eq!(PROTOCOL_ID, 10);
+    assert_eq!(PROTOCOL_ID, 11);
 }

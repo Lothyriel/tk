@@ -124,8 +124,9 @@ untouched. No physical magazine changes capacity or gains rounds.
 catalog and rederives properties; no client stats enter the transaction.
 Ownership/lobby-ready checks and configuration requests are integrated with the
 customizer; configuration replication uses the dedicated protocol work. The
-protocol 10 snapshot carries dynamic mechanical state; reliable full configuration
-replication remains a separate integration. `WeaponInstance` serialization includes
+protocol 11 snapshot carries dynamic mechanical state and a compact configuration
+reference. [Reliable configuration replication](WEAPON_REPLICATION.md) resolves and
+caches the complete tree at the receiver. `WeaponInstance` serialization includes
 its revision, attachment nodes and physical magazine pool.
 
 `spec()` returns the already-resolved cache: no catalog scan, tree traversal or

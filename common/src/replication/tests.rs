@@ -30,6 +30,100 @@ fn packet() -> Configuration {
     publisher.entries()[0].clone()
 }
 
+fn snapshot(packet: &Configuration, sequence: u64) -> crate::WorldSnapshot {
+    crate::WorldSnapshot {
+        configuration_epoch: packet.epoch,
+        sequence,
+        players: vec![crate::ClientData {
+            id: packet.owner,
+            configuration: packet.handle,
+            weapon_instance: packet.instance,
+            weapon_id: packet.weapon.definition,
+            weapon: packet.weapon.definition.class(),
+            weapon_slot: packet.slot,
+            ..Default::default()
+        }],
+        destroyed_cells: Default::default(),
+        raid: Default::default(),
+        projectiles: vec![],
+        impact_marks: vec![],
+        fired_projectiles: vec![],
+        physics_pieces: vec![],
+        simulation_time: sequence as f32 / 30.0,
+    }
+}
+
+fn epoch_message(epoch: u64) -> bytes::Bytes {
+    data::encode(&ConfigurationMessage::Epoch {
+        epoch,
+        catalog: fingerprint(),
+    })
+}
+
+#[test]
+fn replication_receiver_waits_for_latest_snapshot_configuration_in_both_arrival_orders() {
+    for config_first in [false, true] {
+        let packet = packet();
+        let mut receiver = ConfigurationReceiver::default();
+        let bytes = data::encode(&ConfigurationMessage::Configuration(packet.clone()));
+        if config_first {
+            receiver
+                .message(&epoch_message(1), catalog(), fingerprint())
+                .unwrap();
+            receiver.message(&bytes, catalog(), fingerprint()).unwrap();
+        }
+        receiver.snapshot(snapshot(&packet, 2)).unwrap();
+        receiver.snapshot(snapshot(&packet, 1)).unwrap();
+        if !config_first {
+            assert!(receiver.take_ready().unwrap().is_none());
+            receiver
+                .message(&epoch_message(1), catalog(), fingerprint())
+                .unwrap();
+            assert!(receiver.take_ready().unwrap().is_none());
+            receiver.message(&bytes, catalog(), fingerprint()).unwrap();
+        }
+        let accepted = receiver.take_ready().unwrap().unwrap();
+        assert_eq!(accepted.sequence, 2);
+        assert!(receiver.cache.matches(1, &accepted.players[0]));
+        receiver.snapshot(snapshot(&packet, 2)).unwrap();
+        assert!(
+            receiver.take_ready().unwrap().is_none(),
+            "duplicate cannot replay actions"
+        );
+        let mut forged = snapshot(&packet, 3);
+        forged.players[0].weapon_instance.0 += 1;
+        receiver.snapshot(forged).unwrap();
+        assert_eq!(
+            receiver.take_ready().unwrap_err(),
+            ConfigurationError::Conflict
+        );
+        assert!(receiver.take_ready().unwrap().is_none());
+        let mut next = packet.clone();
+        next.epoch = 2;
+        receiver.snapshot(snapshot(&next, 4)).unwrap();
+        assert!(receiver.take_ready().unwrap().is_none());
+        receiver
+            .message(&epoch_message(2), catalog(), fingerprint())
+            .unwrap();
+        assert!(receiver.cache.get(1, packet.handle).is_none());
+        assert!(
+            receiver.take_ready().unwrap().is_none(),
+            "epoch prevents reused handle aliasing"
+        );
+        let bytes = data::encode(&ConfigurationMessage::Configuration(next));
+        receiver.message(&bytes, catalog(), fingerprint()).unwrap();
+        assert_eq!(receiver.take_ready().unwrap().unwrap().sequence, 4);
+        assert_eq!(
+            receiver.snapshot(snapshot(&packet, 5)).unwrap_err(),
+            ConfigurationError::Epoch
+        );
+        assert_eq!(
+            receiver.message(&epoch_message(1), catalog(), fingerprint()),
+            Err(ConfigurationError::Epoch)
+        );
+    }
+}
+
 #[test]
 fn replication_configuration_roundtrips_and_resolves_all_weapon_families() {
     for id in [WeaponId::M4A1, WeaponId::M1911, WeaponId::MP5] {

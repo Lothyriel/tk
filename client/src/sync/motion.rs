@@ -117,6 +117,30 @@ mod tests {
             .insert(7, root);
         let mut server = RenetServer::new(data::renet_config());
         server.add_connection(7, false);
+        use common::{catalog::*, replication::*};
+        let fingerprint = catalog_fingerprint(CATALOG_SOURCE);
+        server.send_message(
+            7,
+            CONFIGURATION_CHANNEL,
+            data::encode(&ConfigurationMessage::Epoch {
+                epoch: 1,
+                catalog: fingerprint,
+            }),
+        );
+        server.send_message(
+            7,
+            CONFIGURATION_CHANNEL,
+            data::encode(&ConfigurationMessage::Configuration(Configuration {
+                epoch: 1,
+                catalog: fingerprint,
+                handle: 1,
+                owner: 7,
+                slot: EquipmentSlot::Primary,
+                instance: WeaponInstanceId(41),
+                revision: 0,
+                weapon: catalog().configuration(WeaponId::M4A1).unwrap(),
+            })),
+        );
         app.update();
         (app, server, root, cameras)
     }
@@ -126,9 +150,12 @@ mod tests {
         server: &mut RenetServer,
         sequence: u64,
         stamp: f32,
-        player: ClientData,
+        mut player: ClientData,
     ) {
+        player.configuration = 1;
+        player.weapon_instance = common::WeaponInstanceId(41);
         let snapshot = WorldSnapshot {
+            configuration_epoch: 1,
             sequence,
             simulation_time: stamp,
             players: vec![player],

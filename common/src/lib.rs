@@ -14,7 +14,7 @@ pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 10;
+pub const PROTOCOL_ID: u64 = 11;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
 pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;
@@ -65,16 +65,15 @@ pub struct LocalInput(pub ClientInput);
 
 #[derive(Debug, Default, Clone, Archive, Serialize, Deserialize)]
 pub struct ClientData {
+    // Group scalar IDs and flags to avoid per-actor archive padding. The compact
+    // configuration reference must fit the existing physical snapshot budget.
     pub id: ClientId,
+    pub weapon_instance: WeaponInstanceId,
     pub pos: [f32; 3],
     pub rot: CameraInput,
-    pub crouched: bool,
-    pub alive: bool,
     pub health: f32,
-    pub weapon: WeaponKind,
     pub weapon_id: WeaponId,
-    pub weapon_instance: WeaponInstanceId,
-    pub weapon_slot: EquipmentSlot,
+    pub configuration: u32,
     pub ammo_in_mag: u32,
     pub reserve_ammo: u32,
     pub reload_remaining: f32,
@@ -82,8 +81,12 @@ pub struct ClientData {
     pub body: combat::BodyHealth,
     pub armor: combat::ArmorState,
     pub participant: raid::Participant,
-    pub bot: bool,
     pub pose: humanoid::PoseState,
+    pub weapon: WeaponKind,
+    pub weapon_slot: EquipmentSlot,
+    pub crouched: bool,
+    pub alive: bool,
+    pub bot: bool,
 }
 
 #[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
@@ -234,6 +237,7 @@ pub struct ImpactMarkData {
 pub struct WorldSnapshot {
     pub destroyed_cells: map::DestroyedCells,
     pub sequence: u64,
+    pub configuration_epoch: u64,
     pub raid: raid::RaidState,
     pub players: Vec<ClientData>,
     pub projectiles: Vec<ProjectileData>,
