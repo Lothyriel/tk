@@ -20,9 +20,16 @@ pub struct Plugin;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VoxelCache>()
+            .init_resource::<configured::VisualBindings>()
+            .init_resource::<configured::HandAssets>()
             .add_systems(
                 Update,
-                (remove_models, instantiate)
+                (
+                    configured::assemble,
+                    remove_models,
+                    instantiate,
+                    configured::pose,
+                )
                     .chain()
                     .in_set(crate::ClientSystems::Present),
             )
@@ -49,6 +56,7 @@ struct VoxelInstance {
     content: Entity,
     surfaces: Vec<Entity>,
     far: bool,
+    parts: BTreeMap<String, Entity>,
 }
 
 /// Named part entities are the animation integration boundary. Their Transform
@@ -373,10 +381,15 @@ fn instantiate(
                 content,
                 surfaces,
                 far: false,
+                parts: parts
+                    .into_iter()
+                    .map(|(name, entity)| (name.to_owned(), entity))
+                    .collect(),
             });
     }
 }
 
+pub(crate) mod configured;
 mod lod;
 #[cfg(test)]
 mod tests;
