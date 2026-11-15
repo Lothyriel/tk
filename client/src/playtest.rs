@@ -7,6 +7,7 @@ use common::{combat::*, map::*, raid::*, *};
 
 use crate::{ClientSystems, input::InputCapture, sync::ClientSession};
 mod animation;
+mod mechanics;
 mod physical;
 mod video;
 
@@ -58,6 +59,7 @@ struct Driver {
     actions: u32,
     flash_captures: u8,
     animation: animation::Sequence,
+    weapons: mechanics::Weapons,
     physical: physical::Review,
     fall_ids: Vec<u64>,
     recovery_seen: bool,
@@ -388,7 +390,7 @@ fn drive(
                 },
             );
             view_camera.is_active = !observer;
-            if elapsed > 59.0 {
+            if driver.animation.complete {
                 info!(
                     "CONTINUOUS ANIMATION PASS reciprocal M1911 + {:?}; empty/tactical/interrupted reloads through normal UDP inputs",
                     desired.primary
@@ -484,30 +486,12 @@ fn drive(
             }
         }
         Step::Weapons => {
-            let elapsed = now - driver.since;
+            let since = driver.since;
+            let elapsed = driver.weapons.control(&mut input, local, now - since);
             input.camera = CameraInput {
                 pitch: 0.8,
                 ..default()
             };
-            input.weapon = if (4.1..7.1).contains(&elapsed) {
-                EquipmentSlot::Sidearm
-            } else {
-                EquipmentSlot::Primary
-            };
-            if elapsed < 3.25 {
-                input.fire = true;
-            }
-            // One-shot sequence inputs, exactly like normal reload and pistol clicks.
-            for (index, at) in [3.4, 4.3, 4.6, 7.2].into_iter().enumerate() {
-                if elapsed >= at && driver.actions & (1 << index) == 0 {
-                    driver.actions |= 1 << index;
-                    if index == 1 {
-                        input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
-                    } else {
-                        input.reload_sequence = input.reload_sequence.wrapping_add(1);
-                    }
-                }
-            }
             for (index, (at, name)) in [
                 (0.8, "weapon-burst"),
                 (3.3, "weapon-empty"),
@@ -538,7 +522,8 @@ fn drive(
                     }
                     if name == "weapon-pistol-ready" {
                         assert_eq!(local.weapon, WeaponKind::Pistol);
-                        assert_eq!(local.ammo_in_mag, 17);
+                        assert!(local.mechanics.chambered && local.mechanics.magazine_inserted);
+                        assert_eq!(local.ammo_in_mag, local.weapon_id.spec().magazine_size + 1);
                         assert_eq!(local.reload_remaining, 0.0);
                     }
                 }

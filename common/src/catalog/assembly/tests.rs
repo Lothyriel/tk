@@ -460,6 +460,65 @@ fn assembly_revision_atomicity_cache_and_ammunition_conservation() {
 }
 
 #[test]
+fn mechanics_restore_mid_reload_switches_cached_variant_without_reusing_revision_or_ids() {
+    let catalog = catalog_fixture();
+    let weapon = EquippedWeapon::new(&catalog, WeaponInstanceId(80), assembled()).unwrap();
+    let mut instance = weapon.instance().clone();
+    let mut magazines = instance.mechanics.magazines().to_vec();
+    for magazine in &mut magazines {
+        magazine.id.0 += 1_000_000;
+    }
+    magazines[1].definition = DefinitionId(101);
+    magazines[1].capacity = 30;
+    magazines[1].rounds = 30;
+    let high_water = magazines.iter().map(|m| m.id.0).max().unwrap();
+    let inserted = magazines[0].id;
+    instance.mechanics = MechanicalState::with_magazines(
+        &catalog,
+        weapon.spec(),
+        magazines,
+        Some(inserted),
+        instance.mechanics.chamber(),
+    )
+    .unwrap();
+    let mut weapon = EquippedWeapon::restore(&catalog, instance).unwrap();
+    assert!(weapon.fire());
+    let total = weapon.mechanics().total_rounds();
+    assert!(weapon.mechanics_mut().start_reload(2.0));
+    weapon.advance(0.6); // retained old magazine, replacement not yet inserted
+    assert!(weapon.mechanics().inserted().is_none());
+    assert_eq!(weapon.spec().magazine_size, 20);
+    let bytes = crate::data::encode(weapon.instance());
+    let mut restored = EquippedWeapon::restore(&catalog, crate::data::decode(&bytes)).unwrap();
+    assert_eq!(crate::data::encode(restored.instance()), bytes);
+    restored.advance(1.5);
+    assert_eq!(restored.spec().magazine_size, 30);
+    assert_eq!(restored.instance().revision, 1);
+    assert_eq!(restored.rounds(), 31);
+    assert_eq!(restored.mechanics().total_rounds(), total);
+    assert_eq!(
+        restored.instance().configuration.components[0].definition,
+        DefinitionId(101)
+    );
+    let another = EquippedWeapon::new(&catalog, WeaponInstanceId(81), assembled()).unwrap();
+    assert!(another
+        .mechanics()
+        .magazines()
+        .iter()
+        .all(|m| m.id.0 > high_water));
+
+    let mut exhausted: WeaponInstance = crate::data::decode(&bytes);
+    exhausted.revision = u64::MAX;
+    let mut exhausted = EquippedWeapon::restore(&catalog, exhausted).unwrap();
+    exhausted.advance(2.0);
+    assert!(exhausted.mechanics().action().is_none());
+    assert!(exhausted.mechanics().inserted().is_none());
+    assert_eq!(exhausted.spec().magazine_size, 20);
+    assert_eq!(exhausted.instance().revision, u64::MAX);
+    assert_eq!(exhausted.mechanics().total_rounds(), total);
+}
+
+#[test]
 fn assembly_content_validation_rejects_nonfinite_geometry_and_dependency_cycles() {
     type Mutation = fn(&mut CatalogDocument);
     let mutations: &[Mutation] = &[

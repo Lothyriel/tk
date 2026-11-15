@@ -1178,6 +1178,19 @@ fn next_deploy_restores_separated_anatomy_and_clears_fragments_corpses_and_effec
     let rig = evaluate_pose(app.world().get::<PoseState>(b).unwrap(), 0.0, 1.0);
     let head = root.transform_point(rig[Segment::Head.index()].position.into());
     normal_shot(&mut app, a, head);
+    let old_magazines = {
+        let mut arsenal = app.world_mut().get_mut::<Arsenal>(a).unwrap();
+        let weapon = arsenal.equipped_mut(EquipmentSlot::Primary).unwrap();
+        assert!(weapon.mechanics_mut().start_reload(2.4));
+        weapon.advance(0.7);
+        assert!(weapon.mechanics().inserted().is_none());
+        weapon
+            .mechanics()
+            .magazines()
+            .iter()
+            .map(|m| m.id)
+            .collect::<Vec<_>>()
+    };
     app.world_mut().get_mut::<BodyHealth>(a).unwrap().parts[0] = 0.0;
     steps(&mut app, 4);
     assert_eq!(
@@ -1198,6 +1211,17 @@ fn next_deploy_restores_separated_anatomy_and_clears_fragments_corpses_and_effec
     steps(&mut app, 390);
     assert_eq!(app.world().resource::<RaidState>().phase, RaidPhase::Active);
     assert_eq!(app.world().resource::<RaidState>().raid_id, 2);
+    let mechanics = app.world().get::<Arsenal>(a).unwrap().current().mechanics();
+    assert!(mechanics.action().is_none());
+    assert!(mechanics.equipped() && mechanics.chamber().is_some());
+    assert_eq!(mechanics.loaded_rounds(), 30);
+    assert_eq!(mechanics.total_rounds(), 120);
+    assert!(
+        mechanics
+            .magazines()
+            .iter()
+            .all(|m| !old_magazines.contains(&m.id))
+    );
     let body = app.world().get::<BodyHealth>(b).unwrap();
     assert_eq!(body.anatomy.missing, 0);
     assert_eq!(body.anatomy.wounds, 0);
