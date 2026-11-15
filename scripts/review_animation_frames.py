@@ -12,13 +12,15 @@ def review(directory):
     start = re.search(r"PLAYTEST AnimationSetup -> Animation at ([\d.]+)s", text)
     assert start, "Continuous route stage clock missing"
     start = float(start[1])
-    peer = directory.name == "peer"
+    # Older recordings used a fixed peer offset; new routes log the actual
+    # stage-relative clock while waiting for replicated mechanical outcomes.
+    offset = 0.0 if "ANIMATION CLOCK stage-relative" in text else (29.0 if directory.name == "peer" else 0.0)
     frames = [(int(n), float(t)) for n, t in (line.split(",") for line in (directory / "frame-times.csv").read_text().splitlines())]
     contacts = []
     output = directory / "contact-review"
     output.mkdir(exist_ok=True)
     for name, local in re.findall(r"ANIMATION CONTACT ([\w-]+) local_t=([\d.]+)", text):
-        at = start + float(local) + (29.0 if peer else 0.0)
+        at = start + float(local) + offset
         nearest = min(range(len(frames)), key=lambda i: abs(frames[i][1] - at))
         samples = frames[max(0, nearest - 3):nearest + 4]
         sheet = Image.new("RGB", (4 * 400, 2 * 280), "#14232c")

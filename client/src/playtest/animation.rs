@@ -1,5 +1,9 @@
 //! Continuous action route through ordinary replicated controls, with reciprocal observation.
-use super::{capture, move_toward};
+use super::{
+    capture,
+    mechanics::{Clock, Selector, loaded, ready},
+    move_toward,
+};
 use bevy::prelude::*;
 use common::*;
 
@@ -7,15 +11,139 @@ use common::*;
 pub(super) struct Sequence {
     pub actions: u32,
     pub captures: u32,
-    pub clicks: u32,
     pub ads_captures: u8,
     pub mechanism_captures: u8,
+    clock: Clock,
+    selector: Selector,
+    next_click: f64,
+    started: bool,
+    pistol_before: u32,
+    pub complete: bool,
 }
 
 pub(super) struct ReviewFrame {
     pub elapsed: f64,
     pub peer: bool,
     pub world_fov: f32,
+}
+
+impl Sequence {
+    /// Safe on the primary is a persistent end-of-route signal, visible to the
+    /// observer even if snapshots are lost. No fixed peer start offset is needed.
+    fn signalled(local: &ClientData) -> bool {
+        ready(local, EquipmentSlot::Primary) && local.mechanics.mode == catalog::FireMode::Safe
+    }
+
+    pub(super) fn control(
+        &mut self,
+        input: &mut ClientInput,
+        local: &ClientData,
+        other: Option<&ClientData>,
+        frame: &ReviewFrame,
+    ) -> bool {
+        let ReviewFrame {
+            elapsed,
+            peer,
+            world_fov,
+        } = *frame;
+        assert!(
+            elapsed < 150.0,
+            "animation route timed out at {}",
+            self.clock.value
+        );
+        if !self.started && (!peer || other.is_some_and(Self::signalled)) {
+            self.started = true;
+            info!("ANIMATION CLOCK stage-relative");
+        }
+        if !self.started {
+            return true;
+        }
+        if self.clock.value >= 29.0 {
+            input.weapon = EquipmentSlot::Primary;
+            self.selector.select(input, local, catalog::FireMode::Safe);
+            self.complete = Self::signalled(local) && other.is_some_and(Self::signalled);
+            return true;
+        }
+        use EquipmentSlot::{Primary, Sidearm};
+        self.clock.advance(
+            elapsed,
+            &[
+                (0.15, ready(local, Sidearm)),
+                (
+                    0.95,
+                    local.pose.ads > 0.85 && (world_fov - 52.0).abs() < 2.0,
+                ),
+                (1.6, local.pose.ads < 0.08),
+                (5.4, local.ammo_in_mag == 0 && !local.mechanics.chambered),
+                (7.4, loaded(local)),
+                (8.4, local.ammo_in_mag < self.pistol_before),
+                (8.95, !local.mechanics.magazine_inserted),
+                (9.5, ready(local, Primary)),
+                (10.8, ready(local, Sidearm)),
+                (13.5, loaded(local)),
+                (14.3, ready(local, Primary)),
+                (16.1, local.mechanics.mode == catalog::FireMode::Auto),
+                (19.7, local.ammo_in_mag == 0 && !local.mechanics.chambered),
+                (22.9, loaded(local)),
+                (
+                    23.3,
+                    local.ammo_in_mag < local.weapon_id.spec().magazine_size,
+                ),
+                (23.95, !local.mechanics.magazine_inserted),
+                (24.5, ready(local, Sidearm)),
+                (24.9, ready(local, Primary)),
+                (26.7, loaded(local)),
+                (
+                    28.4,
+                    local.pose.ads > 0.85 && (world_fov - 44.0).abs() < 2.0,
+                ),
+                (28.8, local.pose.ads < 0.08),
+            ],
+        );
+        let t = self.clock.value;
+        input.weapon = if t < 14.0 { Sidearm } else { Primary };
+        if (9.0..9.6).contains(&t) {
+            input.weapon = Primary;
+        }
+        if (24.0..24.6).contains(&t) {
+            input.weapon = Sidearm;
+        }
+        input.aim = (0.18..1.1).contains(&t)
+            || (7.5..8.3).contains(&t)
+            || (14.35..15.0).contains(&t)
+            || (26.8..28.6).contains(&t);
+        if (2.0..5.5).contains(&t) && local.ammo_in_mag > 0 && elapsed >= self.next_click {
+            input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
+            self.next_click = elapsed + f64::from(local.weapon_id.spec().seconds_per_shot()) + 0.04;
+        }
+        if (14.3..=16.1).contains(&t) && ready(local, Primary) {
+            self.selector.select(input, local, catalog::FireMode::Auto);
+        }
+        input.fire = (16.2..19.8).contains(&t) || (23.0..23.2).contains(&t);
+        for (index, (at, reload)) in [
+            (5.9, true),
+            (8.0, false),
+            (8.5, true),
+            (11.0, true),
+            (20.2, true),
+            (23.4, true),
+            (25.0, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if t >= at && self.actions & (1 << index) == 0 {
+                self.actions |= 1 << index;
+                if reload {
+                    input.reload_sequence = input.reload_sequence.wrapping_add(1);
+                } else {
+                    self.pistol_before = local.ammo_in_mag;
+                    input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
+                }
+            }
+        }
+        false
+    }
 }
 
 pub(super) fn drive(
@@ -31,21 +159,21 @@ pub(super) fn drive(
         peer,
         world_fov,
     } = frame;
-    let observe = if peer {
-        elapsed < 29.0
-    } else {
-        elapsed >= 29.0
-    };
+    let observe = sequence.control(input, local, other, &frame);
     if observe {
         let target = if peer {
             [-7.0, 1.0, 18.0]
         } else {
             [-3.0, 1.0, 18.0]
         };
-        let reposition = if peer { elapsed < 1.3 } else { elapsed < 30.3 };
-        if reposition {
-            move_toward(input, local.pos, target);
-        } else if let Some(other) = other {
+        if move_toward(input, local.pos, target) < 0.4
+            && let Some(other) = other
+        {
+            input.forward = false;
+            input.backward = false;
+            input.left = false;
+            input.right = false;
+            input.run = false;
             input.camera =
                 Transform::from_translation(Vec3::from(local.pos) + Vec3::Y * PLAYER_VIEW_HEIGHT)
                     .looking_at(Vec3::from(other.pos) + Vec3::Y * 0.1, Vec3::Y)
@@ -54,12 +182,7 @@ pub(super) fn drive(
         }
         return true;
     }
-    let t = elapsed - if peer { 29.0 } else { 0.0 };
-    input.weapon = if t < 14.0 {
-        EquipmentSlot::Sidearm
-    } else {
-        EquipmentSlot::Primary
-    };
+    let t = sequence.clock.value;
     input.camera = CameraInput {
         pitch: 0.55,
         yaw: ((t - 1.0).clamp(0.0, 3.0) as f32 * 0.7).sin() * 0.22,
@@ -72,11 +195,7 @@ pub(super) fn drive(
     input.crouch = (11.0..11.6).contains(&t);
     input.run = (15.0..16.0).contains(&t);
     // ADS_PROOF_BEGIN
-    input.aim = (0.18..1.1).contains(&t)
-        || (7.5..8.3).contains(&t)
-        || (14.35..15.0).contains(&t)
-        || (26.8..28.6).contains(&t);
-    let fraction = local.pose.reload_fraction;
+    let fraction = local.mechanics.fraction;
     let mechanism_index = if local.weapon == WeaponKind::Pistol {
         0
     } else {
@@ -87,8 +206,7 @@ pub(super) fn drive(
         WeaponKind::Smg => 0.88,
         WeaponKind::Rifle => 0.89,
     };
-    if local.ammo_in_mag == 0
-        && local.reload_remaining > 0.0
+    if local.mechanics.kind == Some(catalog::ManipulationKind::EmptyReload)
         && fraction >= mechanism_at
         && fraction < 0.98
         && sequence.mechanism_captures & (1 << mechanism_index) == 0
@@ -102,7 +220,7 @@ pub(super) fn drive(
         };
         capture(commands, name);
         info!(
-            "RELOAD MECHANISM EVIDENCE {name} local_t={t:.3} weapon={:?} fraction={fraction:.3} bolt={:.3} control={:.3} latch={:.3}",
+            "RELOAD MECHANISM EVIDENCE {name} local_t={elapsed:.3} weapon={:?} fraction={fraction:.3} bolt={:.3} control={:.3} latch={:.3}",
             local.weapon, action.bolt, action.control, action.latch
         );
         sequence.mechanism_captures |= 1 << mechanism_index;
@@ -136,48 +254,13 @@ pub(super) fn drive(
             }
             capture(commands, name);
             info!(
-                "ADS EVIDENCE {name} local_t={t:.3} weapon={:?} authoritative_ads={:.3} world_fov={world_fov:.3} ammo={}",
+                "ADS EVIDENCE {name} local_t={elapsed:.3} weapon={:?} authoritative_ads={:.3} world_fov={world_fov:.3} ammo={}",
                 local.weapon, local.pose.ads, local.ammo_in_mag
             );
             sequence.ads_captures |= 1 << index;
         }
     }
     // ADS_PROOF_END
-    if (2.0..5.5).contains(&t) {
-        let click = (((t - 2.0) / 0.205).floor() as u32 + 1).min(17);
-        if click > sequence.clicks {
-            input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
-            sequence.clicks = click;
-        }
-    }
-    input.fire = (16.2..19.8).contains(&t) || (23.0..23.2).contains(&t);
-    for (index, (at, reload)) in [
-        (5.9, true),
-        (8.0, false),
-        (8.5, true),
-        (11.0, true),
-        (20.2, true),
-        (23.4, true),
-        (25.0, true),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        if t >= at && sequence.actions & (1 << index) == 0 {
-            sequence.actions |= 1 << index;
-            if reload {
-                input.reload_sequence = input.reload_sequence.wrapping_add(1);
-            } else {
-                input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
-            }
-        }
-    }
-    if (9.0..9.6).contains(&t) {
-        input.weapon = EquipmentSlot::Primary;
-    }
-    if (24.0..24.6).contains(&t) {
-        input.weapon = EquipmentSlot::Sidearm;
-    }
     for (index, (at, name)) in [
         (0.8, "m1911-draw"),
         (2.8, "m1911-fire"),
@@ -204,14 +287,15 @@ pub(super) fn drive(
             sequence.captures |= 1 << index;
             capture(commands, name);
             info!(
-                "ANIMATION CONTACT {name} local_t={t:.3} weapon={:?} mag={} reload={:.3} position={:?}",
+                "ANIMATION CONTACT {name} local_t={elapsed:.3} weapon={:?} mag={} reload={:.3} position={:?}",
                 local.weapon, local.ammo_in_mag, local.reload_remaining, local.pos
             );
             if name.ends_with("empty") {
                 assert_eq!(local.ammo_in_mag, 0, "{name}");
             }
             if name.ends_with("return") {
-                assert_eq!(local.ammo_in_mag, local.weapon_id.spec().magazine_size);
+                assert_eq!(local.ammo_in_mag, local.weapon_id.spec().magazine_size + 1);
+                assert!(local.mechanics.chambered && local.mechanics.magazine_inserted);
                 assert_eq!(local.reload_remaining, 0.0);
             }
         }

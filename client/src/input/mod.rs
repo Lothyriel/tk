@@ -312,6 +312,8 @@ mod tests {
                 KeyCode::KeyW,
                 KeyCode::KeyF,
                 KeyCode::KeyR,
+                KeyCode::KeyI,
+                KeyCode::KeyB,
                 KeyCode::Digit2,
                 KeyCode::Space,
             ] {
@@ -327,6 +329,7 @@ mod tests {
         assert_eq!(input.weapon, EquipmentSlot::Sidearm);
         assert_eq!(input.fire_pressed_sequence, 1);
         assert_eq!(input.reload_sequence, 1);
+        assert_eq!((input.inspect_sequence, input.selector_sequence), (1, 1));
         let entity = app
             .world_mut()
             .query_filtered::<Entity, With<Window>>()
@@ -341,6 +344,7 @@ mod tests {
         assert!(!input.forward && !input.fire && !input.interact && !input.jump);
         assert_eq!(input.fire_pressed_sequence, 1);
         assert_eq!(input.reload_sequence, 1);
+        assert_eq!((input.inspect_sequence, input.selector_sequence), (1, 1));
     }
 
     #[test]

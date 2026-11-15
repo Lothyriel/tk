@@ -107,5 +107,16 @@ equip priority, empty pools, serialized intermediate states, clock partitioning
 and 10,000 generated operations with independent conservation checks.
 Arsenal tests cover timed switching, cancelled stages, duplicate/reordered inputs
 and retained pools. ECS/Rapier fixtures cover cancellation around magazine commits
-and shared injury timing. Native drivers and real UDP/rendered evidence are
-separate from these headless checks.
+and shared injury timing. Native driver controls wait for confirmed equip,
+chamber, magazine and action state at each visual cue. Pistol clicks continue
+until the confirmed chamber is empty; they do not assume 17 shots. The reciprocal
+route signals completion by selecting Safe on the primary, so the observer starts
+from a persistent replicated state instead of a fixed 29-second offset. A stalled
+route fails its timeout rather than skipping an assertion.
+
+The driver fixture feeds the production Arsenal through serialized delayed/lost
+snapshots for both primary profiles, with normal and slowed handling and 17-/7-round
+pistol pools. It runs the animation route then the normal weapon exercise while
+checking conservation throughout. This verifies control sequencing, not rendered
+appearance or real UDP transport. Contact indexing uses actual stage-relative
+timestamps and still supports earlier recordings with the old peer offset.
