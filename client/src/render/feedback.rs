@@ -5,14 +5,56 @@ use bevy::{platform::collections::HashMap, prelude::*};
 use common::weapon_animation::{WeaponAction, WeaponRig, reload_action};
 use common::{humanoid::PhysicalMode, *};
 
+// Each pair is (lateral impulse, vertical impulse scale) for one shot in the
+// rifle's repeating pattern. Keep values bounded so the spread stays legible.
+const RIFLE_RECOIL_PATTERN: [(f32, f32); 8] = [
+    (0.00, 1.00),
+    (-0.30, 0.94),
+    (0.18, 1.08),
+    (-0.12, 0.98),
+    (0.34, 1.12),
+    (-0.24, 0.90),
+    (0.10, 1.04),
+    (-0.06, 0.96),
+];
+const RIFLE_RECOIL_PITCH_IMPULSE: f32 = 1.25;
+const RIFLE_RECOIL_YAW_IMPULSE: f32 = 0.28;
+const RIFLE_RECOIL_LATERAL_JITTER: f32 = 0.035;
+const RIFLE_RECOIL_VERTICAL_JITTER: f32 = 0.025;
+
+fn pattern_jitter(seed: u32) -> f32 {
+    let mut bits = seed;
+    bits ^= bits >> 16;
+    bits = bits.wrapping_mul(0x7feb_352d);
+    bits ^= bits >> 15;
+    bits = bits.wrapping_mul(0x846c_a68b);
+    bits ^= bits >> 16;
+    bits as f32 / u32::MAX as f32 * 2.0 - 1.0
+}
+
+fn rifle_recoil_pattern(shot_index: u32, shot_id: u64) -> (f32, f32) {
+    let (lateral, vertical) =
+        RIFLE_RECOIL_PATTERN[shot_index as usize % RIFLE_RECOIL_PATTERN.len()];
+    let seed = shot_id as u32 ^ shot_index.rotate_left(13);
+    (
+        (lateral + pattern_jitter(seed) * RIFLE_RECOIL_LATERAL_JITTER).clamp(-0.4, 0.4),
+        (vertical + pattern_jitter(seed.wrapping_add(0x9e37_79b9)) * RIFLE_RECOIL_VERTICAL_JITTER)
+            .clamp(0.85, 1.17),
+    )
+}
+
 pub struct Plugin;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Feedback>().add_systems(
             Update,
-            (advance, animate_local, frame_local_pistol)
-                .chain()
-                .after(super::sync_local_view)
+            (
+                (advance, apply_local_camera_recoil)
+                    .chain()
+                    .before(super::sync_local_view),
+                animate_local.after(super::sync_local_view),
+                frame_local_pistol.after(animate_local),
+            )
                 .in_set(ClientSystems::Present),
         );
     }
@@ -21,6 +63,11 @@ impl bevy::prelude::Plugin for Plugin {
 pub(super) struct Response {
     pub recoil: f32,
     velocity: f32,
+    recoil_pitch: f32,
+    recoil_pitch_velocity: f32,
+    recoil_yaw: f32,
+    recoil_yaw_velocity: f32,
+    rifle_shot_count: u32,
     pub flash: f32,
     last: Option<u64>,
     weapon: Option<WeaponKind>,
@@ -41,6 +88,12 @@ impl Response {
     fn step(&mut self, dt: f32) {
         self.velocity += (-self.recoil * 180.0 - self.velocity * 23.0) * dt;
         self.recoil = (self.recoil + self.velocity * dt).clamp(0.0, 0.11);
+        self.recoil_pitch_velocity +=
+            (-self.recoil_pitch * 180.0 - self.recoil_pitch_velocity * 23.0) * dt;
+        self.recoil_pitch = (self.recoil_pitch + self.recoil_pitch_velocity * dt).clamp(0.0, 0.12);
+        self.recoil_yaw_velocity +=
+            (-self.recoil_yaw * 180.0 - self.recoil_yaw_velocity * 23.0) * dt;
+        self.recoil_yaw = (self.recoil_yaw + self.recoil_yaw_velocity * dt).clamp(-0.035, 0.035);
         self.flash = (self.flash - dt).max(0.0);
         self.swap = (self.swap - dt * 4.0).max(0.0);
         if self.swap <= 0.5 {
@@ -53,20 +106,45 @@ impl Response {
         }
         self.last = Some(shot.id);
         self.flash = 0.055;
+        let (lateral, vertical) = if shot.weapon == WeaponKind::Rifle {
+            rifle_recoil_pattern(self.rifle_shot_count, shot.id)
+        } else {
+            (0.0, 1.0)
+        };
+        let (pitch_impulse, yaw_impulse) = match shot.weapon {
+            WeaponKind::Rifle => (
+                RIFLE_RECOIL_PITCH_IMPULSE * vertical,
+                RIFLE_RECOIL_YAW_IMPULSE * lateral,
+            ),
+            WeaponKind::Smg => (0.9, 0.0),
+            WeaponKind::Pistol => (1.9, 0.0),
+        };
+        self.recoil_pitch_velocity += pitch_impulse;
+        self.recoil_yaw_velocity += yaw_impulse;
+        if shot.weapon == WeaponKind::Rifle {
+            self.rifle_shot_count = self.rifle_shot_count.wrapping_add(1);
+        }
         self.velocity = (self.velocity
             + match shot.weapon {
-                WeaponKind::Rifle => 1.45,
+                WeaponKind::Rifle => 1.35,
                 WeaponKind::Smg => 0.9,
                 WeaponKind::Pistol => 1.9,
             })
         .min(2.5);
-        self.recoil = (self.recoil + 0.012).min(0.11);
+        self.recoil = (self.recoil
+            + if shot.weapon == WeaponKind::Rifle {
+                0.010
+            } else {
+                0.012
+            })
+        .min(0.11);
     }
 }
 #[derive(Default, Resource)]
 pub(super) struct Feedback {
     pub responses: HashMap<u64, Response>,
     raid: u32,
+    applied_local_recoil: Vec2,
 }
 #[derive(Component)]
 pub(crate) struct Flash;
@@ -144,6 +222,10 @@ pub(super) fn advance(
             response.flash = 0.0;
             response.recoil = 0.0;
             response.velocity = 0.0;
+            response.recoil_pitch = 0.0;
+            response.recoil_pitch_velocity = 0.0;
+            response.recoil_yaw = 0.0;
+            response.recoil_yaw_velocity = 0.0;
         }
         let w = response.displayed.unwrap_or(player.weapon);
         let fraction = if player.reload_remaining > 0.0 && w == player.weapon {
@@ -257,6 +339,33 @@ pub(super) fn advance(
     }
 }
 
+fn apply_recoil_to_camera(camera: &mut CameraInput, applied: &mut Vec2, target: Vec2) {
+    let base_yaw = camera.yaw - applied.x;
+    camera.yaw = base_yaw + target.x;
+
+    let base_pitch = camera.pitch - applied.y;
+    camera.pitch = (base_pitch + target.y).clamp(-1.56, 1.56);
+    *applied = Vec2::new(camera.yaw - base_yaw, camera.pitch - base_pitch);
+}
+
+fn apply_local_camera_recoil(
+    id: Res<PlayerId>,
+    mut feedback: ResMut<Feedback>,
+    mut input: ResMut<LocalInput>,
+) {
+    let target = feedback
+        .responses
+        .get(&id.0)
+        .map_or(Vec2::ZERO, |response| {
+            Vec2::new(response.recoil_yaw, response.recoil_pitch)
+        });
+    apply_recoil_to_camera(
+        &mut input.camera,
+        &mut feedback.applied_local_recoil,
+        target,
+    );
+}
+
 pub(super) fn animate_local(
     time: Res<Time>,
     id: Res<PlayerId>,
@@ -335,12 +444,9 @@ pub(super) fn animate_local(
         t.rotation *=
             Quat::from_rotation_x((response.travel.y * 0.008).clamp(-0.05, 0.05) * motion_weight);
         let injury = (1.0 - p.body.anatomy.handling()) * (time.elapsed_secs() * 3.7).sin() * 0.035;
-        t.rotation *= Quat::from_euler(
-            EulerRot::XYZ,
-            response.recoil * 1.8 + response.sway.y * motion_weight + swap_drop * 0.6,
-            response.sway.x * motion_weight,
-            (injury - response.sway.x * 0.5) * motion_weight,
-        );
+        t.rotation *= Quat::from_rotation_x(response.sway.y * motion_weight + swap_drop * 0.6);
+        t.rotation *= Quat::from_rotation_y(response.sway.x * motion_weight);
+        t.rotation *= Quat::from_rotation_z((injury - response.sway.x * 0.5) * motion_weight);
         if displayed == WeaponKind::Pistol {
             let aspect = if let Projection::Perspective(p) = &**projection {
                 p.aspect_ratio
@@ -686,6 +792,73 @@ fn pistol_frame_correction(points: &[Vec3], projection: &PerspectiveProjection, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rifle_recoil_pattern_has_bounded_seeded_variation_and_reduced_impulse() {
+        let seeded = rifle_recoil_pattern(0, 1);
+        assert_eq!(seeded, rifle_recoil_pattern(0, 1));
+        assert_ne!(rifle_recoil_pattern(0, 1), rifle_recoil_pattern(0, 2));
+        for (lateral, vertical) in RIFLE_RECOIL_PATTERN {
+            assert!((-0.4..=0.4).contains(&lateral));
+            assert!((0.85..=1.17).contains(&vertical));
+        }
+        for shot in 0..64 {
+            let (lateral, vertical) = rifle_recoil_pattern(shot, u64::from(shot) * 17);
+            assert!((-0.4..=0.4).contains(&lateral));
+            assert!((0.85..=1.17).contains(&vertical));
+        }
+
+        let mut response = Response::default();
+        response.shot(&FiredProjectileData {
+            id: 1,
+            weapon: WeaponKind::Rifle,
+            shooter: 7,
+            time: 0.0,
+            muzzle: [0.0; 3],
+            direction: [0.0, 0.0, -1.0],
+        });
+        assert!((response.recoil - 0.010).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn local_camera_recoil_moves_authoritative_bore_up_and_recovers() {
+        let mut app = App::new();
+        let mut feedback = Feedback::default();
+        let response = feedback.responses.entry(7).or_default();
+        response.recoil_pitch = 0.08;
+        response.recoil_yaw = 0.02;
+        app.insert_resource(feedback)
+            .insert_resource(PlayerId(7))
+            .init_resource::<LocalInput>()
+            .add_systems(Update, apply_local_camera_recoil);
+
+        app.update();
+        let camera = &app.world().resource::<LocalInput>().camera;
+        let bore = Quat::from(camera) * -Vec3::Z;
+        assert!(
+            bore.y > 0.0,
+            "recoil must raise the authoritative bore: {bore:?}"
+        );
+        assert!((camera.yaw - 0.02).abs() < 0.001);
+
+        app.world_mut()
+            .resource_mut::<Feedback>()
+            .responses
+            .get_mut(&7)
+            .unwrap()
+            .recoil_pitch = 0.0;
+        app.world_mut()
+            .resource_mut::<Feedback>()
+            .responses
+            .get_mut(&7)
+            .unwrap()
+            .recoil_yaw = 0.0;
+        app.update();
+        let camera = &app.world().resource::<LocalInput>().camera;
+        assert!(camera.pitch.abs() < 0.001);
+        assert!(camera.yaw.abs() < 0.001);
+    }
+
     #[test]
     fn actual_pistol_reload_vertices_stay_inside_the_final_camera_from_portrait_to_ultrawide() {
         use bevy::mesh::VertexAttributeValues;
