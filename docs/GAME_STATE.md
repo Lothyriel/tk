@@ -101,6 +101,7 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | F | Collect nearby loot; hold in the exit to extract |
 | Escape | Release or recapture the cursor during a raid; lobby/debrief release it automatically |
 | Up / Down arrow | Narrow / widen the field of view |
+| F8 / F9 | Toggle weapon socket/pivot debug overlay / cycle inspection LOD while enabled |
 
 ## Gameplay
 
