@@ -92,6 +92,9 @@ pub(crate) struct PartMotion {
 /// preferred root and mechanism deltas; this system owns the accepted pose.
 #[derive(Component, Clone)]
 pub(crate) struct ConfiguredHandling {
+    /// A producer rejection must preserve the accepted pose, not fall back to
+    /// an unbraced request that silently drops a required contact.
+    pub preflight_error: Option<String>,
     pub preferred_root: Transform,
     pub shoulders: [Vec3; 2],
     pub poles: [Vec3; 2],
@@ -438,6 +441,9 @@ fn resolve_pose<'a>(
     input: &ConfiguredHandling,
     pieces: impl Iterator<Item = (u16, &'a str, Transform)>,
 ) -> Result<(handling::HandlingSolution, Vec<(u16, String, Transform)>), String> {
+    if let Some(error) = &input.preflight_error {
+        return Err(error.clone());
+    }
     let mut updates = Vec::new();
     let mut nodes = std::collections::BTreeSet::new();
     let mut sockets = BTreeMap::new();

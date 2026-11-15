@@ -56,6 +56,7 @@ struct EquipmentVisual {
 struct PieceVisual(u64);
 #[derive(Default, Resource)]
 struct PoseCache {
+    accepted_rigs: HashMap<u64, [SegmentPose; SEGMENT_COUNT]>,
     raid: u32,
     poses: HashMap<u64, PoseState>,
     roots: HashMap<u64, Transform>,
@@ -703,11 +704,14 @@ fn animate(
         cache.poses.clear();
         cache.roots.clear();
         cache.last_live.clear();
+        cache.accepted_rigs.clear();
         cache.raid = session.raid.raid_id;
     }
     let age = (time.elapsed_secs_f64() - session.last_received).clamp(0.0, 0.065) as f32;
     let alpha = 1.0 - (-time.delta_secs() * 24.0).exp();
     let mut rigs = HashMap::new();
+    let mut postures = HashMap::new();
+    let mut posture_errors = HashMap::new();
     for p in &session.players {
         let state = cache.poses.entry(p.id).or_insert_with(|| p.pose.clone());
         state.crouch += (p.pose.crouch - state.crouch) * alpha;
@@ -758,12 +762,44 @@ fn animate(
             let delta = p.pose.foot_yaw[i] - state.foot_yaw[i];
             state.foot_yaw[i] += delta.sin().atan2(delta.cos()) * foot_alpha;
         }
-        let rig = evaluate_pose_with_action(
+        let mut rig = evaluate_pose_with_action(
             state,
             p.body.anatomy.capacity(Region::LeftLeg),
             p.body.anatomy.capacity(Region::RightLeg),
             feedback.responses.get(&p.id).and_then(|r| r.action),
         );
+        if state.weapon == p.weapon
+            && let Some(entry) = session
+                .configurations
+                .cache
+                .get(session.configurations.cache.epoch(), p.configuration)
+        {
+            match common::humanoid::configured::evaluate(
+                state,
+                [
+                    p.body.anatomy.capacity(Region::LeftLeg),
+                    p.body.anatomy.capacity(Region::RightLeg),
+                ],
+                &entry.resolved,
+                &p.mechanics,
+                feedback.responses.get(&p.id).and_then(|r| r.action),
+                Some(common::humanoid::configured::shoulder_cover(&p.armor)),
+            ) {
+                Ok(configured) => {
+                    rig = configured.segments;
+                    if let Some(posture) = configured.posture {
+                        postures.insert(p.id, posture);
+                        cache.accepted_rigs.insert(p.id, rig);
+                    }
+                }
+                Err(error) => {
+                    posture_errors.insert(p.id, format!("configured posture: {error:?}"));
+                    if let Some(previous) = cache.accepted_rigs.get(&p.id) {
+                        rig = *previous;
+                    }
+                }
+            }
+        }
         if p.alive && p.pose.physical.is_none() {
             let root = cache.roots.get(&p.id).copied().unwrap_or_else(|| {
                 Transform::from_translation(p.pos.into())
@@ -806,7 +842,9 @@ fn animate(
         ) && let Some(r) = feedback.responses.get(&p.id)
         {
             t.translation.z += r.recoil;
-            t.rotation *= Quat::from_rotation_x(r.recoil);
+            if bone.segment != Segment::Thorax {
+                t.rotation *= Quat::from_rotation_x(r.recoil);
+            }
         }
         mesh.0 = if bone.inner == 2 {
             let offset = t.rotation * Vec3::new(0.0, 0.0, -0.035);
@@ -848,6 +886,9 @@ fn animate(
                 Vec3::new(0.0, 0.0, -0.17)
             };
         t.translation += offset;
+        if !gear.helmet {
+            t.translation.z += feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
+        }
         if !gear.helmet && p.armor.kind == ArmorKind::Heavy {
             t.scale = Vec3::new(1.15, 1.1, 1.2);
         }
@@ -935,6 +976,7 @@ fn animate(
         let recoil = feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
         preferred.translation.z += recoil;
         let mut input = configured::native::action(&entry.resolved, action, recoil, &p.mechanics);
+        input.preflight_error = posture_errors.get(&p.id).cloned();
         input.preferred_root = preferred;
         input.shoulders = [Segment::LeftUpperArm, Segment::RightUpperArm].map(|segment| {
             pose[segment.index()]
@@ -942,6 +984,14 @@ fn animate(
                 .transform_point(Vec3::Y * 0.15)
                 + Vec3::Z * recoil
         });
+        if let Some(posture) = postures.get(&p.id) {
+            input.preferred_root = posture.preferred_root;
+            input.preferred_root.translation.z += recoil;
+            input.shoulders = posture.shoulders.map(|p| p + Vec3::Z * recoil);
+            input.poles = posture.poles;
+            input.stock_target = posture.stock_target.map(|p| p + Vec3::Z * recoil);
+            input.max_adjustment = posture.max_adjustment;
+        }
         // Existing anatomical meshes (including wounds/cores) consume the same
         // accepted solution below, rather than drawing a second pair of arms.
         input.visible_hands = [false; 6];
@@ -983,6 +1033,9 @@ fn animate(
             Visibility::Hidden
         };
         *t = rigs[&p.id][detail.segment.index()].transform();
+        if detail.segment == Segment::Thorax {
+            t.translation.z += feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
+        }
         let offset = t.rotation * detail.offset;
         t.translation += offset;
         t.scale = detail.scale;

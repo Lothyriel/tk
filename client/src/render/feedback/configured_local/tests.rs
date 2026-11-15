@@ -42,6 +42,62 @@ struct Fixture {
     base: Transform,
 }
 
+#[test]
+fn configured_local_stock_and_clothing_keep_contacts_and_ads_sight_line() {
+    for weapon in [WeaponKind::Rifle, WeaponKind::Smg] {
+        for armor in [
+            common::combat::ArmorKind::None,
+            common::combat::ArmorKind::Light,
+            common::combat::ArmorKind::Heavy,
+        ] {
+            let mut f = Fixture::new(weapon, 1.6);
+            f.app.world_mut().resource_mut::<ClientSession>().players[0].armor =
+                common::combat::ArmorState::from_loadout(common::combat::Loadout {
+                    armor,
+                    ..default()
+                });
+            for _ in 0..90 {
+                f.step();
+            }
+            f.app.world_mut().resource_mut::<LocalInput>().aim = true;
+            for _ in 0..180 {
+                f.step();
+                f.assert_contacts();
+            }
+            let pose = f.app.world().get::<ConfiguredPose>(f.root).unwrap();
+            let input = f
+                .app
+                .world()
+                .get::<voxel::configured::ConfiguredHandling>(f.root)
+                .unwrap();
+            let stock = weapon.spec().assembly.anchors[&common::catalog::AnchorKind::StockContact];
+            let contact = pose.solution.root.transform_point(stock.translation);
+            assert!(contact.distance(input.stock_target.unwrap()) < 2e-6);
+            assert!(
+                contact.distance(stock.translation) < 2e-6,
+                "the camera framing reference must retain the baseline sight line"
+            );
+            let depth = match armor {
+                common::combat::ArmorKind::None => 0.145,
+                common::combat::ArmorKind::Light => 0.1975,
+                common::combat::ArmorKind::Heavy => 0.203,
+            };
+            let rotation = Quat::from_rotation_y(-1.05);
+            let torso = stock.translation - rotation * Vec3::new(0.14, 0.1, -depth);
+            for (side, shoulder) in [-1.0, 1.0].into_iter().zip(pose.shoulders) {
+                assert!(
+                    shoulder.distance(torso + rotation * Vec3::new(side * 0.30, 0.1, 0.0)) < 2e-6
+                );
+            }
+            f.app.world_mut().resource_mut::<LocalInput>().aim = false;
+            for _ in 0..180 {
+                f.step();
+                f.assert_contacts();
+            }
+        }
+    }
+}
+
 impl Fixture {
     fn new(weapon: WeaponKind, aspect: f32) -> Self {
         let mut app = App::new();

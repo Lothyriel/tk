@@ -71,6 +71,14 @@ pub(super) fn prepare(
             continue;
         };
         let mut input = native::action(&entry.resolved, action, response.recoil, &player.mechanics);
+        if let Err(error) = native::brace_view(
+            &mut input,
+            &entry.resolved,
+            response.ads,
+            common::humanoid::configured::shoulder_cover(&player.armor),
+        ) {
+            input.preflight_error = Some(error);
+        }
         // Explicit first-person rig: shoulders/poles are in presentation space,
         // moving with framing and action layers, with the same 30/28 cm bones.
         // The world rig instead derives shoulders from its anatomical torso.

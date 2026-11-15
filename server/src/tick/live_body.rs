@@ -183,6 +183,7 @@ pub(super) fn advance(
             &mut Body,
             &mut ragdoll::Motion,
             Option<&Arsenal>,
+            Option<&ArmorState>,
         ),
         Without<PhysicsPiece>,
     >,
@@ -203,6 +204,7 @@ pub(super) fn advance(
         mut body,
         mut motion,
         arsenal,
+        armor,
     ) in &mut actors
     {
         if !health.alive() {
@@ -312,7 +314,7 @@ pub(super) fn advance(
             target_pose.root_drop = 0.0;
             target_pose.velocity = [0.0; 3];
             target_pose.foot_weight = [0.0; 2];
-            let rig = match ragdoll::evaluate(&target_pose, health, arsenal) {
+            let rig = match ragdoll::evaluate(&target_pose, health, arsenal, armor) {
                 Ok(rig) => {
                     motion.handling_error = None;
                     rig
