@@ -1,7 +1,9 @@
 # M4A1 modular kit
 
 Reference selection for TAR-26, reviewed 2026-11-15. Sources and runtime bindings
-are implemented; native acceptance remains pending.
+are implemented; native static review passed for the base, and near/far review
+passed for the compact/suppressed/AFG extremes. Temporal polish and optical zero remain
+separate slice gates.
 This sheet extends the [F/V/G contract](../WEAPON_REFERENCES.md):
 **F** is a published manufacturer fact, **V** is interpreted exterior geometry,
 and **G** is an authored game value. Images remain linked to their owners.
@@ -88,7 +90,8 @@ Its V interpretation uses the manufacturer's [side view][pmag-side] and
 not baked into the empty magazine. The continuous length is 0.14224 m.
 Near/far share 816 vertices / 408 triangles, 3 submissions and 24480 cached
 mesh bytes. Source tests cover its full magwell removal sweep and palm contact.
-Definition 120 supplies the 20-round capacity; native visual acceptance is pending.
+Definition 120 supplies the 20-round capacity, verified in native empty/tactical
+reload and raid reset (20 loaded initially; 21 after a full tactical replacement).
 
 [pmag-side]: https://magpul.com/media/catalog/product/cache/f8158826193ba5faa8b862a9bd1eb9e9/m/a/mag560-blk_magpul_pmag_20_ar_m4_gen_m3_02.1.jpg
 [pmag-oblique]: https://magpul.com/media/catalog/product/cache/f8158826193ba5faa8b862a9bd1eb9e9/m/a/mag560-blk_magpul_pmag_20_ar_m4_gen_m3_01.1.jpg
@@ -99,7 +102,8 @@ pad and hardware. MOE SL preserves the barrel channel, side vents and lower
 front extension. RVG and AFG-2 have separate rail jaws, hardware and authored
 surface contacts; AFG-2's triangle is open geometry. All four use the same
 near/far surfaces at this size. Their published envelopes and open spaces are
-checked independently of the mesher; native silhouette review is still pending.
+checked independently of the mesher; native silhouette review passed in the
+compact and suppressed/grip configurations at both LODs.
 
 | Source | Vertices / triangles | Submissions | Cached mesh bytes |
 | --- | --- | --- | --- |
@@ -237,7 +241,7 @@ Source geometry already identifies one rejected extreme: DD 10.3 + MOE SL +
 SFMB/RC2. The SL's extended lower nose reaches Z=-248.06 mm while the can's
 rear begins at -243.97 mm; their outer surfaces intersect over 4.09 mm
 longitudinally. RAS clears the same short suppressed chain. Both handguards
-clear the shared front tower/cap. The runtime matrix must reject the SL/can
+clear the shared front tower/cap. The runtime matrix rejects the SL/can
 interference through transformed bounds, not through a named combination rule.
 
 Headless evidence must include dimension/shape and magazine-sweep oracles,
@@ -254,7 +258,13 @@ fixed charging-handle corridor. Base reconstruction checks every part against
 the source assembly and preserves the 2.990 kg budget. Client fixtures exercise
 compact/SL/PMAG/CTR, suppressed/PRO/RVG and AFG-2 variants through local and
 remote ADS/reload paths, checking actual rendered contacts and rigid arms.
-These are engineering checks; native artistic/LOD acceptance remains pending.
+Native static review additionally checked compact, suppressed/PRO/RVG and
+short-RAS/SFMB/AFG assemblies at forced near and far LOD. Silhouettes, open
+spaces, device chains, rendered contacts and sight openings were retained.
+All six extreme runs passed dual-client UDP, every-third-snapshot peer loss,
+weapon cycles, loot/extraction and redeploy. Native screenshots verify sampled
+poses; they do not certify normal-speed animation quality or performance.
+Detailed run records and local artifact paths are in TAR-26.
 
 Native acceptance fixtures are selected with `scripts/playtest.py --clients 2
 --animation-review --weapon-debug --weapon-kit compact|suppressed|afg`.
