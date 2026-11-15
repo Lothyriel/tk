@@ -15,7 +15,7 @@ impl ViewAssets<'_> {
         &mut self,
         spec: &ResolvedWeapon,
         input: &ConfiguredHandling,
-    ) -> Result<Vec<Vec3>, String> {
+    ) -> Result<(Vec<Vec3>, Transform), String> {
         let pieces = self.bindings.pieces(spec)?;
         for (_, _, asset, _) in &pieces {
             self.assets
@@ -73,7 +73,7 @@ impl ViewAssets<'_> {
                 );
             }
         }
-        Ok(points)
+        Ok((points, solution.root))
     }
 }
 

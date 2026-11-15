@@ -584,14 +584,14 @@ fn drive(
                     if name == "weapon-pistol-ready" {
                         assert_eq!(local.weapon, WeaponKind::Pistol);
                         assert!(local.mechanics.chambered && local.mechanics.magazine_inserted);
-                        assert_eq!(local.ammo_in_mag, local.weapon_id.spec().magazine_size + 1);
+                        assert_eq!(local.ammo_in_mag, spec.magazine_size + 1);
                         assert_eq!(local.reload_remaining(), 0.0);
                     }
                 }
             }
             if elapsed > 10.0 {
                 assert_eq!(local.weapon_id, desired.primary);
-                assert_eq!(local.ammo_in_mag, desired.primary.spec().magazine_size);
+                assert_eq!(local.ammo_in_mag, spec.magazine_size);
                 assert_eq!(local.reload_remaining(), 0.0);
                 info!(
                     "WEAPON EXERCISE PASS primary empty, blocked trigger, interrupted reload, pistol shot/full reload, primary full reload; audio_entities=0"
@@ -618,7 +618,7 @@ fn drive(
                 .iter()
                 .any(|p| p.id == bot_id && !p.body.alive())
             {
-                assert!(local.ammo_in_mag < desired.primary.spec().magazine_size);
+                assert!(local.ammo_in_mag < spec.magazine_size);
                 info!(
                     "PLAYTEST authoritative sentry kill; ammo={}",
                     local.ammo_in_mag
@@ -701,7 +701,7 @@ fn drive(
             assert_eq!(p.secured, 1);
             assert_eq!(p.carried, 0);
             assert_eq!(session.raid.loot_available, [true; 3]);
-            assert_eq!(local.ammo_in_mag, desired.primary.spec().magazine_size);
+            assert_eq!(local.ammo_in_mag, spec.magazine_size);
             assert_eq!(local.body.anatomy.missing, 0);
             assert_eq!(local.body.anatomy.organs, [100.0; 4]);
             assert_eq!(local.body.anatomy.blood, 100.0);

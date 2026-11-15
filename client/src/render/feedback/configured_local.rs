@@ -105,9 +105,31 @@ pub(super) fn prepare(
         // Preview and publication share the solver and cached assets. A failed
         // preview still publishes the request so the assembler reports the
         // rejection and retains its previously accepted hierarchy/pose.
-        if displayed == WeaponKind::Pistol
-            && let Ok(points) = assets.preview(&entry.resolved, &input)
+        if (displayed == WeaponKind::Pistol
+            || (response.ads > 0.0
+                && entry
+                    .resolved
+                    .assembly
+                    .anchors
+                    .contains_key(&common::catalog::AnchorKind::Sight)))
+            && let Ok((points, solved_root)) = assets.preview(&entry.resolved, &input)
         {
+            if displayed != WeaponKind::Pistol {
+                // A shorter stock moves the solved weapon relative to its fixed
+                // shoulder pocket. Frame the entire rigid rig from that accepted
+                // pose, otherwise the receiver/rear iron crosses the near plane.
+                // This preserves all palm/stock contacts and authored eye relief.
+                let sight = entry.resolved.assembly.anchors[&common::catalog::AnchorKind::Sight];
+                let offset = input.preferred_root.transform_point(sight.translation)
+                    - solved_root.transform_point(sight.translation);
+                let correction = view.rotation
+                    * root.rotation
+                    * offset
+                    * common::weapon_animation::ease(response.ads);
+                view.translation += correction;
+                commands.entity(entity).insert((request, input));
+                continue;
+            }
             let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
             let points: Vec<_> = points
                 .into_iter()
