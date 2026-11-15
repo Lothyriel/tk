@@ -101,6 +101,7 @@ pub(super) fn lobby_tick(
         for (entity, mut pose) in &mut poses {
             *pose = default();
             commands.entity(entity).remove::<super::physical::Corpsed>();
+            commands.entity(entity).remove::<super::live_body::Body>();
         }
         for entity in &bots {
             commands.entity(entity).despawn();

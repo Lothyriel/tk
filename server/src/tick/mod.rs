@@ -6,8 +6,11 @@ use bevy_renet2::prelude::{DefaultChannel, RenetServer, ServerEvent};
 use common::{combat::*, raid::*, *};
 
 mod bots;
+mod live_body;
+mod locomotion;
 mod metrics;
 mod physical;
+mod ragdoll;
 mod raid;
 mod simulation;
 use bots::{Bot, bot_tick};
@@ -34,6 +37,8 @@ impl bevy::prelude::Plugin for Plugin {
                     lobby_tick,
                     bot_tick,
                     physical::physical_tick,
+                    live_body::begin_falls,
+                    live_body::advance,
                     physx_tick,
                     weapons_tick,
                     sync_actor_colliders,
@@ -44,7 +49,11 @@ impl bevy::prelude::Plugin for Plugin {
             .add_systems(
                 FixedUpdate,
                 (
+                    live_body::readback,
+                    locomotion::advance,
+                    ragdoll::capture,
                     projectiles_tick,
+                    physical::spawn_dead,
                     objectives_tick,
                     sync_ground_state,
                     physical::expire_pieces,
@@ -123,6 +132,13 @@ fn character_bundle(id: u64, position: Vec3) -> impl Bundle {
         Collider::capsule_y(PLAYER_COLLIDER_HALF_HEIGHT, PLAYER_COLLIDER_RADIUS),
         CollisionGroups::new(Group::GROUP_3, Group::GROUP_1 | Group::GROUP_3),
         KinematicCharacterController {
+            // KCC shape queries do not inherit the collider's groups. Debris
+            // must not become support/autosteps that launch the living actor
+            // immediately before its momentum is transferred to the ragdoll.
+            filter_groups: Some(CollisionGroups::new(
+                Group::GROUP_3,
+                Group::GROUP_1 | Group::GROUP_3,
+            )),
             autostep: Some(CharacterAutostep {
                 max_height: CharacterLength::Absolute(PLAYER_STEP_HEIGHT),
                 min_width: CharacterLength::Absolute(PLAYER_COLLIDER_RADIUS * 2.0),
@@ -133,6 +149,9 @@ fn character_bundle(id: u64, position: Vec3) -> impl Bundle {
         },
         MovementState::default(),
         common::humanoid::PoseState::default(),
+        locomotion::Gait::default(),
+        ragdoll::Motion::default(),
+        ragdoll::Impact::default(),
         Transform::from_translation(position),
     )
 }
@@ -191,6 +210,7 @@ fn expire_input(time: Res<Time>, mut players: Query<(&mut ClientInput, &LastInpu
             input.run = false;
             input.jump = false;
             input.fire = false;
+            input.aim = false;
             input.interact = false;
         }
     }

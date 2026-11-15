@@ -20,6 +20,7 @@ pub(super) fn physx_tick(
         &mut KinematicCharacterController,
         Option<&KinematicCharacterControllerOutput>,
         &mut Transform,
+        Has<super::live_body::Body>,
     )>,
 ) {
     let Ok(context) = context.single() else {
@@ -37,6 +38,7 @@ pub(super) fn physx_tick(
         mut controller,
         output,
         mut transform,
+        articulated,
     ) in &mut query
     {
         if raid.phase != RaidPhase::Active || player.status != RaidStatus::Active || !body.alive() {
@@ -45,8 +47,13 @@ pub(super) fn physx_tick(
             continue;
         }
         if matches!(pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering) {
-            movement.velocity.x *= 0.92;
-            movement.velocity.z *= 0.92;
+            if articulated {
+                movement.velocity = Vec3::ZERO;
+                controller.translation = None;
+                continue;
+            }
+            movement.velocity.x *= (-delta * 3.0).exp();
+            movement.velocity.z *= (-delta * 3.0).exp();
             movement.velocity.y -= PLAYER_GRAVITY * delta;
             controller.translation = Some(movement.velocity * delta);
             continue;
@@ -168,7 +175,7 @@ pub(super) fn weapons_tick(
                     } else {
                         0.0
                     });
-        let muzzle = eye + rotation * Vec3::from(weapon.spec().barrel_offset);
+        let muzzle = eye + rotation * common::weapon_animation::barrel_offset(weapon, pose.ads);
         let barrel = muzzle - eye;
         // A barrel protruding through cover must not bypass that cover.
         let obstructed = context
@@ -228,11 +235,13 @@ pub(super) fn projectiles_tick(
             Option<&mut PoseState>,
             Option<&Client>,
             Has<super::Bot>,
+            Option<&mut super::ragdoll::Impact>,
+            Option<&mut super::live_body::Body>,
         ),
         Without<Projectile>,
     >,
     surfaces: Query<(&SurfaceKind, &Collider, &Transform), Without<Projectile>>,
-    physics_pieces: Query<(), With<super::physical::PhysicsPiece>>,
+    mut physics_pieces: Query<(Entity, &mut super::physical::PhysicsPiece)>,
 ) {
     let Ok(context) = context.single() else {
         return;
@@ -261,7 +270,7 @@ pub(super) fn projectiles_tick(
             let wall = context.cast_ray_and_get_normal(start, direction, remaining, true, filter);
             let max = wall.as_ref().map_or(remaining, |(_, h)| h.time_of_impact);
             let mut nearest = None;
-            for (target, body, _, movement, t, p, pose, _, _) in &players {
+            for (target, body, _, movement, t, p, pose, _, _, _, _) in &players {
                 if target == projectile.owner_entity
                     || !body.alive()
                     || p.status != RaidStatus::Active
@@ -292,9 +301,20 @@ pub(super) fn projectiles_tick(
                     }
                 }
             }
-            if let Some((target, segment, _)) = nearest {
-                let (_, mut body, mut armor, movement, t, _, mut pose, client, bot) =
-                    players.get_mut(target).unwrap();
+            if let Some((target, segment, distance)) = nearest {
+                let (
+                    _,
+                    mut body,
+                    mut armor,
+                    movement,
+                    t,
+                    _,
+                    mut pose,
+                    client,
+                    bot,
+                    mut impact,
+                    mut articulated,
+                ) = players.get_mut(target).unwrap();
                 let fallback = PoseState {
                     crouch: if movement.crouched { 1.0 } else { 0.0 },
                     ..default()
@@ -319,11 +339,31 @@ pub(super) fn projectiles_tick(
                     pose.impulse =
                         (Vec3::from(pose.impulse) + direction * projectile.damage * 0.028).into();
                 }
+                if let Some(impact) = impact.as_deref_mut() {
+                    impact.add(
+                        direction * projectile.damage * 0.14,
+                        start + direction * distance,
+                    );
+                }
                 if mask != 0 {
+                    let mut reused = 0;
+                    if let Some(articulated) = articulated.as_deref_mut() {
+                        for (piece_entity, mut piece) in &mut physics_pieces {
+                            if piece.owner == client.map_or(0, |c| c.id)
+                                && !piece.detached
+                                && mask & (1 << piece.segment.index()) != 0
+                            {
+                                piece.detached = true;
+                                reused |= 1 << piece.segment.index();
+                                articulated.parts[piece.segment.index()] = None;
+                                commands.entity(piece_entity).remove::<ImpulseJoint>();
+                            }
+                        }
+                    }
                     super::physical::spawn_fragments(
                         &mut commands,
                         &mut world_state,
-                        mask,
+                        mask & !reused,
                         &rig,
                         t,
                         movement.velocity + direction * 3.0,
@@ -392,6 +432,9 @@ pub(super) fn sync_ground_state(
     )>,
 ) {
     for (mut movement, output, mut pose) in &mut query {
+        if pose.physical.is_some() {
+            continue;
+        }
         if output.grounded && !movement.grounded && movement.velocity.y < -2.0 {
             pose.landing = (-movement.velocity.y / 10.0).min(1.0);
             if movement.velocity.y < -9.0 {
