@@ -50,10 +50,11 @@ The displayed root/hand response remains filtered through interruption. Once
 the server commits insertion, the magazine pose is seated without filter lag;
 bolt state likewise follows the authoritative commit. Cancellation clears the
 incoming binding and displays only the committed installed location.
-During slot switch, the response retains the outgoing weapon's last known
-mechanical state and collapses its reload to the committed installed magazine.
-That state follows the lowering weapon until the displayed slot changes; the
-new pistol/rifle snapshot cannot make its predecessor's magazine reappear.
+During slot switch, the server replaces reload with unequip while preserving
+the committed installed magazine. That outgoing snapshot drives lowering until
+the authoritative slot marker; the next snapshot presents the incoming weapon
+in its own equip pose. There is no independent client swap timer, and the new
+pistol/rifle snapshot cannot make its predecessor's magazine reappear.
 
 The support hand approaches and leaves the contact along a left-side clearance
 arc, shared by server anatomy and both client rigs. At full contact the arc is

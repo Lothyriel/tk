@@ -3,6 +3,7 @@ use crate::WeaponKind;
 use bevy::prelude::*;
 
 pub mod m4a1;
+pub mod manipulation;
 
 #[derive(Debug, Clone, Copy)]
 pub struct WeaponRig {

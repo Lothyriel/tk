@@ -123,7 +123,17 @@ pub(super) fn prepare(
         // Preview and publication share the solver and cached assets. A failed
         // preview still publishes the request so the assembler reports the
         // rejection and retains its previously accepted hierarchy/pose.
+        let inspecting =
+            response.displayed_mechanics.kind == Some(common::catalog::ManipulationKind::Inspect);
+        let lowering =
+            common::weapon_animation::manipulation::lowering(&response.displayed_mechanics)
+                || !player.alive
+                || !matches!(
+                    player.pose.mode,
+                    PhysicalMode::Standing | PhysicalMode::Stumbling
+                );
         if (matches!(displayed, WeaponKind::Pistol | WeaponKind::Rifle)
+            || (!response.displayed_mechanics.reloading() && !lowering)
             || (response.ads > 0.0
                 && visual
                     .assembly
@@ -131,55 +141,58 @@ pub(super) fn prepare(
                     .contains_key(&common::catalog::AnchorKind::Sight)))
             && let Ok(preview) = assets.preview(visual, &input)
         {
-            if displayed != WeaponKind::Pistol {
+            if displayed != WeaponKind::Pistol
+                && !inspecting
+                && response.ads > 0.0
+                && let Some(sight) = visual
+                    .assembly
+                    .anchors
+                    .get(&common::catalog::AnchorKind::Sight)
+            {
                 // A shorter stock moves the solved weapon relative to its fixed
                 // shoulder pocket. Frame the entire rigid rig from that accepted
                 // pose, otherwise the receiver/rear iron crosses the near plane.
                 // This preserves all palm/stock contacts and authored eye relief.
-                if let Some(sight) = visual
-                    .assembly
-                    .anchors
-                    .get(&common::catalog::AnchorKind::Sight)
-                {
-                    let offset = input.preferred_root.transform_point(sight.translation)
-                        - preview.root.transform_point(sight.translation);
-                    let correction = view.rotation
-                        * root.rotation
-                        * offset
-                        * common::weapon_animation::ease(response.ads);
-                    view.translation += correction;
-                }
-                if displayed == WeaponKind::Rifle {
-                    let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
-                    let retreat = preview.near_points.iter().fold(0.0_f32, |depth, point| {
-                        depth.max(to_eye.transform_point3(*point).z + projection.near + 0.01)
-                    });
-                    // Move the complete rig down the sight line, preserving
-                    // rigid contacts, while recoil/mechanisms approach the eye.
-                    view.translation -= eye.rotation * Vec3::Z * retreat;
-                }
-                commands.entity(entity).insert((request, input));
-                continue;
-            }
-            let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
-            let points: Vec<_> = preview
-                .points
-                .into_iter()
-                .map(|p| to_eye.transform_point3(p))
-                .collect();
-            let lowering = response.swap > 0.05
-                || !player.alive
-                || !matches!(
-                    player.pose.mode,
-                    PhysicalMode::Standing | PhysicalMode::Stumbling
-                );
-            let correction = if lowering {
-                response.frame_offset * (-time.delta_secs() * 14.0).exp()
+                let offset = input.preferred_root.transform_point(sight.translation)
+                    - preview.root.transform_point(sight.translation);
+                let correction = view.rotation
+                    * root.rotation
+                    * offset
+                    * common::weapon_animation::ease(response.ads);
+                view.translation += correction;
+                response.frame_offset *= (-time.delta_secs() * 14.0).exp();
+                view.translation += eye.rotation * response.frame_offset;
             } else {
-                pistol_frame_correction(&points, projection, response.ads)
-            };
-            response.frame_offset = correction;
-            view.translation += eye.rotation * correction;
+                let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
+                let correction = if lowering
+                    || (displayed != WeaponKind::Pistol && response.displayed_mechanics.reloading())
+                {
+                    response.frame_offset * (-time.delta_secs() * 14.0).exp()
+                } else {
+                    let points: Vec<_> = preview
+                        .points
+                        .into_iter()
+                        .map(|p| to_eye.transform_point3(p))
+                        .collect();
+                    pistol_frame_correction(&points, projection, response.ads)
+                };
+                response.frame_offset = correction;
+                view.translation += eye.rotation * correction;
+            }
+            if displayed == WeaponKind::Rifle {
+                let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
+                let retreat = preview.near_points.iter().fold(0.0_f32, |depth, point| {
+                    depth.max(to_eye.transform_point3(*point).z + projection.near + 0.01)
+                });
+                // Move the complete rig down the sight line, preserving
+                // rigid contacts, while recoil/mechanisms approach the eye.
+                view.translation -= eye.rotation * Vec3::Z * retreat;
+            }
+        } else if response.frame_offset.length_squared() > 1e-10 {
+            // Retain the current camera correction through interrupted inspect,
+            // then return smoothly instead of snapping on the cancellation frame.
+            response.frame_offset *= (-time.delta_secs() * 14.0).exp();
+            view.translation += eye.rotation * response.frame_offset;
         }
         commands.entity(entity).insert((request, input));
     }

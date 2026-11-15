@@ -109,6 +109,12 @@ For less first-person camera movement, launch the client with
 `TK_CAMERA_BOB=reduced` or `TK_CAMERA_BOB=off`. This changes only the
 cosmetic step motion, not stance, mouse aim, or collision.
 
+Inspect now presents both sides of the equipped assembly while preserving its
+ammunition and grips. Equip/unequip presentation follows the server's action
+clock and slot marker. Hip/inspect framing uses the actual configured bounds
+without changing FOV. In-game handling review remains pending; see the
+[handling contract](weapons/handling.md).
+
 ### Configure a weapon
 
 In the lobby, press **V**. Choose primary or sidearm, edit the draft and click

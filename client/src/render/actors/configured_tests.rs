@@ -242,7 +242,12 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
     assert!(
         app.world()
             .get::<configured::ConfigurationVisualError>(weapon)
-            .is_none()
+            .is_none(),
+        "{:?}, mechanics={:?}",
+        app.world()
+            .get::<configured::ConfigurationVisualError>(weapon)
+            .map(|e| &e.0),
+        app.world().resource::<ClientSession>().players[0].mechanics,
     );
     let accepted = app.world().get::<ConfiguredPose>(weapon).unwrap();
     let hidden_meshes = descendants(app.world(), weapon)
@@ -795,12 +800,16 @@ fn configured_remote_m4a1_kit_extremes_keep_rendered_contacts_and_piece_identity
         for kind in [
             common::catalog::ManipulationKind::TacticalReload,
             common::catalog::ManipulationKind::EmptyReload,
+            common::catalog::ManipulationKind::Inspect,
+            common::catalog::ManipulationKind::Unequip,
+            common::catalog::ManipulationKind::Equip,
         ] {
             for step in 0..=30 {
                 {
                     let mut session = app.world_mut().resource_mut::<ClientSession>();
                     session.players[0].mechanics.kind = Some(kind);
                     session.players[0].mechanics.fraction = step as f32 / 30.0;
+                    session.players[0].pose.ads = 0.0;
                 }
                 app.update();
                 assert_arms(&app, body, root);
