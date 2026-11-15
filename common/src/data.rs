@@ -134,5 +134,20 @@ mod tests {
             bytes.len()
         );
         assert!(bytes.len() < 60_000);
+        for player in &mut worst.players {
+            let rig = evaluate_pose(&PoseState::default(), 1.0, 1.0);
+            player.pose.physical = Some(Box::new(PackedRig::pack(&rig)));
+        }
+        let packed = encode(&worst);
+        println!(
+            "TK MAX PHYSICAL SNAPSHOT actors=32 physical_rigs=32 pieces=320 bytes={}",
+            packed.len()
+        );
+        assert!(
+            packed.len() < 60_000,
+            "physical rig state must retain the existing network budget"
+        );
+        let decoded = try_decode::<WorldSnapshot>(&packed).unwrap();
+        assert!(decoded.players.iter().all(|p| p.pose.physical.is_some()));
     }
 }
