@@ -112,12 +112,12 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 Physics and authoritative gameplay can be tested without opening the game. The fixtures in `server/src/tick/tests.rs` run the real Bevy/Rapier systems with `MinimalPlugins` and a manual 1/128-second timestep, advancing simulation as fast as the CPU allows without rendering, a GPU context, real-time waits or a listening UDP socket. From the root:
 
 ```sh
-cargo test -p server real_rapier -- --nocapture
-cargo test -p server ragdoll_running_and_resting_contact_matrix -- --nocapture
-cargo test -p common -p server -j 4
+python scripts/verify.py --package server --filter real_rapier
+python scripts/verify.py --package server --filter ragdoll_running_and_resting_contact_matrix
+python scripts/verify.py
 ```
 
-Use a focused test during physics iteration, then the broader suite; the first build can still take time. These checks validate engine state, not visible animation, camera framing, interpolation or real network delivery. See `AGENTS.md` for the headless-first workflow used by agents and `/goals`.
+Use a focused test during physics iteration, then the broader suite; the first build can still take time. `python scripts/verify.py --mode full` adds workspace formatting/check/Clippy/tests, without starting an application; `--mode docs` is the Cargo-free path for documentation-only edits. These checks validate engine/tooling state, not visible animation, camera framing, interpolation or real network delivery. See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup and command details. The short `AGENTS.md` guide routes agents and `/goals` through the local `tk-workflow` skill, with separate TLC, verification, contribution and game-state procedures.
 
 ### Rendered end-to-end acceptance
 
@@ -162,4 +162,4 @@ The ongoing polish evidence is indexed in [ANIMATION_RAGDOLL.md](ANIMATION_RAGDO
 - `client/src/render/feedback.rs`: per-weapon recoil impulse, spring/damping, flash lifetime, reload/swap and camera feedback. Audio assets in `assets/sound/` are intentionally retained but not loaded by firing.
 - `common/src/weapon_animation.rs` and `client/src/render/weapons.rs`: original grip/muzzle anchors, per-weapon empty/tactical choreography, and cached first-person weapon assemblies; curves do not grant ammo or actions.
 
-**Latest review.** On 2026-11-14, the headless-first/no-default-video workflow was checked against the entry points, production Rapier schedule and capture flags, with the eight-case ragdoll matrix and two projectile/cover tests passing without a client; gameplay and the Mermaid flow are unchanged, and prior visual/performance acceptance gaps remain open.
+**Latest review.** On 2026-11-15, local skill routing, contributor commands and reconciled memory were reviewed with 20 tooling tests and 112 separately run Rust tests passing while full remains blocked by a documented preexisting Clippy lint; gameplay and the Mermaid flow are unchanged, and prior visual/performance acceptance gaps remain open.

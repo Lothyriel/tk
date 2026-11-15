@@ -70,6 +70,25 @@ class ProjectWorkflowTests(unittest.TestCase):
             self.assertTrue(example["prompt"])
             self.assertTrue(example["expected_output"])
 
+    def test_prior_decisions_are_preserved_and_historical_authority_is_scoped(self):
+        # DEV-09: compare historical entries, allowing future decisions to append.
+        archive = (ROOT / ".specs/history/animation-ragdoll-state-2026-11-14.md").read_text(encoding="utf-8")
+        current = (ROOT / ".specs/STATE.md").read_text(encoding="utf-8")
+        archived_decisions = re.findall(r"^- AD-\d+:.*$", archive, re.M)
+        self.assertEqual(len(archived_decisions), 13)
+        current_decisions = re.findall(r"^- AD-\d+:.*$", current.split("## Handoff")[0], re.M)
+        self.assertEqual(current_decisions[:13], archived_decisions)
+        self.assertIn("do not grant standing authority", current)
+        self.assertIn("history/animation-ragdoll-state-2026-11-14.md", current)
+
+    def test_old_pipeline_instructions_exist_only_in_the_history(self):
+        archive = (ROOT / ".specs/history/animation-ragdoll-state-2026-11-14.md").read_text(encoding="utf-8")
+        active = (ROOT / ".specs/STATE.md").read_text(encoding="utf-8").split("## Handoff", 1)[1]
+        self.assertIn("Active exclusive pipeline:", archive)
+        self.assertNotIn("Active exclusive pipeline:", active)
+        for old_runtime_id in re.findall(r"\b(?:sh_|ses_)[A-Za-z0-9]+", archive):
+            self.assertNotIn(old_runtime_id, active)
+
 
 if __name__ == "__main__":
     unittest.main()
