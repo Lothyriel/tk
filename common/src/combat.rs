@@ -216,6 +216,7 @@ impl SurfaceKind {
 
 #[derive(Debug, Component)]
 pub struct Arsenal {
+    pub recoil: crate::recoil::RecoilState,
     equipment: Vec<(EquipmentSlot, EquippedWeapon)>,
     pub active: EquipmentSlot,
     /// Derived compatibility value for HUD; never drives mechanical commits.
@@ -280,6 +281,7 @@ impl Arsenal {
         };
         loadout.primary = primary.spec().definition;
         Ok(Self {
+            recoil: Default::default(),
             equipment,
             active: EquipmentSlot::Primary,
             reload_remaining: 0.0,

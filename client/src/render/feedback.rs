@@ -8,23 +8,8 @@ use common::weapon_animation::{WeaponAction, reload_action};
 use common::{humanoid::PhysicalMode, *};
 
 mod configured_local;
+mod recoil;
 
-// Each pair is (lateral impulse, vertical impulse scale) for one shot in the
-// rifle's repeating pattern. Keep values bounded so the spread stays legible.
-const RIFLE_RECOIL_PATTERN: [(f32, f32); 8] = [
-    (0.00, 1.00),
-    (-0.30, 0.94),
-    (0.18, 1.08),
-    (-0.12, 0.98),
-    (0.34, 1.12),
-    (-0.24, 0.90),
-    (0.10, 1.04),
-    (-0.06, 0.96),
-];
-const RIFLE_RECOIL_PITCH_IMPULSE: f32 = 1.25;
-const RIFLE_RECOIL_YAW_IMPULSE: f32 = 0.28;
-const RIFLE_RECOIL_LATERAL_JITTER: f32 = 0.035;
-const RIFLE_RECOIL_VERTICAL_JITTER: f32 = 0.025;
 const CASING_LIFETIME: f32 = 60.0;
 const CASING_GROUND_HEIGHT: f32 = 0.105;
 
@@ -34,6 +19,15 @@ struct CasingSpec {
     length: f32,
     ejection_back: f32,
     ejection_side: f32,
+}
+
+fn casing_jitter(mut bits: u32) -> f32 {
+    bits ^= bits >> 16;
+    bits = bits.wrapping_mul(0x7feb_352d);
+    bits ^= bits >> 15;
+    bits = bits.wrapping_mul(0x846c_a68b);
+    bits ^= bits >> 16;
+    bits as f32 / u32::MAX as f32 * 2.0 - 1.0
 }
 
 fn casing_spec(weapon: WeaponKind) -> CasingSpec {
@@ -59,27 +53,6 @@ fn casing_spec(weapon: WeaponKind) -> CasingSpec {
     }
 }
 
-fn pattern_jitter(seed: u32) -> f32 {
-    let mut bits = seed;
-    bits ^= bits >> 16;
-    bits = bits.wrapping_mul(0x7feb_352d);
-    bits ^= bits >> 15;
-    bits = bits.wrapping_mul(0x846c_a68b);
-    bits ^= bits >> 16;
-    bits as f32 / u32::MAX as f32 * 2.0 - 1.0
-}
-
-fn rifle_recoil_pattern(shot_index: u32, shot_id: u64) -> (f32, f32) {
-    let (lateral, vertical) =
-        RIFLE_RECOIL_PATTERN[shot_index as usize % RIFLE_RECOIL_PATTERN.len()];
-    let seed = shot_id as u32 ^ shot_index.rotate_left(13);
-    (
-        (lateral + pattern_jitter(seed) * RIFLE_RECOIL_LATERAL_JITTER).clamp(-0.4, 0.4),
-        (vertical + pattern_jitter(seed.wrapping_add(0x9e37_79b9)) * RIFLE_RECOIL_VERTICAL_JITTER)
-            .clamp(0.85, 1.17),
-    )
-}
-
 pub struct Plugin;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct PrepareLocal;
@@ -89,9 +62,9 @@ impl bevy::prelude::Plugin for Plugin {
             .add_systems(
                 Update,
                 (
-                    (advance, apply_local_camera_recoil)
-                        .chain()
-                        .before(super::sync_local_view),
+                    advance
+                        .before(super::sync_local_view)
+                        .before(super::sync_local_player_rotation),
                     animate_local.after(super::sync_local_view),
                     configured_local::prepare
                         .after(animate_local)
@@ -243,7 +216,7 @@ fn update_casings(
         }
         let up = right.cross(direction).normalize_or_zero();
         let spec = casing_spec(shot.weapon.class());
-        let jitter = pattern_jitter(shot.id as u32);
+        let jitter = casing_jitter(shot.id as u32);
         let position =
             muzzle - direction * spec.ejection_back + right * spec.ejection_side + up * 0.035;
         let velocity =
@@ -268,11 +241,7 @@ fn update_casings(
 pub(super) struct Response {
     pub recoil: f32,
     velocity: f32,
-    recoil_pitch: f32,
-    recoil_pitch_velocity: f32,
-    recoil_yaw: f32,
-    recoil_yaw_velocity: f32,
-    rifle_shot_count: u32,
+    angular: recoil::Presentation,
     pub flash: f32,
     last: Option<u64>,
     weapon: Option<WeaponKind>,
@@ -293,12 +262,6 @@ impl Response {
     fn step(&mut self, dt: f32) {
         self.velocity += (-self.recoil * 180.0 - self.velocity * 23.0) * dt;
         self.recoil = (self.recoil + self.velocity * dt).clamp(0.0, 0.11);
-        self.recoil_pitch_velocity +=
-            (-self.recoil_pitch * 180.0 - self.recoil_pitch_velocity * 23.0) * dt;
-        self.recoil_pitch = (self.recoil_pitch + self.recoil_pitch_velocity * dt).clamp(0.0, 0.12);
-        self.recoil_yaw_velocity +=
-            (-self.recoil_yaw * 180.0 - self.recoil_yaw_velocity * 23.0) * dt;
-        self.recoil_yaw = (self.recoil_yaw + self.recoil_yaw_velocity * dt).clamp(-0.035, 0.035);
         self.flash = (self.flash - dt).max(0.0);
         self.swap = (self.swap - dt * 4.0).max(0.0);
         if self.swap <= 0.5 {
@@ -312,24 +275,6 @@ impl Response {
         self.last = Some(shot.id);
         self.flash = 0.055;
         let weapon = shot.weapon.class();
-        let (lateral, vertical) = if weapon == WeaponKind::Rifle {
-            rifle_recoil_pattern(self.rifle_shot_count, shot.id)
-        } else {
-            (0.0, 1.0)
-        };
-        let (pitch_impulse, yaw_impulse) = match weapon {
-            WeaponKind::Rifle => (
-                RIFLE_RECOIL_PITCH_IMPULSE * vertical,
-                RIFLE_RECOIL_YAW_IMPULSE * lateral,
-            ),
-            WeaponKind::Smg => (0.9, 0.0),
-            WeaponKind::Pistol => (1.9, 0.0),
-        };
-        self.recoil_pitch_velocity += pitch_impulse;
-        self.recoil_yaw_velocity += yaw_impulse;
-        if weapon == WeaponKind::Rifle {
-            self.rifle_shot_count = self.rifle_shot_count.wrapping_add(1);
-        }
         self.velocity = (self.velocity
             + match weapon {
                 WeaponKind::Rifle => 1.35,
@@ -350,7 +295,20 @@ impl Response {
 pub(super) struct Feedback {
     pub responses: HashMap<u64, Response>,
     raid: u32,
-    applied_local_recoil: Vec2,
+    presentation_time: f64,
+}
+
+impl Feedback {
+    pub(super) fn camera(&self, id: u64, voluntary: CameraInput) -> CameraInput {
+        let angles = self.responses.get(&id).map_or(Vec2::ZERO, |response| {
+            response.angular.angles(self.presentation_time)
+        });
+        common::recoil::RecoilState {
+            angles: angles.into(),
+            ..default()
+        }
+        .camera(voluntary)
+    }
 }
 #[derive(Component)]
 pub(crate) struct Flash;
@@ -405,11 +363,16 @@ fn locomotion_offset(phase: f32, speed: f32, ads: f32) -> Vec3 {
 
 pub(super) fn advance(
     time: Res<Time>,
+    real_time: Option<Res<Time<Real>>>,
     session: Res<ClientSession>,
     mut feedback: ResMut<Feedback>,
     local_input: Option<Res<LocalInput>>,
     local_id: Option<Res<PlayerId>>,
 ) {
+    let now = real_time
+        .as_ref()
+        .map_or(time.elapsed_secs_f64(), |t| t.elapsed_secs_f64());
+    feedback.presentation_time = now;
     if feedback.raid != session.raid.raid_id {
         feedback.responses.clear();
         feedback.raid = session.raid.raid_id;
@@ -419,6 +382,20 @@ pub(super) fn advance(
     }
     for player in &session.players {
         let response = feedback.responses.entry(player.id).or_default();
+        let rate = session
+            .configurations
+            .cache
+            .get(session.configurations.cache.epoch(), player.configuration)
+            .map_or(player.weapon_id.spec().recoil.return_rate, |entry| {
+                entry.resolved.recoil.return_rate
+            });
+        response.angular.observe(
+            player.recoil.unpack(),
+            session.last_sequence,
+            now,
+            (now - session.last_received).max(0.0) as f32,
+            rate,
+        );
         if response.weapon != Some(player.weapon) {
             response.swap = 1.0;
             if response.displayed.is_none() {
@@ -436,10 +413,7 @@ pub(super) fn advance(
             response.flash = 0.0;
             response.recoil = 0.0;
             response.velocity = 0.0;
-            response.recoil_pitch = 0.0;
-            response.recoil_pitch_velocity = 0.0;
-            response.recoil_yaw = 0.0;
-            response.recoil_yaw_velocity = 0.0;
+            response.angular = Default::default();
         }
         let w = response.displayed.unwrap_or(player.weapon);
         let fraction = if player.mechanics.reloading() && w == player.weapon {
@@ -558,33 +532,6 @@ pub(super) fn advance(
             response.last = Some(shot.id);
         }
     }
-}
-
-fn apply_recoil_to_camera(camera: &mut CameraInput, applied: &mut Vec2, target: Vec2) {
-    let base_yaw = camera.yaw - applied.x;
-    camera.yaw = base_yaw + target.x;
-
-    let base_pitch = camera.pitch - applied.y;
-    camera.pitch = (base_pitch + target.y).clamp(-1.56, 1.56);
-    *applied = Vec2::new(camera.yaw - base_yaw, camera.pitch - base_pitch);
-}
-
-fn apply_local_camera_recoil(
-    id: Res<PlayerId>,
-    mut feedback: ResMut<Feedback>,
-    mut input: ResMut<LocalInput>,
-) {
-    let target = feedback
-        .responses
-        .get(&id.0)
-        .map_or(Vec2::ZERO, |response| {
-            Vec2::new(response.recoil_yaw, response.recoil_pitch)
-        });
-    apply_recoil_to_camera(
-        &mut input.camera,
-        &mut feedback.applied_local_recoil,
-        target,
-    );
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
@@ -1115,20 +1062,7 @@ mod tests {
     }
 
     #[test]
-    fn rifle_recoil_pattern_has_bounded_seeded_variation_and_reduced_impulse() {
-        let seeded = rifle_recoil_pattern(0, 1);
-        assert_eq!(seeded, rifle_recoil_pattern(0, 1));
-        assert_ne!(rifle_recoil_pattern(0, 1), rifle_recoil_pattern(0, 2));
-        for (lateral, vertical) in RIFLE_RECOIL_PATTERN {
-            assert!((-0.4..=0.4).contains(&lateral));
-            assert!((0.85..=1.17).contains(&vertical));
-        }
-        for shot in 0..64 {
-            let (lateral, vertical) = rifle_recoil_pattern(shot, u64::from(shot) * 17);
-            assert!((-0.4..=0.4).contains(&lateral));
-            assert!((0.85..=1.17).contains(&vertical));
-        }
-
+    fn confirmed_event_has_cosmetic_kick_but_does_not_inject_angular_recoil() {
         let mut response = Response::default();
         response.shot(&FiredProjectileData {
             id: 1,
@@ -1139,45 +1073,64 @@ mod tests {
             direction: [0.0, 0.0, -1.0],
         });
         assert!((response.recoil - 0.010).abs() < f32::EPSILON);
+        assert_eq!(response.angular.angles(0.1), Vec2::ZERO);
     }
 
     #[test]
-    fn local_camera_recoil_moves_authoritative_bore_up_and_recovers() {
+    fn local_camera_recoil_never_changes_serialized_voluntary_input() {
         let mut app = App::new();
         let mut feedback = Feedback::default();
         let response = feedback.responses.entry(7).or_default();
-        response.recoil_pitch = 0.08;
-        response.recoil_yaw = 0.02;
+        response.angular.observe(
+            common::recoil::RecoilState {
+                angles: [0.02, 0.08],
+                ..default()
+            },
+            1,
+            0.0,
+            0.0,
+            14.0,
+        );
+        feedback.presentation_time = 0.05;
         app.insert_resource(feedback)
             .insert_resource(PlayerId(7))
             .init_resource::<LocalInput>()
-            .add_systems(Update, apply_local_camera_recoil);
-
+            .add_systems(
+                Update,
+                (
+                    super::super::sync_local_view,
+                    super::super::sync_local_player_rotation,
+                ),
+            );
+        app.world_mut().spawn((
+            LocalPlayer,
+            PlayerVisualState::default(),
+            Transform::default(),
+        ));
+        let view = app
+            .world_mut()
+            .spawn((
+                LocalView,
+                super::super::BaseLocalOffset(Vec3::ZERO),
+                Transform::default(),
+            ))
+            .id();
+        let before = data::encode(&**app.world().resource::<LocalInput>());
         app.update();
-        let camera = &app.world().resource::<LocalInput>().camera;
-        let bore = Quat::from(camera) * -Vec3::Z;
-        assert!(
-            bore.y > 0.0,
-            "recoil must raise the authoritative bore: {bore:?}"
+        let bore = app.world().get::<Transform>(view).unwrap().rotation * Vec3::NEG_Z;
+        assert!(bore.y > 0.0, "presentation must raise the view: {bore:?}");
+        assert_eq!(
+            data::encode(&**app.world().resource::<LocalInput>()),
+            before
         );
-        assert!((camera.yaw - 0.02).abs() < 0.001);
-
-        app.world_mut()
-            .resource_mut::<Feedback>()
-            .responses
-            .get_mut(&7)
-            .unwrap()
-            .recoil_pitch = 0.0;
-        app.world_mut()
-            .resource_mut::<Feedback>()
-            .responses
-            .get_mut(&7)
-            .unwrap()
-            .recoil_yaw = 0.0;
+        app.world_mut().resource_mut::<Feedback>().presentation_time = 2.0;
         app.update();
-        let camera = &app.world().resource::<LocalInput>().camera;
-        assert!(camera.pitch.abs() < 0.001);
-        assert!(camera.yaw.abs() < 0.001);
+        let bore = app.world().get::<Transform>(view).unwrap().rotation * Vec3::NEG_Z;
+        assert!(bore.y.abs() < 0.0001);
+        assert_eq!(
+            data::encode(&**app.world().resource::<LocalInput>()),
+            before
+        );
     }
 
     #[test]
@@ -1273,11 +1226,6 @@ mod tests {
                     {
                         let mut session = app.world_mut().resource_mut::<ClientSession>();
                         session.players[0].ammo_in_mag = if empty && i < 180 { 0 } else { 12 };
-                        session.players[0].reload_remaining = if i < 180 {
-                            weapon.spec().reload_seconds * (1.0 - fraction)
-                        } else {
-                            0.0
-                        };
                         session.players[0].mechanics = if i < 180 {
                             reload_snapshot(weapon, fraction, empty)
                         } else {
@@ -1403,11 +1351,6 @@ mod tests {
                             EquipmentSlot::Sidearm
                         } else {
                             EquipmentSlot::Primary
-                        },
-                        reload_remaining: if fraction > 0.0 {
-                            weapon.spec().reload_seconds * (1.0 - fraction)
-                        } else {
-                            0.0
                         },
                         mechanics: if fraction > 0.0 {
                             reload_snapshot(weapon, fraction, true)
@@ -1724,7 +1667,6 @@ mod tests {
             weapon_id: WeaponId::M1911,
             weapon_slot: EquipmentSlot::Sidearm,
             ammo_in_mag: 12,
-            reload_remaining: 0.75,
             mechanics: reload_snapshot(WeaponKind::Pistol, 0.5, false),
             ..default()
         });
@@ -1739,7 +1681,6 @@ mod tests {
         let before = app.world().resource::<Feedback>().responses[&7]
             .action
             .unwrap();
-        app.world_mut().resource_mut::<ClientSession>().players[0].reload_remaining = 0.0;
         app.world_mut().resource_mut::<ClientSession>().players[0].mechanics = default();
         app.update();
         let after = app.world().resource::<Feedback>().responses[&7]

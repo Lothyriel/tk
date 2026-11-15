@@ -297,26 +297,16 @@ fn present_shots(
     (session.shots, session.casing_shots) = shot_streams(fresh);
 }
 
-/// Recoil is coalesced to the newest ID per shooter; every fresh casing remains.
+/// Preserve each event for mechanical presentation and casings. The reliable
+/// receiver has already removed duplicates; angular recoil comes from snapshots.
 fn shot_streams(
     mut shots: Vec<common::FiredProjectileData>,
 ) -> (
     Vec<common::FiredProjectileData>,
     Vec<common::FiredProjectileData>,
 ) {
-    let mut coalesced = Vec::new();
     shots.sort_by_key(|shot| shot.id);
-    for shot in &shots {
-        if let Some(index) = coalesced
-            .iter()
-            .position(|s: &common::FiredProjectileData| s.shooter == shot.shooter)
-        {
-            coalesced[index] = shot.clone();
-        } else {
-            coalesced.push(shot.clone());
-        }
-    }
-    (coalesced, shots)
+    (shots.clone(), shots)
 }
 
 #[cfg(test)]
@@ -360,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn casing_stream_preserves_each_fresh_shot_while_recoil_stays_coalesced() {
+    fn shot_stream_preserves_all_three_confirmed_events_in_one_snapshot() {
         let shots: Vec<_> = (1..=3)
             .map(|id| common::FiredProjectileData {
                 id,
@@ -377,8 +367,7 @@ mod tests {
             .message(&data::encode(&ShotMessage::Bootstrap { first_id: 0 }))
             .unwrap();
         let (recoil, casings) = shot_streams(receiver.snapshot(&shots, 1.0, true));
-        assert_eq!(recoil.len(), 1);
-        assert_eq!(recoil[0].id, 3);
+        assert_eq!(recoil.iter().map(|s| s.id).collect::<Vec<_>>(), [1, 2, 3]);
         assert_eq!(
             casings.iter().map(|shot| shot.id).collect::<Vec<_>>(),
             [1, 2, 3]

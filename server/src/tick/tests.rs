@@ -1,5 +1,6 @@
 use super::*;
 mod configured_anatomy;
+mod recoil;
 mod weapon_replication;
 
 #[test]
@@ -522,9 +523,16 @@ fn normal_shot(app: &mut App, shooter: Entity, target: Vec3) {
         (target - muzzle).cross(ray).length() < 0.001,
         "fixture aim missed target"
     );
+    // This fixture aims at one anatomical/wood cell. Counter the authoritative
+    // spring at the next fixed tick through voluntary input, as a player would.
+    let arsenal = app.world().get::<Arsenal>(shooter).unwrap();
+    let mut recoil = arsenal.recoil;
+    recoil.advance(1.0 / 128.0, arsenal.current().spec().recoil.return_rate);
     {
         let mut input = app.world_mut().get_mut::<ClientInput>(shooter).unwrap();
         input.camera = rotation.into();
+        input.camera.yaw -= recoil.angles[0];
+        input.camera.pitch -= recoil.angles[1];
         input.fire = true;
     }
     held_steps(app, shooter, 1);
@@ -2670,5 +2678,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
         common::map::destroyed_ids(&snapshot.destroyed_cells),
         vec![cell.id]
     );
-    assert_eq!(PROTOCOL_ID, 11);
+    assert_eq!(PROTOCOL_ID, 12);
 }

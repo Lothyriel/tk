@@ -331,7 +331,10 @@ pub(super) fn drive(
             capture(commands, name);
             info!(
                 "ANIMATION CONTACT {name} local_t={elapsed:.3} weapon={:?} mag={} reload={:.3} position={:?}",
-                local.weapon, local.ammo_in_mag, local.reload_remaining, local.pos
+                local.weapon,
+                local.ammo_in_mag,
+                local.reload_remaining(),
+                local.pos
             );
             if name.ends_with("empty") {
                 assert_eq!(local.ammo_in_mag, 0, "{name}");
@@ -339,7 +342,7 @@ pub(super) fn drive(
             if name.ends_with("return") {
                 assert_eq!(local.ammo_in_mag, local.weapon_id.spec().magazine_size + 1);
                 assert!(local.mechanics.chambered && local.mechanics.magazine_inserted);
-                assert_eq!(local.reload_remaining, 0.0);
+                assert_eq!(local.reload_remaining(), 0.0);
             }
         }
     }

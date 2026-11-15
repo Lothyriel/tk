@@ -9,6 +9,13 @@ pub(super) fn impact_mark_size_mm(weapon: WeaponId) -> u8 {
     weapon.spec().impact_size_mm
 }
 
+pub(super) fn advance_recoil(time: Res<Time>, mut actors: Query<&mut Arsenal>) {
+    for mut arsenal in &mut actors {
+        let rate = arsenal.current().spec().recoil.return_rate;
+        arsenal.recoil.advance(time.delta_secs(), rate);
+    }
+}
+
 pub(super) fn physx_tick(
     context: ReadRapierContext,
     raid: Res<RaidState>,
@@ -16,6 +23,7 @@ pub(super) fn physx_tick(
     mut query: Query<(
         Entity,
         &ClientInput,
+        &Arsenal,
         &BodyHealth,
         &PoseState,
         &Participant,
@@ -34,6 +42,7 @@ pub(super) fn physx_tick(
     for (
         entity,
         input,
+        arsenal,
         body,
         pose,
         player,
@@ -125,7 +134,7 @@ pub(super) fn physx_tick(
             movement.jump_queued = false;
         }
         controller.translation = Some(movement.velocity * delta);
-        transform.rotation = Quat::from_rotation_y(input.camera.yaw);
+        transform.rotation = Quat::from_rotation_y(arsenal.recoil.camera(input.camera).yaw);
     }
 }
 
@@ -176,7 +185,8 @@ pub(super) fn weapons_tick(
         else {
             continue;
         };
-        let rotation = Quat::from(&input.camera);
+        let camera = arsenal.recoil.camera(input.camera);
+        let rotation = Quat::from(&camera);
         let direction = rotation * -Vec3::Z;
         let eye = transform.translation
             + transform.rotation * common::humanoid::aim_lean_offset(input.camera.roll)
@@ -226,6 +236,12 @@ pub(super) fn weapons_tick(
             muzzle: muzzle.into(),
             direction: direction.into(),
         });
+        // The current projectile uses the pre-impulse bore. Reaction changes
+        // subsequent aim, once per authorized shot, independently of rendering.
+        let profile = arsenal.current().spec().recoil;
+        arsenal
+            .recoil
+            .impulse(profile, client.id ^ u64::from(raid.raid_id));
     }
 }
 

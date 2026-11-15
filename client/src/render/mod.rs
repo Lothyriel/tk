@@ -573,20 +573,21 @@ fn fit_view_aspect(
 
 fn sync_local_view(
     player_input: Res<LocalInput>,
+    feedback: Option<Res<feedback::Feedback>>,
+    id: Option<Res<PlayerId>>,
     player_visual_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     mut query: Query<(&BaseLocalOffset, &mut Transform), With<LocalView>>,
 ) {
+    let camera = match (feedback, id) {
+        (Some(feedback), Some(id)) => feedback.camera(id.0, player_input.camera),
+        _ => player_input.camera,
+    };
     let vertical_offset = if player_visual_state.crouched {
         PLAYER_CROUCH_VIEW_OFFSET
     } else {
         0.0
     };
-    let rotation = Quat::from_euler(
-        EulerRot::YXZ,
-        0.0,
-        player_input.camera.pitch,
-        player_input.camera.roll,
-    );
+    let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, camera.roll);
 
     for (base_offset, mut transform) in query.iter_mut() {
         transform.rotation = rotation;
@@ -598,9 +599,15 @@ fn sync_local_view(
 
 fn sync_local_player_rotation(
     player_input: Res<LocalInput>,
+    feedback: Option<Res<feedback::Feedback>>,
+    id: Option<Res<PlayerId>>,
     mut player_transform: Single<&mut Transform, With<LocalPlayer>>,
 ) {
-    player_transform.rotation = Quat::from_rotation_y(player_input.camera.yaw);
+    let camera = match (feedback, id) {
+        (Some(feedback), Some(id)) => feedback.camera(id.0, player_input.camera),
+        _ => player_input.camera,
+    };
+    player_transform.rotation = Quat::from_rotation_y(camera.yaw);
 }
 
 fn sync_local_alive_visibility(
@@ -689,7 +696,7 @@ fn sync_barrel_laser(
             && ads < 0.1
             && session
                 .local(id.0)
-                .is_none_or(|p| p.reload_remaining <= 0.0)
+                .is_none_or(|p| p.reload_remaining() <= 0.0)
         {
             Visibility::Inherited
         } else {
