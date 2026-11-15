@@ -172,6 +172,7 @@ pub(super) fn weapons_tick(
         let rotation = Quat::from(&input.camera);
         let direction = rotation * -Vec3::Z;
         let eye = transform.translation
+            + transform.rotation * common::humanoid::aim_lean_offset(input.camera.roll)
             + Vec3::Y
                 * (PLAYER_VIEW_HEIGHT
                     + if movement.crouched {

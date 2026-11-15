@@ -11,7 +11,7 @@ use bevy_renet2::{netcode::NetcodeTransportError, prelude::ClientId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 6;
+pub const PROTOCOL_ID: u64 = 7;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
 pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;

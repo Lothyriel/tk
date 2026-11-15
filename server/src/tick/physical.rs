@@ -250,6 +250,7 @@ pub(super) fn physical_tick(
         if articulated {
             pose.mode_time += dt;
             pose.aim_pitch = input.camera.pitch;
+            pose.aim_roll = input.camera.roll;
             pose.reload_fraction = 0.0;
             pose.lean = pose.lean.map(|x| x * (-dt * 9.0).exp());
             pose.impulse = (Vec3::from(pose.impulse) * (-dt * 8.0).exp()).into();
@@ -269,6 +270,7 @@ pub(super) fn physical_tick(
             });
         let local = t.rotation.inverse() * effective;
         pose.aim_pitch = input.camera.pitch;
+        pose.aim_roll = input.camera.roll;
         pose.weapon = arsenal.active;
         pose.arm_weakness = [
             1.0 - body.anatomy.capacity(Region::LeftArm),

@@ -610,6 +610,7 @@ fn animate(
         state.mode = p.pose.mode;
         state.mode_time = p.pose.mode_time + age;
         state.aim_pitch += (p.pose.aim_pitch - state.aim_pitch) * alpha;
+        state.aim_roll += (p.pose.aim_roll - state.aim_roll) * alpha;
         state.ads += (p.pose.ads - state.ads) * alpha;
         for i in 0..2 {
             state.lean[i] += (p.pose.lean[i] - state.lean[i]) * alpha;

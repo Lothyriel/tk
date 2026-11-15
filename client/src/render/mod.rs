@@ -502,7 +502,9 @@ fn sync_local_view(
 
     for (base_offset, mut transform) in query.iter_mut() {
         transform.rotation = rotation;
-        transform.translation = base_offset.0 + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset);
+        transform.translation = base_offset.0
+            + common::humanoid::aim_lean_offset(player_input.camera.roll)
+            + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset);
     }
 }
 
@@ -633,6 +635,37 @@ fn sync_loot_visuals(
 #[cfg(test)]
 mod view_tests {
     use super::*;
+    #[test]
+    fn local_cameras_shift_sideways_with_the_upper_body_lean() {
+        let mut app = App::new();
+        app.insert_resource(LocalInput(common::ClientInput {
+            camera: common::CameraInput {
+                roll: 0.3,
+                ..default()
+            },
+            ..default()
+        }))
+        .add_systems(Update, sync_local_view);
+        app.world_mut()
+            .spawn((LocalPlayer, PlayerVisualState::default()));
+        let world_camera = app
+            .world_mut()
+            .spawn((LocalView, BaseLocalOffset(Vec3::ZERO), Transform::default()))
+            .id();
+        let viewmodel_camera = app
+            .world_mut()
+            .spawn((LocalView, BaseLocalOffset(Vec3::ZERO), Transform::default()))
+            .id();
+
+        app.update();
+
+        for camera in [world_camera, viewmodel_camera] {
+            let translation = app.world().get::<Transform>(camera).unwrap().translation;
+            assert!((translation.x + 0.21).abs() < 0.001);
+            assert!((translation.y - PLAYER_VIEW_HEIGHT).abs() < 0.001);
+        }
+    }
+
     #[test]
     fn budget_fallback_fall_and_getup_lower_sights_restore_fov_and_hide_the_weapon() {
         use common::humanoid::PhysicalMode;

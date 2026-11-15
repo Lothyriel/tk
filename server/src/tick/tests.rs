@@ -1631,6 +1631,41 @@ fn authoritative_ads_preserves_ammo_and_cadence_centres_barrel_and_cancels_for_r
 }
 
 #[test]
+fn lean_moves_the_authoritative_eye_and_muzzle_sideways() {
+    let (mut app, shooter, _) = physical_fixture();
+    let root = *app.world().get::<Transform>(shooter).unwrap();
+    {
+        let mut input = app.world_mut().get_mut::<ClientInput>(shooter).unwrap();
+        input.camera.roll = 0.3;
+        input.fire = true;
+        input.fire_pressed_sequence += 1;
+    }
+
+    held_steps(&mut app, shooter, 1);
+
+    let input = app.world().get::<ClientInput>(shooter).unwrap();
+    let pose = app
+        .world()
+        .get::<common::humanoid::PoseState>(shooter)
+        .unwrap();
+    let expected_eye = root.translation
+        + root.rotation * common::humanoid::aim_lean_offset(input.camera.roll)
+        + Vec3::Y * PLAYER_VIEW_HEIGHT;
+    let expected_muzzle = expected_eye
+        + Quat::from(&input.camera)
+            * common::weapon_animation::barrel_offset(WeaponKind::Rifle, pose.ads);
+    let shot = app
+        .world()
+        .resource::<WorldState>()
+        .fired_projectiles
+        .last()
+        .unwrap();
+
+    assert!((pose.aim_roll - 0.3).abs() < 0.001);
+    assert!(Vec3::from(shot.muzzle).distance(expected_muzzle) < 0.001);
+}
+
+#[test]
 fn walking_and_running_pose_cadence_stays_in_a_human_step_range() {
     let walking_steps = common::humanoid::stride_phase_rate(3.25, 0.0) / std::f32::consts::PI;
     let running_steps = common::humanoid::stride_phase_rate(5.5, 0.0) / std::f32::consts::PI;

@@ -60,7 +60,7 @@ cargo run --bin client
 
 The client defaults to `127.0.0.1`, UDP port `9080`. No `.env` file is needed, and assets are resolved from the client manifest directory rather than the shell's working directory. For LAN play, set `$env:SERVER_ADDR = "192.168.1.10"` to your server's IP before starting the client (POSIX: `SERVER_ADDR=192.168.1.10 cargo run --bin client`). Allow the server's UDP port through the firewall. Optional `TK_PORT` changes the port on both binaries.
 
-Rebuild both binaries for protocol 6. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
+Rebuild both binaries for protocol 7. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
 
 Start additional clients in separate terminals to test multiplayer. All connected players must ready up; solo play also starts normally. The server supports up to 32 clients and assigns distinct spawn positions. A client arriving during an active raid waits for the next lobby.
 
@@ -85,8 +85,8 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | Mouse | Look |
 | Left Shift / Left Ctrl | Run / crouch |
 | Space | Jump while active; never respawn during the current raid |
-| Hold Q / E | Gradually tilt the view left / right; release to hold the current angle |
-| Tap the opposite tilt key | Ease back to level |
+| Hold Q / E | Gradually lean the view, upper body and firing origin left / right; remote players see the body move with it; release to hold the current angle |
+| Tap the opposite tilt key | Ease the view and upper body back to center |
 | 1 / 2 | Equip your selected primary / pistol |
 | Left mouse button | Hold for rifle/SMG automatic fire; click for pistol semi-automatic fire |
 | Hold right mouse button | Aim down iron sights; release to return to hip fire |
@@ -163,4 +163,4 @@ The ongoing polish evidence is indexed in [ANIMATION_RAGDOLL.md](ANIMATION_RAGDO
 - `client/src/render/feedback.rs`: per-weapon recoil impulse, spring/damping, flash lifetime, reload/swap and camera feedback. Audio assets in `assets/sound/` are intentionally retained but not loaded by firing.
 - `common/src/weapon_animation.rs` and `client/src/render/weapons.rs`: original grip/muzzle anchors, per-weapon empty/tactical choreography, and cached first-person weapon assemblies; curves do not grant ammo or actions.
 
-**Latest review.** On 2026-11-15, reviewed weapon-sized decals, 60-second casing effects, protocol 6 snapshot notes, and the unchanged server-authority paths; the Mermaid player flow remains unchanged. The new casing/decal visuals have not had rendered review.
+**Latest review.** On 2026-11-15, reviewed Q/E lateral upper-body, camera and firing-origin offsets; the Mermaid player flow remains unchanged. The tilt's in-game visual appearance has not had rendered review.

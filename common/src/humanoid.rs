@@ -4,6 +4,11 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 pub const SEGMENT_COUNT: usize = 17;
 
+/// Lateral chest/head/camera displacement for each radian of aim roll.
+pub fn aim_lean_offset(aim_roll: f32) -> Vec3 {
+    Vec3::new(-aim_roll * 0.7, 0.0, 0.0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Archive, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Segment {
@@ -115,6 +120,7 @@ pub struct PoseState {
     pub right_support: f32,
     pub landing: f32,
     pub aim_pitch: f32,
+    pub aim_roll: f32,
     pub ads: f32,
     pub weapon: crate::WeaponKind,
     pub reload_fraction: f32,
@@ -258,27 +264,28 @@ pub fn evaluate_pose_with_action(
         -0.23 + bob - crouch * 0.04 - state.landing * 0.05,
         state.lean[1] * 0.06,
     );
-    let chest = hip
-        + Vec3::new(
+    let lean_offset = aim_lean_offset(state.aim_roll);
+    let chest =
+        hip + Vec3::new(
             state.lean[0] * 0.025,
             0.43 - crouch * 0.14,
             -crouch * 0.12 - state.lean[1] * 0.05,
-        );
+        ) + lean_offset;
     let aim = Quat::from_rotation_x(state.aim_pitch);
     result[Pelvis.index()].position = hip.into();
     result[Pelvis.index()].rotation = Quat::from_rotation_y(-state.turn_rate * 0.025).to_array();
-    result[Abdomen.index()] = bone(hip + Vec3::Y * 0.24, hip + Vec3::Y * 0.02);
+    result[Abdomen.index()] = bone(hip + Vec3::Y * 0.24 + lean_offset, hip + Vec3::Y * 0.02);
     result[Thorax.index()].position = chest.into();
     result[Thorax.index()].rotation = Quat::from_euler(
         EulerRot::XYZ,
         crouch * 0.2 - state.lean[1] * 0.16,
         state.turn_rate * 0.02,
-        -state.lean[0] * 0.12,
+        -state.lean[0] * 0.12 + state.aim_roll * 0.5,
     )
     .to_array();
     result[Neck.index()].position = (chest + Vec3::Y * 0.24).into();
     result[Head.index()].position = (chest + Vec3::Y * 0.45).into();
-    result[Head.index()].rotation = aim.to_array();
+    result[Head.index()].rotation = (aim * Quat::from_rotation_z(state.aim_roll)).to_array();
     let action = action.unwrap_or_else(|| {
         crate::weapon_animation::reload_action(
             state.weapon,
@@ -531,6 +538,44 @@ pub fn ray_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn aim_roll_tilts_the_replicated_torso_and_head_in_both_directions() {
+        let upright = evaluate_pose(&PoseState::default(), 1.0, 1.0);
+        for roll in [-0.3, 0.3] {
+            let state = PoseState {
+                aim_roll: roll,
+                ..default()
+            };
+            let tilted = evaluate_pose(&state, 1.0, 1.0);
+            let expected_shift = aim_lean_offset(roll).x;
+            for segment in [Segment::Thorax, Segment::Head] {
+                let shift =
+                    tilted[segment.index()].position[0] - upright[segment.index()].position[0];
+                assert!(
+                    (shift - expected_shift).abs() < 0.001,
+                    "{segment:?}: {shift}"
+                );
+            }
+            let tilted_weapon = posed_weapon(&state, &tilted);
+            let upright_weapon = posed_weapon(&PoseState::default(), &upright);
+            assert!(
+                (tilted_weapon.translation.x - upright_weapon.translation.x - expected_shift).abs()
+                    < 0.01,
+                "weapon shift: {}",
+                tilted_weapon.translation.x - upright_weapon.translation.x
+            );
+            for segment in [Segment::Thorax, Segment::Head] {
+                let angle = Quat::from_array(upright[segment.index()].rotation)
+                    .angle_between(Quat::from_array(tilted[segment.index()].rotation));
+                assert!(angle > roll.abs() * 0.45, "{segment:?}: {angle}");
+                let tilted_roll = Quat::from_array(tilted[segment.index()].rotation)
+                    .to_euler(EulerRot::XYZ)
+                    .2;
+                assert_eq!(tilted_roll.signum(), roll.signum(), "{segment:?}");
+            }
+        }
+    }
+
     #[test]
     fn packed_physical_pose_keeps_contacts_within_a_millimetre_and_two_hundredths_radian() {
         assert_eq!(std::mem::size_of::<PackedSegmentPose>(), 10);
