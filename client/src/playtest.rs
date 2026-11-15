@@ -18,7 +18,20 @@ impl bevy::prelude::Plugin for Plugin {
                 drive.in_set(ClientSystems::Input).after(InputCapture),
             )
             .init_resource::<video::CaptureQueue>()
+            .add_systems(Update, review_hud.after(drive))
             .add_systems(PostUpdate, video::record);
+    }
+}
+
+fn review_hud(driver: Res<Driver>, mut hud: Query<&mut Node, With<crate::hud::RaidHud>>) {
+    for mut node in &mut hud {
+        // The verbose raid panel covers the hands in portrait review windows.
+        // State evidence stays in the route logs; restore ordinary HUD afterward.
+        node.display = if driver.step == Step::Animation {
+            Display::None
+        } else {
+            Display::Flex
+        };
     }
 }
 

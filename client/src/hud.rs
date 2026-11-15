@@ -26,7 +26,7 @@ impl bevy::prelude::Plugin for Plugin {
 }
 
 #[derive(Component)]
-struct RaidHud;
+pub(crate) struct RaidHud;
 
 #[derive(Component)]
 struct MetricsHud;
