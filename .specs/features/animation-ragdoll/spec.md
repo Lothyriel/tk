@@ -119,7 +119,7 @@ Input bounds: existing validation remains. Partial failures: harness exits nonze
 | ANIM-12 | Guide | T7 | Guide/Mermaid updated; final review open |
 | ANIM-13 | ADS | T3–T4, T7 | User-requested refinement; implementing |
 | ANIM-14 | Motion/reload/FOV | T3–T5, T7 | User-rejected candidate10 animation quality; implementing |
-| ANIM-15 | Point-blank origin | T8, T7 | User-approved combat repair; implementing after native13 failure |
+| ANIM-15 | Point-blank origin | T8, T7 | Implemented; close hip/ADS/body/cover/wood/gap regressions and native14 fatal-shot flow PASS; final feature acceptance open |
 
 ## Success Criteria
 

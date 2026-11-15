@@ -134,11 +134,13 @@ Subsequent T6 evidence: candidate10 continuous recovery and four healthy native 
 **Depends on**: T6
 **Requirement**: ANIM-15
 **Done when**:
-- [ ] Normal hip/ADS shots hit close posed targets without coarse-capsule redirection; real pre-muzzle actors/concrete are not bypassed, gaps remain empty and wood attenuation is once; original tests/native assertions pass.
+- [x] Normal hip/ADS shots hit close posed targets without coarse-capsule redirection; real pre-muzzle actors/concrete are not bypassed, gaps remain empty and wood attenuation is once; original tests/native assertions pass.
 **Tests**: integration + native
 **Gate**: Build
 
 ## Diagram-Definition Cross-Check
+
+T8 evidence: the pre-fix1.05m head miss is retained in candidate14/gates/point-blank-red.log; candidate14 completed the original native fatal-shot flow. Six new integration tests cover all24weapon/aim/range combinations, exact unchanged damage/ammo/muzzle, real pre-muzzle actors, narrow concrete, leg gaps and wood attenuation across both paths. The isolated commit gate reruns the complete staged workspace; final feature performance and artistic acceptance are still T7/open, not implied by T8 closure.
 
 | Task | Depends On | Diagram Shows | Status |
 | --- | --- | --- | --- |
