@@ -121,7 +121,7 @@ view-arm placement. The previous procedural assembly/placement remains compiled
 only in tests as a migration oracle.
 
 This aligns remote visual tissue with the accepted contacts and preserves all 17
-segment IDs. Rendered acceptance remains before the card can complete.
+segment IDs. Native acceptance covers the baseline assemblies in both perspectives.
 
 ## Shoulder pocket and clothing
 
@@ -205,3 +205,15 @@ the 94% framing envelope and 35 mm/frame continuity bound, and checks the actual
 ADS sight point. Additional cases cover node replacement, missing limbs/fall and
 reload interruption with a removed magazine and locked-open slide. These remain
 headless geometric checks, not visual acceptance.
+
+The native dual-client route additionally exercises the three baseline weapons,
+ADS, tactical/empty/interrupted reloads, ordinary limb shots, separation, supported
+recovery and death through real UDP with every third peer snapshot dropped.
+Static local/remote views are inspected with the verbose HUD hidden during the
+animation review. The driver waits for replicated equip readiness before injury
+shots and coalesces coincident screenshot destinations into one render readback.
+Both clients must agree on final anatomy and physical IDs.
+
+This accepts configured assembly/contact integration. Baseline geometry remains
+provisional; refined assets, authored inspect/handling and final artistic review
+have separate slice criteria.

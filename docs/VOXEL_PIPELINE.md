@@ -189,7 +189,8 @@ accept ±1 mm, and reject simplified mechanisms or lost material groups.
 
 Both native weapon perspectives now use the data-driven assembler. Configured
 authority-side anatomy shares logical contacts and mechanism deltas. Native
-stock/clothing contacts are verified; rendered handling acceptance continues in TAR-23.
+stock/clothing contacts and baseline local/remote assembly are verified, including
+dual-client rendered acceptance with snapshot loss and physical handoff.
 
 ## Baseline weapon migration
 
