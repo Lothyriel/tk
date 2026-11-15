@@ -87,17 +87,43 @@ class M4A1AssetTests(unittest.TestCase):
             self.assertFalse(intersects(bounds(self.parts, "rear_sight", box), ray))
 
     def test_magazine_removal_sweep_clears_real_magwell_surfaces(self):
-        magazine = load("m4a1_magazine_30")
         seat = self.sockets["magazine.seat"]
         walls = [bounds(self.parts, "lower", box) for box in self.parts["lower"]["boxes"]]
         # Full continuous downward sweep is an AABB for this translation. It
         # covers every intermediate position, not only selected animation frames.
-        for box in magazine["parts"][0]["boxes"]:
-            swept = [[box["min"][i] + seat[i] for i in range(3)],
-                     [box["max"][i] + seat[i] for i in range(3)]]
-            swept[0][1] -= 0.24
-            for wall in walls:
-                self.assertFalse(intersects(swept, wall), (swept, wall))
+        for name in ("m4a1_magazine_30", "m4a1_pmag_20"):
+            with self.subTest(magazine=name):
+                magazine = load(name)
+                parts = {p["id"]: p for p in magazine["parts"]}
+                for part in magazine["parts"]:
+                    for box in part["boxes"]:
+                        local = bounds(parts, part["id"], box)
+                        swept = [[local[edge][i] + seat[i] for i in range(3)]
+                                 for edge in range(2)]
+                        swept[0][1] -= 0.24
+                        for wall in walls:
+                            self.assertFalse(intersects(swept, wall), (swept, wall))
+
+    def test_pmag20_published_length_open_feed_lips_and_surface_contact(self):
+        magazine = load("m4a1_pmag_20")
+        parts = {p["id"]: p for p in magazine["parts"]}
+        solids = [bounds(parts, p["id"], box) for p in parts.values() for box in p["boxes"]]
+        self.assertAlmostEqual(max(b[1][1] for b in solids) - min(b[0][1] for b in solids),
+                               5.6 * 0.0254, delta=0.001)
+        # A visible gap above the follower; a solid block with painted lips fails.
+        feed = [[-0.006, 0.020, -0.017], [0.006, 0.026, 0.025]]
+        self.assertTrue(all(not intersects(solid, feed) for solid in solids))
+        grip = next(s for s in magazine["sockets"] if s["id"] == "magazine.grasp")
+        contact = point(parts, grip["part"], grip["pose"]["translation"])
+        # Contact must lie on an exterior face, not merely somewhere in the bounds.
+        self.assertTrue(any(
+            all(b[0][i] <= contact[i] <= b[1][i] for i in range(3))
+            and any(abs(contact[i] - b[edge][i]) < 1e-6
+                    for edge in range(2) for i in range(3))
+            for b in solids))
+        base_grip = next(s for s in load("m4a1_magazine_30")["sockets"]
+                         if s["id"] == "magazine.grasp")["pose"]["translation"]
+        self.assertGreater(sum((a - b) ** 2 for a, b in zip(contact, base_grip)), 0.003 ** 2)
 
 
 if __name__ == "__main__":

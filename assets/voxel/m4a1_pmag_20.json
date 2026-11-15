@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "id": "m4a1_pmag_20",
+  "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK exterior, Magpul PMAG 20 AR/M4 GEN M3 MAG560. F: 20 rounds, maximum length 5.6 inches (0.14224 m), https://magpul.com/pmag-20-ar-m4-gen-m3.html . V: transverse dimensions, ribs, follower, feed lips and seat depth interpreted from product views. G: palette and surface simplification. See docs/weapons/m4a1-kit.md.",
+  "materials": [
+    {"id": "polymer", "surface": "polymer", "color": [0.065, 0.069, 0.060, 1], "roughness": 0.86, "metallic": 0.0},
+    {"id": "baseplate", "surface": "polymer", "color": [0.045, 0.048, 0.042, 1], "roughness": 0.90, "metallic": 0.0},
+    {"id": "follower", "surface": "polymer", "color": [0.23, 0.24, 0.21, 1], "roughness": 0.72, "metallic": 0.0}
+  ],
+  "parts": [
+    {
+      "id": "magazine", "parent": null, "movable": true,
+      "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+      "boxes": [
+        {"min": [-0.012, -0.045, -0.031], "max": [-0.009, 0.022, 0.012], "material": "polymer"},
+        {"min": [-0.012, -0.045, 0.023], "max": [-0.009, 0.022, 0.031], "material": "polymer"},
+        {"min": [-0.012, -0.045, 0.012], "max": [-0.009, -0.009, 0.023], "material": "polymer"},
+        {"min": [-0.012, 0.0, 0.012], "max": [-0.009, 0.022, 0.023], "material": "polymer"},
+        {"min": [0.009, -0.045, -0.031], "max": [0.012, 0.022, 0.031], "material": "polymer"},
+        {"min": [-0.009, -0.045, -0.031], "max": [0.009, 0.018, -0.028], "material": "polymer"},
+        {"min": [-0.009, -0.045, 0.028], "max": [0.009, 0.022, 0.031], "material": "polymer"},
+        {"min": [-0.012, 0.022, -0.018], "max": [-0.007, 0.026, 0.031], "material": "polymer"},
+        {"min": [0.007, 0.022, -0.018], "max": [0.012, 0.026, 0.031], "material": "polymer"},
+        {"min": [-0.0085, 0.012, -0.026], "max": [0.0085, 0.016, 0.026], "material": "follower"},
+        {"min": [-0.007, 0.016, -0.022], "max": [-0.001, 0.019, 0.022], "material": "follower"},
+        {"min": [-0.014, -0.090, -0.032], "max": [0.014, -0.045, 0.032], "material": "polymer"},
+        {"min": [-0.014, -0.11024, -0.036], "max": [0.014, -0.090, 0.028], "material": "polymer"},
+        {"min": [-0.016, -0.11624, -0.040], "max": [0.016, -0.11024, 0.032], "material": "baseplate"},
+        {"min": [-0.008, -0.048, 0.031], "max": [0.008, -0.043, 0.036], "material": "polymer"},
+        {"min": [-0.015, -0.086, -0.010], "max": [-0.014, -0.045, -0.008], "material": "polymer"},
+        {"min": [0.014, -0.086, -0.010], "max": [0.015, -0.045, -0.008], "material": "polymer"},
+        {"min": [-0.015, -0.086, 0.016], "max": [-0.014, -0.045, 0.018], "material": "polymer"},
+        {"min": [0.014, -0.086, 0.016], "max": [0.015, -0.045, 0.018], "material": "polymer"},
+        {"min": [-0.015, -0.056, -0.030], "max": [-0.014, -0.053, 0.030], "material": "polymer"},
+        {"min": [0.014, -0.056, -0.030], "max": [0.015, -0.053, 0.030], "material": "polymer"},
+        {"min": [-0.015, -0.088, -0.030], "max": [-0.014, -0.085, 0.030], "material": "polymer"},
+        {"min": [0.014, -0.088, -0.030], "max": [0.015, -0.085, 0.030], "material": "polymer"},
+        {"min": [-0.010, -0.053, -0.033], "max": [0.010, -0.050, -0.032], "material": "polymer"},
+        {"min": [-0.010, -0.068, -0.033], "max": [0.010, -0.065, -0.032], "material": "polymer"},
+        {"min": [-0.010, -0.083, -0.033], "max": [0.010, -0.080, -0.032], "material": "polymer"},
+        {"min": [-0.009, -0.103, -0.037], "max": [0.009, -0.099, -0.036], "material": "polymer"},
+        {"min": [-0.009, -0.108, 0.028], "max": [0.009, -0.095, 0.029], "material": "polymer"}
+      ]
+    }
+  ],
+  "sockets": [
+    {"id": "magazine.seat", "part": "magazine", "pose": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]}},
+    {"id": "magazine.grasp", "part": "magazine", "pose": {"translation": [-0.014, -0.068, 0.004], "rotation": [0, 0, 0, 1]}}
+  ]
+}
