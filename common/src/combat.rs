@@ -247,13 +247,34 @@ impl Arsenal {
     /// Slots own instances, never an array indexed by the number of definitions.
     pub fn from_slots(
         catalog: &Catalog,
-        mut loadout: Loadout,
+        loadout: Loadout,
         slots: &[(EquipmentSlot, WeaponId)],
+    ) -> Result<Self, CatalogError> {
+        let kits = slots
+            .iter()
+            .map(|&(slot, definition)| {
+                crate::catalog::WeaponKit::from_configuration(
+                    catalog,
+                    catalog.configuration(definition)?,
+                )
+                .map(|kit| (slot, kit))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::from_kits(catalog, loadout, &kits)
+    }
+
+    /// Materialize a new raid's equipment. Selections may survive a raid;
+    /// physical weapon/magazine identities and spent ammunition do not.
+    pub fn from_kits(
+        catalog: &Catalog,
+        mut loadout: Loadout,
+        kits: &[(EquipmentSlot, crate::catalog::WeaponKit)],
     ) -> Result<Self, CatalogError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
         let mut equipment = Vec::new();
-        for &(slot, definition) in slots {
+        for (slot, kit) in kits {
+            let slot = *slot;
             if equipment.iter().any(|(existing, _)| *existing == slot) {
                 return Err(CatalogError {
                     file: crate::catalog::CATALOG_FILE.into(),
@@ -261,8 +282,17 @@ impl Arsenal {
                     message: "duplicate equipment slot".into(),
                 });
             }
-            let id = WeaponInstanceId(NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed));
-            let mut weapon = EquippedWeapon::new(catalog, id, catalog.configuration(definition)?)?;
+            let id = NEXT_INSTANCE
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                    next.checked_add(1)
+                })
+                .map(WeaponInstanceId)
+                .map_err(|_| CatalogError {
+                    file: crate::catalog::CATALOG_FILE.into(),
+                    field: "equipment.instance".into(),
+                    message: "identity exhausted".into(),
+                })?;
+            let mut weapon = EquippedWeapon::from_kit(catalog, id, kit)?;
             if slot != EquipmentSlot::Primary {
                 weapon.mechanics_mut().start_unequip(0.01);
                 weapon.advance(0.01);
