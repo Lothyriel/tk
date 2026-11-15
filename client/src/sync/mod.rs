@@ -24,7 +24,9 @@ pub(crate) struct ClientSession {
     pub simulation_time: f32,
     pub shots: Vec<common::FiredProjectileData>,
     pub casing_shots: Vec<common::FiredProjectileData>,
-    pub last_shot: Option<u64>,
+    pub shot_receiver: common::replication::shots::ShotReceiver,
+    pub pending_snapshot_received: f64,
+    pub pending_snapshot_sequence: u64,
 }
 
 impl ClientSession {
@@ -123,6 +125,14 @@ fn recv_players_pos(
     time: Res<Time<Real>>,
     mut loss: ResMut<SnapshotLoss>,
 ) {
+    while let Some(message) = client.receive_message(common::replication::shots::SHOT_CHANNEL) {
+        if let Err(error) = session.shot_receiver.message(&message) {
+            warn!("Rejected shot stream: {error:?}");
+            // A bounded receiver cannot silently discard a reliable event.
+            client.disconnect();
+            return;
+        }
+    }
     while let Some(message) = client.receive_message(common::replication::CONFIGURATION_CHANNEL) {
         if let Err(error) = session.configurations.message(
             &message,
@@ -150,13 +160,20 @@ fn recv_players_pos(
             }
             continue;
         }
+        let sequence = snapshot.sequence;
         if let Err(error) = session.configurations.snapshot(snapshot) {
             warn!("Rejected weapon configuration reference: {error:?}");
+        } else if sequence > session.pending_snapshot_sequence {
+            session.pending_snapshot_sequence = sequence;
+            session.pending_snapshot_received = time.elapsed_secs_f64();
         }
     }
     let snapshot = match session.configurations.take_ready() {
         Ok(Some(snapshot)) => snapshot,
-        Ok(None) => return,
+        Ok(None) => {
+            present_shots(&mut session, time.elapsed_secs_f64(), Vec::new());
+            return;
+        }
         Err(error) => {
             warn!("Rejected inconsistent weapon configuration reference: {error:?}");
             return;
@@ -233,13 +250,12 @@ fn recv_players_pos(
         }
     }
 
-    let (shots, casing_shots) = fresh_shot_streams(
+    let age = (time.elapsed_secs_f64() - session.pending_snapshot_received).max(0.0) as f32;
+    let fresh = session.shot_receiver.snapshot(
         &snapshot.fired_projectiles,
-        &mut session.last_shot,
-        snapshot.simulation_time,
+        snapshot.simulation_time + age,
+        snapshot.raid.phase == RaidPhase::Active && age < 0.5,
     );
-    session.shots = shots;
-    session.casing_shots = casing_shots;
 
     sync_projectile_visuals(
         &mut commands,
@@ -257,41 +273,50 @@ fn recv_players_pos(
     );
     session.destroyed_cells = common::map::destroyed_ids(&snapshot.destroyed_cells);
     session.last_sequence = snapshot.sequence;
-    session.last_received = time.elapsed_secs_f64();
+    session.last_received = session.pending_snapshot_received;
     session.raid = snapshot.raid;
     session.players = snapshot.players;
     session.physics_pieces = snapshot.physics_pieces;
     session.simulation_time = snapshot.simulation_time;
+    present_shots(&mut session, time.elapsed_secs_f64(), fresh);
 }
 
-/// Consume IDs even when too old to present. Recovery never stacks delayed recoil in one frame.
-fn fresh_shot_streams(
-    shots: &[common::FiredProjectileData],
-    last: &mut Option<u64>,
-    now: f32,
+fn present_shots(
+    session: &mut ClientSession,
+    received_at: f64,
+    mut fresh: Vec<common::FiredProjectileData>,
+) {
+    let age = (received_at - session.last_received).max(0.0) as f32;
+    if session.last_sequence > 0 {
+        fresh.extend(session.shot_receiver.drain(
+            session.raid.raid_id,
+            session.simulation_time + age,
+            session.raid.phase == RaidPhase::Active && age < 0.5,
+        ));
+    }
+    (session.shots, session.casing_shots) = shot_streams(fresh);
+}
+
+/// Recoil is coalesced to the newest ID per shooter; every fresh casing remains.
+fn shot_streams(
+    mut shots: Vec<common::FiredProjectileData>,
 ) -> (
     Vec<common::FiredProjectileData>,
     Vec<common::FiredProjectileData>,
 ) {
     let mut coalesced = Vec::new();
-    let mut casing_shots = Vec::new();
-    for shot in shots {
-        if last.is_none_or(|id| shot.id > id) {
-            *last = Some(shot.id);
-            if now - shot.time < 0.15 {
-                casing_shots.push(shot.clone());
-                if let Some(index) = coalesced
-                    .iter()
-                    .position(|s: &common::FiredProjectileData| s.shooter == shot.shooter)
-                {
-                    coalesced[index] = shot.clone();
-                } else {
-                    coalesced.push(shot.clone());
-                }
-            }
+    shots.sort_by_key(|shot| shot.id);
+    for shot in &shots {
+        if let Some(index) = coalesced
+            .iter()
+            .position(|s: &common::FiredProjectileData| s.shooter == shot.shooter)
+        {
+            coalesced[index] = shot.clone();
+        } else {
+            coalesced.push(shot.clone());
         }
     }
-    (coalesced, casing_shots)
+    (coalesced, shots)
 }
 
 #[cfg(test)]
@@ -317,15 +342,21 @@ mod tests {
                 direction: [0.0, 0.0, -1.0],
             })
             .collect();
-        let mut last = None;
-        let (fresh, _) = fresh_shot_streams(&shots, &mut last, 1.0);
+        use common::replication::shots::*;
+        let mut receiver = ShotReceiver::default();
+        receiver
+            .message(&data::encode(&ShotMessage::Bootstrap { first_id: 0 }))
+            .unwrap();
+        let (fresh, _) = shot_streams(receiver.snapshot(&shots, 1.0, true));
         assert_eq!(fresh.len(), 1);
         assert_eq!(fresh[0].id, 9);
-        assert_eq!(last, Some(9));
-        assert!(fresh_shot_streams(&shots, &mut last, 1.1).0.is_empty());
-        let mut last = None;
-        assert!(fresh_shot_streams(&shots, &mut last, 2.0).0.is_empty());
-        assert_eq!(last, Some(9));
+        assert!(receiver.snapshot(&shots, 1.1, true).is_empty());
+        let mut receiver = ShotReceiver::default();
+        receiver
+            .message(&data::encode(&ShotMessage::Bootstrap { first_id: 0 }))
+            .unwrap();
+        assert!(receiver.snapshot(&shots, 2.0, true).is_empty());
+        assert_eq!(receiver.stale, 10);
     }
 
     #[test]
@@ -340,8 +371,12 @@ mod tests {
                 direction: [0.0, 0.0, -1.0],
             })
             .collect();
-        let mut last = None;
-        let (recoil, casings) = fresh_shot_streams(&shots, &mut last, 1.0);
+        use common::replication::shots::*;
+        let mut receiver = ShotReceiver::default();
+        receiver
+            .message(&data::encode(&ShotMessage::Bootstrap { first_id: 0 }))
+            .unwrap();
+        let (recoil, casings) = shot_streams(receiver.snapshot(&shots, 1.0, true));
         assert_eq!(recoil.len(), 1);
         assert_eq!(recoil[0].id, 3);
         assert_eq!(
@@ -489,7 +524,11 @@ mod barrier_snapshot_tests {
             sequence: 9,
             simulation_time: 1.0,
             destroyed_cells: Default::default(),
-            raid: Default::default(),
+            raid: RaidState {
+                phase: RaidPhase::Active,
+                raid_id: 1,
+                ..Default::default()
+            },
             players: vec![ClientData {
                 id: 7,
                 configuration: handle,
@@ -539,6 +578,106 @@ mod barrier_snapshot_tests {
             data::encode(&weapon.mechanics().snapshot())
         );
         assert!(session.configurations.cache.matches(1, &session.players[0]));
+        // The independent reliable stream must also present without a new
+        // snapshot, and must clear the per-frame stream on the following frame.
+        use common::replication::shots::*;
+        server.send_message(
+            7,
+            SHOT_CHANNEL,
+            data::encode(&ShotMessage::Bootstrap { first_id: 2 }),
+        );
+        server.send_message(
+            7,
+            SHOT_CHANNEL,
+            data::encode(&ShotMessage::Batch {
+                raid: 1,
+                time: 1.0,
+                shots: vec![common::FiredProjectileData {
+                    id: 2,
+                    shooter: 7,
+                    weapon: common::WeaponId::M4A1,
+                    time: 1.0,
+                    muzzle: [0.0; 3],
+                    direction: [0.0, 0.0, -1.0],
+                }],
+            }),
+        );
+        deliver(&mut server, &mut app);
+        let session = app.world().resource::<ClientSession>();
+        assert_eq!(session.last_sequence, 9);
+        assert_eq!(
+            session
+                .casing_shots
+                .iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>(),
+            [2]
+        );
+        app.update();
+        assert!(
+            app.world()
+                .resource::<ClientSession>()
+                .casing_shots
+                .is_empty()
+        );
+        // A configuration delayed beyond the presentation window must not
+        // rejuvenate either the snapshot or its reliable shot copy.
+        let mut delayed = snapshot;
+        delayed.sequence = 10;
+        delayed.configuration_epoch = 2;
+        delayed.simulation_time = 10.0;
+        delayed.fired_projectiles = vec![common::FiredProjectileData {
+            id: 3,
+            shooter: 7,
+            weapon: common::WeaponId::M4A1,
+            time: 10.0,
+            muzzle: [0.0; 3],
+            direction: [0.0, 0.0, -1.0],
+        }];
+        server.send_message(7, DefaultChannel::Unreliable, data::encode(&delayed));
+        server.send_message(
+            7,
+            SHOT_CHANNEL,
+            data::encode(&ShotMessage::Batch {
+                raid: 1,
+                time: 10.0,
+                shots: delayed.fired_projectiles.clone(),
+            }),
+        );
+        deliver(&mut server, &mut app);
+        let received_at = app
+            .world()
+            .resource::<ClientSession>()
+            .pending_snapshot_received;
+        assert_eq!(app.world().resource::<ClientSession>().last_sequence, 9);
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(600),
+        ));
+        app.update();
+        let mut configuration = publisher.entries()[0].clone();
+        configuration.epoch = 2;
+        server.send_message(
+            7,
+            CONFIGURATION_CHANNEL,
+            data::encode(&ConfigurationMessage::Epoch {
+                epoch: 2,
+                catalog: fingerprint,
+            }),
+        );
+        server.send_message(
+            7,
+            CONFIGURATION_CHANNEL,
+            data::encode(&ConfigurationMessage::Configuration(configuration)),
+        );
+        deliver(&mut server, &mut app);
+        let session = app.world().resource::<ClientSession>();
+        assert_eq!(session.last_sequence, 10);
+        assert_eq!(session.last_received, received_at);
+        assert!(session.shots.is_empty() && session.casing_shots.is_empty());
+        assert_eq!(
+            session.shot_receiver.stale, 1,
+            "both copies consume one expired event"
+        );
     }
 
     #[test]

@@ -143,21 +143,16 @@ struct EjectedCasing {
 #[derive(Default, Resource)]
 struct CasingState {
     raid: Option<u32>,
-    last_shot_by_shooter: HashMap<u64, u64>,
+    shots_by_shooter: HashMap<u64, common::replication::shots::ShotWindow>,
     active: Vec<Entity>,
 }
 
 impl CasingState {
     fn should_eject(&mut self, shooter: u64, shot_id: u64) -> bool {
-        if self
-            .last_shot_by_shooter
-            .get(&shooter)
-            .is_some_and(|last| shot_id <= *last)
-        {
-            return false;
-        }
-        self.last_shot_by_shooter.insert(shooter, shot_id);
-        true
+        self.shots_by_shooter
+            .entry(shooter)
+            .or_default()
+            .observe(shot_id)
     }
 
     fn track(&mut self, entity: Entity) {
@@ -204,7 +199,7 @@ fn update_casings(
         for entity in state.active.drain(..) {
             commands.entity(entity).despawn();
         }
-        state.last_shot_by_shooter.clear();
+        state.shots_by_shooter.clear();
         state.raid = Some(session.raid.raid_id);
     }
 
@@ -1082,6 +1077,10 @@ mod tests {
         assert!(state.should_eject(7, 10));
         assert!(state.should_eject(8, 9));
         assert!(!state.should_eject(7, 10));
+        assert!(
+            state.should_eject(8, 8),
+            "delayed reliable event still ejects once"
+        );
         assert!(!state.should_eject(8, 8));
     }
 

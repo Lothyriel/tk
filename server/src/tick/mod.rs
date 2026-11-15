@@ -78,6 +78,7 @@ struct WorldState {
     fired_projectiles: Vec<FiredProjectileData>,
     snapshot_elapsed: f32,
     snapshot_sequence: u64,
+    shot_overflow_active: bool,
     next_piece_id: u64,
 }
 
@@ -427,6 +428,14 @@ fn send_world_snapshot(
     state
         .fired_projectiles
         .retain(|shot| time.elapsed_secs() - shot.time < 0.5);
+    // Queue every new event reliably before fitting the redundant snapshot copy.
+    replication.publish_shots(
+        &mut server,
+        raid.raid_id,
+        time.elapsed_secs(),
+        state.next_projectile_id,
+        &state.fired_projectiles,
+    );
     let snapshot = WorldSnapshot {
         destroyed_cells: common::map::destroyed_mask(&state.destroyed_cells),
         sequence: state.snapshot_sequence,
@@ -452,16 +461,37 @@ fn send_world_snapshot(
             .collect(),
         simulation_time: time.elapsed_secs(),
     };
-    let bytes = data::encode(&snapshot);
-    if state.snapshot_sequence % 150 == 0 {
-        info!(
-            "TK PERF snapshot_bytes={} actors={} pieces={}",
-            bytes.len(),
-            snapshot.players.len(),
-            snapshot.physics_pieces.len()
+    let actors = snapshot.players.len();
+    let pieces = snapshot.physics_pieces.len();
+    let packed = match common::replication::shots::pack_snapshot(snapshot) {
+        Ok(packed) => packed,
+        Err(error) => {
+            error!(
+                "SNAPSHOT OVERFLOW mandatory_bytes={} actors={actors} pieces={pieces}; disconnecting instead of truncating state",
+                error.mandatory_bytes
+            );
+            server.disconnect_all();
+            return;
+        }
+    };
+    if !packed.overflow.is_empty() && !state.shot_overflow_active {
+        warn!(
+            "SHOT OVERFLOW reliable_only={} snapshot_bytes={}",
+            packed.overflow.len(),
+            packed.bytes.len()
         );
     }
-    server.broadcast_message(DefaultChannel::Unreliable, bytes);
+    state.shot_overflow_active = !packed.overflow.is_empty();
+    if state.snapshot_sequence % 150 == 0 {
+        info!(
+            "TK PERF snapshot_bytes={} actors={} pieces={} reliable_only_shots={}",
+            packed.bytes.len(),
+            actors,
+            pieces,
+            packed.overflow.len()
+        );
+    }
+    server.broadcast_message(DefaultChannel::Unreliable, packed.bytes);
 }
 
 fn set_crouched_state(

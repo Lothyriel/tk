@@ -2,6 +2,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
+use common::replication::shots::*;
 use common::replication::*;
 
 #[derive(Default)]
@@ -9,6 +10,7 @@ struct Peer {
     epoch: u64,
     sent: usize,
     ledger: CommandLedger,
+    next_shot: Option<u64>,
 }
 
 #[derive(Resource)]
@@ -106,6 +108,50 @@ impl Replication {
                 }
                 server.send_message(client, CONFIGURATION_CHANNEL, bytes);
                 peer.sent += 1;
+            }
+        }
+    }
+
+    pub fn publish_shots(
+        &mut self,
+        server: &mut RenetServer,
+        raid: u32,
+        now: f32,
+        next_id: u64,
+        recent: &[FiredProjectileData],
+    ) {
+        for client in server.clients_id() {
+            let peer = self.peers.entry(client).or_default();
+            let next = *peer.next_shot.get_or_insert_with(|| {
+                server.send_message(
+                    client,
+                    SHOT_CHANNEL,
+                    data::encode(&ShotMessage::Bootstrap { first_id: next_id }),
+                );
+                next_id
+            });
+            let shots: Vec<_> = recent
+                .iter()
+                .filter(|shot| shot.id >= next)
+                .cloned()
+                .collect();
+            for chunk in shots.chunks(MAX_SHOT_BATCH) {
+                let bytes = data::encode(&ShotMessage::Batch {
+                    raid,
+                    time: now,
+                    shots: chunk.to_vec(),
+                });
+                if !server.can_send_message(client, SHOT_CHANNEL, bytes.len()) {
+                    error!(
+                        "SHOT BACKPRESSURE client={client} first_unsent={} bytes={}; disconnecting instead of dropping events",
+                        chunk[0].id,
+                        bytes.len()
+                    );
+                    server.disconnect(client);
+                    break;
+                }
+                server.send_message(client, SHOT_CHANNEL, bytes);
+                peer.next_shot = Some(chunk.last().unwrap().id + 1);
             }
         }
     }
