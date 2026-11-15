@@ -3,7 +3,9 @@
 use super::*;
 use bevy::prelude::{Quat, Transform, Vec3};
 
+mod authored;
 mod resolve;
+pub use authored::{authored_rig, AuthoredRig, LOGICAL_RIGS_SOURCE};
 #[cfg(test)]
 mod tests;
 pub(super) mod validate;
@@ -126,7 +128,7 @@ pub struct Anchor {
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(try_from = "authored::GeometrySource")]
 pub struct Geometry {
     pub center_of_mass: [f32; 3],
     pub sockets: Vec<Socket>,

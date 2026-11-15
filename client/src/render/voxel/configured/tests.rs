@@ -4,6 +4,55 @@ use common::{
     replication::{Configuration, catalog_fingerprint},
 };
 
+#[test]
+fn authored_rigs_match_rendered_socket_frames_and_independent_carrier_motion() {
+    let mut cache = VoxelCache::default();
+    let mut meshes = Assets::<Mesh>::default();
+    let mut materials = Assets::<StandardMaterial>::default();
+    for name in ["m4a1_refined", "m4a1_magazine_30"] {
+        cache.load(name, &mut meshes, &mut materials).unwrap();
+        let asset = &cache.assets[name];
+        let rig = common::catalog::authored_rig(name).unwrap();
+        let poses = part_poses(asset, 0, &[]).unwrap();
+        for part in &asset.parts {
+            let expected = rig.pivots[&part.id].transform();
+            let actual = poses[&part.id].1;
+            assert!((actual.translation - expected.translation).length() < 1e-6);
+            assert!(actual.rotation.angle_between(expected.rotation) < 0.001);
+        }
+        for socket in &asset.sockets {
+            let actual = poses[&socket.part].1 * socket.pose.transform();
+            let expected = rig.sockets[&socket.id].transform();
+            assert!((actual.translation - expected.translation).length() < 1e-6);
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                assert!((actual.rotation * axis - expected.rotation * axis).length() < 1e-6);
+            }
+        }
+    }
+    let asset = &cache.assets["m4a1_refined"];
+    let rest = part_poses(asset, 0, &[]).unwrap();
+    let moving = part_poses(
+        asset,
+        0,
+        &[PartMotion {
+            node: 0,
+            part: "bolt".into(),
+            delta: Transform::from_xyz(0.0, 0.0, 0.055),
+        }],
+    )
+    .unwrap();
+    assert!((moving["bolt"].1.translation.z - rest["bolt"].1.translation.z - 0.055).abs() < 1e-6);
+    for independent in [
+        "charging_handle",
+        "control",
+        "selector",
+        "trigger",
+        "dust_cover",
+    ] {
+        assert_eq!(moving[independent], rest[independent]);
+    }
+}
+
 fn fixture() -> (App, Configuration) {
     let source = common::catalog::CATALOG_SOURCE
         .replacen(

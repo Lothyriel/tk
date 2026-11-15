@@ -55,3 +55,11 @@ presentation frame, composed once for geometry and logical anchors together.
 Muzzle clearance, sight framing and hands must be reverified at that boundary.
 Do not merely replace a visual binding while leaving the old logical contacts
 or an old offset on the authoritative barrel.
+
+The pipeline now exports `logical_rigs.ron` from these source sockets and pivots.
+Catalogue geometry can reference the export by asset/socket name, with no copied
+coordinates. Headless checks compare every M4A1/magazine socket frame against the
+client's baked hierarchy, including grip orientation; moving the carrier leaves
+the charging handle and other receiver-mounted controls fixed. This establishes
+the shared coordinate contract. Active bindings, presentation bridges and
+mechanical adaptation remain the next integration step.
