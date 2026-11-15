@@ -98,7 +98,7 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | Hold right mouse button | Aim down iron sights; release to return to hip fire |
 | R | Swap to a retained loaded magazine; feed an empty chamber |
 | B | Cycle Safe/Semi/Auto as supported by the weapon |
-| I | Inspect; yields to firing, reload or weapon switch |
+| I | Inspect; yields to fire, ADS, reload, sprint or weapon switch |
 | F | Collect nearby loot; hold in the exit to extract |
 | Escape | Release or recapture the cursor during a raid; lobby/debrief release it automatically |
 | Up / Down arrow | Narrow / widen the field of view |

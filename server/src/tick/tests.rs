@@ -990,6 +990,130 @@ fn destroyed_trigger_arm_disables_firing_and_reload_while_actor_remains_alive() 
 }
 
 #[test]
+fn inspect_authority_yields_to_intent_and_physical_gates_without_replaying_stale_commands() {
+    use common::{
+        catalog::ManipulationKind,
+        humanoid::{PhysicalMode, PoseState},
+    };
+    for gate in ["aim", "sprint", "stale", "fall", "arm", "death"] {
+        let (mut app, player, _) = physical_fixture();
+        let before = app
+            .world()
+            .get::<Arsenal>(player)
+            .unwrap()
+            .current()
+            .instance()
+            .clone();
+        app.world_mut()
+            .get_mut::<ClientInput>(player)
+            .unwrap()
+            .inspect_sequence = 1;
+        held_steps(&mut app, player, 1);
+        assert_eq!(
+            app.world()
+                .get::<Arsenal>(player)
+                .unwrap()
+                .current()
+                .mechanics()
+                .action()
+                .unwrap()
+                .kind,
+            ManipulationKind::Inspect
+        );
+        app.world_mut()
+            .get_mut::<ClientInput>(player)
+            .unwrap()
+            .inspect_sequence = 2;
+        match gate {
+            "aim" => app.world_mut().get_mut::<ClientInput>(player).unwrap().aim = true,
+            "sprint" => app.world_mut().get_mut::<ClientInput>(player).unwrap().run = true,
+            "stale" => {
+                app.world_mut()
+                    .get_mut::<LastInput>(player)
+                    .unwrap()
+                    .received_at = -100.0
+            }
+            "fall" => {
+                let mut pose = app.world_mut().get_mut::<PoseState>(player).unwrap();
+                pose.mode = PhysicalMode::Recovering;
+                pose.mode_time = 0.0;
+            }
+            "arm" => {
+                app.world_mut()
+                    .get_mut::<BodyHealth>(player)
+                    .unwrap()
+                    .anatomy
+                    .regions[Region::RightArm as usize] = 0.0
+            }
+            "death" => {
+                app.world_mut()
+                    .get_mut::<BodyHealth>(player)
+                    .unwrap()
+                    .anatomy
+                    .organs[0] = 0.0
+            }
+            _ => unreachable!(),
+        }
+        if gate == "stale" {
+            steps(&mut app, 2);
+        } else {
+            held_steps(&mut app, player, 2);
+        }
+        let state = app
+            .world()
+            .get::<Arsenal>(player)
+            .unwrap()
+            .current()
+            .mechanics();
+        assert!(state.action().is_none(), "{gate}");
+        assert_eq!(state.magazines(), before.mechanics.magazines());
+        assert_eq!(state.chamber(), before.mechanics.chamber());
+        assert_eq!(state.total_rounds(), before.mechanics.total_rounds());
+        assert!(
+            !app.world()
+                .resource::<WorldState>()
+                .fired_projectiles
+                .iter()
+                .any(|shot| shot.shooter == 7)
+        );
+        if matches!(gate, "aim" | "sprint" | "stale") {
+            {
+                let mut input = app.world_mut().get_mut::<ClientInput>(player).unwrap();
+                input.aim = false;
+                input.run = false;
+            }
+            held_steps(&mut app, player, 2);
+            assert!(
+                app.world()
+                    .get::<Arsenal>(player)
+                    .unwrap()
+                    .current()
+                    .mechanics()
+                    .action()
+                    .is_none(),
+                "{gate}: blocked/stale inspect was replayed"
+            );
+            app.world_mut()
+                .get_mut::<ClientInput>(player)
+                .unwrap()
+                .inspect_sequence = 3;
+            held_steps(&mut app, player, 1);
+            assert_eq!(
+                app.world()
+                    .get::<Arsenal>(player)
+                    .unwrap()
+                    .current()
+                    .mechanics()
+                    .action()
+                    .unwrap()
+                    .kind,
+                ManipulationKind::Inspect
+            );
+        }
+    }
+}
+
+#[test]
 fn mechanics_gates_cancel_before_and_after_magazine_commits_without_rollback() {
     use common::humanoid::{PhysicalMode, PoseState};
     for gate in ["stale", "fall", "arm", "death"] {

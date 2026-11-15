@@ -14,6 +14,15 @@ impl ReloadTiming {
     pub const FED: f32 = 0.90;
 }
 
+/// Authored mechanical seconds, shared by authoritative actions and their
+/// presentation. Injury scales the action clock, not these phase durations.
+pub struct HandlingTiming;
+impl HandlingTiming {
+    pub const UNEQUIP: f32 = 0.20;
+    pub const EQUIP: f32 = 0.35;
+    pub const INSPECT: f32 = 2.8;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub struct MagazineInstance {
     pub id: MagazineInstanceId,
