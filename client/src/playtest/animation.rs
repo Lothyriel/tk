@@ -26,6 +26,7 @@ pub(super) struct ReviewFrame {
     pub elapsed: f64,
     pub peer: bool,
     pub world_fov: f32,
+    pub magazine_size: u32,
 }
 
 impl Sequence {
@@ -46,6 +47,7 @@ impl Sequence {
             elapsed,
             peer,
             world_fov,
+            magazine_size,
         } = *frame;
         assert!(
             elapsed < 150.0,
@@ -86,10 +88,7 @@ impl Sequence {
                 (16.1, local.mechanics.mode == catalog::FireMode::Auto),
                 (19.7, local.ammo_in_mag == 0 && !local.mechanics.chambered),
                 (22.9, loaded(local)),
-                (
-                    23.3,
-                    local.ammo_in_mag < local.weapon_id.spec().magazine_size,
-                ),
+                (23.3, local.ammo_in_mag < magazine_size),
                 (23.95, !local.mechanics.magazine_inserted),
                 (24.5, ready(local, Sidearm)),
                 (24.9, ready(local, Primary)),
@@ -159,6 +158,7 @@ pub(super) fn drive(
         elapsed,
         peer,
         world_fov,
+        magazine_size,
     } = frame;
     let observe = sequence.control(input, local, other, &frame);
     if observe {
@@ -340,7 +340,7 @@ pub(super) fn drive(
                 assert_eq!(local.ammo_in_mag, 0, "{name}");
             }
             if name.ends_with("return") {
-                assert_eq!(local.ammo_in_mag, local.weapon_id.spec().magazine_size + 1);
+                assert_eq!(local.ammo_in_mag, magazine_size + 1);
                 assert!(local.mechanics.chambered && local.mechanics.magazine_inserted);
                 assert_eq!(local.reload_remaining(), 0.0);
             }

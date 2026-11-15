@@ -33,6 +33,7 @@ pub(super) fn lobby_tick(
         Without<Bot>,
     >,
     reset_entities: RaidResetEntities,
+    fixture: Res<crate::kit_fixture::KitFixture>,
 ) {
     let RaidResetEntities {
         bots,
@@ -90,7 +91,7 @@ pub(super) fn lobby_tick(
             player.begin();
             *body = BodyHealth::default();
             *armor = ArmorState::from_loadout(player.loadout);
-            *arsenal = Arsenal::new(player.loadout);
+            *arsenal = fixture.arsenal(player.loadout);
             arsenal.synchronize_sequences(input);
             movement.velocity = Vec3::ZERO;
             set_crouched_state(&mut movement, &mut collider, &mut transform, false);

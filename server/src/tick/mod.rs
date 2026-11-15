@@ -25,6 +25,7 @@ impl bevy::prelude::Plugin for Plugin {
         app.insert_resource(Time::<Fixed>::from_hz(128.0))
             .init_resource::<WorldState>()
             .init_resource::<RaidState>()
+            .init_resource::<crate::kit_fixture::KitFixture>()
             .init_resource::<replication::Replication>()
             .init_resource::<metrics::TickMetrics>()
             .add_systems(FixedFirst, metrics::begin)
@@ -280,6 +281,7 @@ fn recv_connectivity(
     mut server: ResMut<RenetServer>,
     time: Res<Time>,
     mut replication: ResMut<replication::Replication>,
+    fixture: Res<crate::kit_fixture::KitFixture>,
 ) {
     for event in events.read() {
         match event {
@@ -295,7 +297,7 @@ fn recv_connectivity(
                         character_bundle(*client_id, Vec3::from(common::map::SPAWN_CENTER)),
                         Participant::default(),
                         ArmorState::default(),
-                        Arsenal::new(Loadout::default()),
+                        fixture.arsenal(Loadout::default()),
                         ColliderDisabled,
                     ))
                     .id();

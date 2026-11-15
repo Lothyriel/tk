@@ -230,6 +230,11 @@ fn drive(
         return;
     };
     let p = &local.participant;
+    let cache = &session.configurations.cache;
+    let spec = &cache
+        .get(cache.epoch(), local.configuration)
+        .expect("published actor configuration")
+        .resolved;
     let peer = std::env::var("TK_PLAYTEST_ROLE").is_ok_and(|role| role == "1");
     view_camera.is_active = !(driver.step == Step::Injury || peer && driver.step == Step::Showcase);
     let loot_index = if peer { 1 } else { 0 };
@@ -295,7 +300,16 @@ fn drive(
             assert_eq!(local.armor.vest, 100.0);
             assert_eq!(local.armor.helmet, 40.0);
             assert_eq!(local.body.parts, [35.0, 85.0, 60.0, 70.0]);
-            assert_eq!(local.ammo_in_mag, desired.primary.spec().magazine_size);
+            assert_eq!(local.ammo_in_mag, spec.magazine_size);
+            info!(
+                "DEPLOY KIT capacity={} definitions={:?}",
+                spec.magazine_size,
+                spec.assembly
+                    .parts
+                    .iter()
+                    .map(|part| part.definition.0)
+                    .collect::<Vec<_>>()
+            );
             assert_eq!(session.players.iter().filter(|p| p.bot).count(), 2);
             capture(&mut commands, "raid");
             driver.advance(
@@ -411,6 +425,7 @@ fn drive(
                     elapsed,
                     peer,
                     world_fov,
+                    magazine_size: spec.magazine_size,
                 },
             );
             view_camera.is_active = !observer;

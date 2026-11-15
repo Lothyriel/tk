@@ -15,6 +15,7 @@ use bevy_renet2::{
 
 use common::*;
 
+mod kit_fixture;
 mod tick;
 
 fn main() {
@@ -33,6 +34,7 @@ impl bevy::prelude::Plugin for ServerPlugin {
         let (server, transport) = renet_init();
 
         app.add_plugins(common::Plugin)
+            .insert_resource(kit_fixture::KitFixture::from_environment())
             .add_plugins(RenetServerPlugin)
             .add_plugins(NetcodeServerPlugin)
             .add_plugins(tick::Plugin)
