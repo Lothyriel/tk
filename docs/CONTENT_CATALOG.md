@@ -31,17 +31,26 @@ Local view templates are created on first equip rather than all at startup.
 
 ## Resolution
 
-Weapons reference a profile, ammunition and components. The initial component
-socket is a magazine with an ammunition reference and capacity. Resolution
-checks those references and compatibility, then produces capacities, damage,
-penetration, cadence, reload duration, velocity and authoritative bore offset.
-`EquippedWeapon` caches that resolved configuration when equipped. Mutable
-magazine/reserve counts belong to its `WeaponInstance`.
+Schema 2 weapons reference a profile, ammunition and a bounded attachment tree.
+Each attachment has a stable nonzero node ID, component definition, parent node
+(or root), socket key and indexed rail position. Socket interfaces match kind,
+standard **and** size code exactly. No compatibility is inferred from display
+names. See [assembly contracts](WEAPON_ASSEMBLY.md) for transforms, constraints,
+property reductions and revision transactions.
+
+Resolution produces capacity, damage, penetration, cadence, reload duration,
+velocity, mass, balance, modifiers, anchors and conservative obstruction bounds.
+`EquippedWeapon` caches this result when equipped or successfully reconfigured.
+Mutable magazine/reserve counts and the configuration revision belong to its
+`WeaponInstance`.
 
 The initial values preserve TK's existing combat rules, including the temporary
 17-round pistol. These are migration baselines, not claims of real-world
 fidelity. See [weapon references](WEAPON_REFERENCES.md) for the intended targets.
-Attachment graphs and physical chamber state extend this resolver/state model.
+The bundled root masses and magazine interfaces are **G migration placeholders**,
+not manufacturer-certified kit masses. Baseline roots still contain the entire
+legacy assembly; replacing a baseline with a decomposed kit must subtract the
+removed parts from root mass. Physical chamber state extends this state model.
 
 Visual mesh construction, palettes, animation tracks and sound resources belong
 to the client. The shared bore offset remains logical because authoritative

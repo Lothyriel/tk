@@ -6,8 +6,10 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 mod instance;
 pub use instance::*;
+mod assembly;
+pub use assembly::*;
 
-pub const CATALOG_VERSION: u32 = 1;
+pub const CATALOG_VERSION: u32 = 2;
 pub const CATALOG_FILE: &str = "common/data/catalog.ron";
 pub const CATALOG_SOURCE: &str = include_str!("../data/catalog.ron");
 
@@ -65,6 +67,17 @@ pub use crate::WeaponKind as WeaponClass;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 pub enum ComponentKind {
     Magazine,
+    Stock,
+    Handguard,
+    Barrel,
+    MuzzleDevice,
+    Suppressor,
+    Compensator,
+    Scope,
+    RedDot,
+    IronSight,
+    Grip,
+    Adapter,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -76,7 +89,8 @@ pub struct WeaponDefinition {
     pub class: WeaponClass,
     pub profile: DefinitionId,
     pub ammo: DefinitionId,
-    pub components: Vec<DefinitionId>,
+    pub components: Vec<Attachment>,
+    pub assembly: WeaponAssembly,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -88,6 +102,7 @@ pub struct ComponentDefinition {
     pub ammo: DefinitionId,
     pub capacity: u32,
     pub mass_kg: f32,
+    pub assembly: ComponentAssembly,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -139,6 +154,7 @@ pub struct ResolvedWeapon {
     pub muzzle_speed: f32,
     pub barrel_offset: [f32; 3],
     pub impact_size_mm: u8,
+    pub assembly: ResolvedAssembly,
 }
 
 impl ResolvedWeapon {
@@ -306,14 +322,19 @@ impl Catalog {
         }
         for (i, component) in document.components.iter().enumerate() {
             positive(file, format!("components[{i}].mass_kg"), component.mass_kg)?;
-            if component.capacity == 0 || component.capacity > 1000 {
+            if (component.kind == ComponentKind::Magazine && component.capacity == 0)
+                || component.capacity > 1000
+                || (component.kind != ComponentKind::Magazine && component.capacity != 0)
+            {
                 return Err(error(
                     file,
                     format!("components[{i}].capacity"),
                     "expected 1..=1000 rounds",
                 ));
             }
-            if !document.ammo.iter().any(|a| a.id == component.ammo) {
+            if (component.kind == ComponentKind::Magazine || component.ammo.0 != 0)
+                && !document.ammo.iter().any(|a| a.id == component.ammo)
+            {
                 return Err(error(
                     file,
                     format!("components[{i}].ammo"),
@@ -321,6 +342,7 @@ impl Catalog {
                 ));
             }
         }
+        assembly::validate::document(file, &document)?;
         let mut catalog = Self {
             file: file.into(),
             definitions: BTreeMap::new(),
@@ -349,7 +371,7 @@ impl Catalog {
     fn resolve_definition(
         &self,
         definition: &WeaponDefinition,
-        components: &[DefinitionId],
+        components: &[Attachment],
         field: &str,
     ) -> Result<ResolvedWeapon, CatalogError> {
         let profile = self
@@ -360,27 +382,23 @@ impl Catalog {
             .ammo
             .get(&definition.ammo)
             .ok_or_else(|| error(&self.file, format!("{field}.ammo"), "unknown ammo ID"))?;
-        // First migration supports a magazine socket. Attachment graph and modifiers
-        // extend this resolver in TAR-18 rather than creating another property source.
-        if components.len() != 1 {
+        let (assembly, capacity) = self.resolve_assembly(definition, components, field)?;
+        let barrel_offset =
+            assembly
+                .anchors
+                .get(&AnchorKind::Bore)
+                .map_or(profile.barrel_offset, |pose| {
+                    assembly
+                        .hip_from_root
+                        .transform_point(pose.translation)
+                        .to_array()
+                });
+        let muzzle_speed = ammo.muzzle_speed * assembly.velocity_multiplier;
+        if !muzzle_speed.is_finite() || !(1.0..=5000.0).contains(&muzzle_speed) {
             return Err(error(
                 &self.file,
-                format!("{field}.components"),
-                "expected one magazine component",
-            ));
-        }
-        let magazine = self.components.get(&components[0]).ok_or_else(|| {
-            error(
-                &self.file,
-                format!("{field}.components[0]"),
-                "unknown component ID",
-            )
-        })?;
-        if magazine.ammo != definition.ammo {
-            return Err(error(
-                &self.file,
-                format!("{field}.components[0]"),
-                "magazine ammo is incompatible with weapon",
+                format!("{field}.muzzle_speed"),
+                "resolved velocity outside 1..=5000 m/s",
             ));
         }
         Ok(ResolvedWeapon {
@@ -389,15 +407,16 @@ impl Catalog {
             name: definition.name.clone(),
             class: definition.class,
             ammo: ammo.id,
-            magazine_size: magazine.capacity,
+            magazine_size: capacity,
             rounds_per_minute: profile.rounds_per_minute,
             reload_seconds: profile.reload_seconds,
             automatic: profile.automatic,
             damage: ammo.damage,
             penetration: ammo.penetration,
-            muzzle_speed: ammo.muzzle_speed,
-            barrel_offset: profile.barrel_offset,
+            muzzle_speed,
+            barrel_offset,
             impact_size_mm: profile.impact_size_mm,
+            assembly,
         })
     }
 

@@ -85,10 +85,10 @@ fn catalog_rejects_duplicate_identity_across_categories_and_unknown_references()
             d.weapons[0].ammo = DefinitionId(9999)
         }),
         ("weapons[0].components[0]", |d| {
-            d.weapons[0].components[0] = DefinitionId(9999)
+            d.weapons[0].components[0].definition = DefinitionId(9999)
         }),
         ("weapons[0].components[0]", |d| {
-            d.weapons[0].components[0] = d.weapons[1].components[0]
+            d.weapons[0].components[0].definition = d.weapons[1].components[0].definition
         }),
         ("components[0].ammo", |d| {
             d.components[0].ammo = DefinitionId(9999)

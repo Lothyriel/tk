@@ -69,6 +69,17 @@ pub fn barrel_offset(weapon: WeaponKind, ads: f32) -> Vec3 {
 }
 
 pub fn resolved_barrel_offset(spec: &crate::catalog::ResolvedWeapon, ads: f32) -> Vec3 {
+    if let Some(bore) = spec.assembly.anchors.get(&crate::catalog::AnchorKind::Bore) {
+        let hip = spec
+            .assembly
+            .hip_from_root
+            .transform_point(bore.translation);
+        let aimed = spec
+            .assembly
+            .ads_from_root
+            .transform_point(bore.translation);
+        return hip.lerp(aimed, ease(ads));
+    }
     let weapon = spec.class;
     Vec3::from(spec.barrel_offset).lerp(
         ads_offset(weapon) + WeaponRig::for_weapon(weapon).muzzle,
