@@ -57,6 +57,7 @@ fn keyboard(
     time: Res<Time<Real>>,
     window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
+    mut tilt_target: Local<f32>,
 ) {
     let active = session.playing(id.0)
         && window.0.focused
@@ -78,11 +79,22 @@ fn keyboard(
     if active && keys.just_pressed(KeyCode::KeyR) {
         input.reload_sequence = input.reload_sequence.wrapping_add(1);
     }
-    input.camera.roll = if active {
-        (keys.pressed(KeyCode::KeyQ) as i8 - keys.pressed(KeyCode::KeyE) as i8) as f32 * 0.3
+    if active {
+        if keys.just_pressed(KeyCode::KeyQ) {
+            *tilt_target = if input.camera.roll < 0.0 { 0.0 } else { 0.3 };
+        }
+        if keys.just_pressed(KeyCode::KeyE) {
+            *tilt_target = if input.camera.roll > 0.0 { 0.0 } else { -0.3 };
+        }
+        if !keys.pressed(KeyCode::KeyQ) && !keys.pressed(KeyCode::KeyE) && *tilt_target != 0.0 {
+            *tilt_target = input.camera.roll;
+        }
     } else {
-        0.0
-    };
+        *tilt_target = 0.0;
+    }
+    let max_tilt_change = 0.6 * time.delta_secs();
+    input.camera.roll +=
+        (*tilt_target - input.camera.roll).clamp(-max_tilt_change, max_tilt_change);
     if keys.just_pressed(KeyCode::Enter) {
         input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
     }
@@ -195,6 +207,48 @@ mod tests {
         app.world_mut().resource_mut::<ClientSession>().raid.phase = RaidPhase::Debrief;
         app.update();
         assert!(!app.world().resource::<LocalInput>().aim);
+    }
+
+    #[test]
+    fn q_and_e_hold_tilt_gradually_and_opposite_press_returns_to_level() {
+        let mut app = input_app();
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyQ);
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs_f32(0.25));
+        app.update();
+        assert!((app.world().resource::<LocalInput>().camera.roll - 0.15).abs() < 0.001);
+
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs_f32(0.25));
+        app.update();
+        assert!((app.world().resource::<LocalInput>().camera.roll - 0.3).abs() < 0.001);
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyQ);
+            keys.clear_just_pressed(KeyCode::KeyQ);
+            keys.press(KeyCode::KeyE);
+        }
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs_f32(0.25));
+        app.update();
+        assert!((app.world().resource::<LocalInput>().camera.roll - 0.15).abs() < 0.001);
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs_f32(0.25));
+        app.update();
+        assert!(app.world().resource::<LocalInput>().camera.roll.abs() < 0.001);
     }
 
     #[test]

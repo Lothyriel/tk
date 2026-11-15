@@ -85,7 +85,8 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | Mouse | Look |
 | Left Shift / Left Ctrl | Run / crouch |
 | Space | Jump while active; never respawn during the current raid |
-| Q / E | Tilt the view left / right |
+| Hold Q / E | Gradually tilt the view left / right; release to hold the current angle |
+| Tap the opposite tilt key | Ease back to level |
 | 1 / 2 | Equip your selected primary / pistol |
 | Left mouse button | Hold for rifle/SMG automatic fire; click for pistol semi-automatic fire |
 | Hold right mouse button | Aim down iron sights; release to return to hip fire |
@@ -162,4 +163,4 @@ The ongoing polish evidence is indexed in [ANIMATION_RAGDOLL.md](ANIMATION_RAGDO
 - `client/src/render/feedback.rs`: per-weapon recoil impulse, spring/damping, flash lifetime, reload/swap and camera feedback. Audio assets in `assets/sound/` are intentionally retained but not loaded by firing.
 - `common/src/weapon_animation.rs` and `client/src/render/weapons.rs`: original grip/muzzle anchors, per-weapon empty/tactical choreography, and cached first-person weapon assemblies; curves do not grant ammo or actions.
 
-**Latest review.** On 2026-11-15, reviewed the project skill/data relocation and active path references; gameplay is unchanged, the Mermaid flow still matches the guide, and prior visual/performance acceptance gaps remain open.
+**Latest review.** On 2026-11-15, reviewed gradual Q/E view tilt, its opposite-key return to level, and the controls table; the Mermaid player flow is unchanged and still matches gameplay.
