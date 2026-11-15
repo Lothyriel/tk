@@ -2,6 +2,8 @@
 use bevy::prelude::*;
 use rkyv::{Archive, Deserialize, Serialize};
 
+pub mod handling;
+
 pub const SEGMENT_COUNT: usize = 17;
 
 /// Lateral chest/head/camera displacement for each radian of aim roll.
@@ -308,13 +310,10 @@ pub fn evaluate_pose_with_action(
         let axis = (desired - shoulder).normalize_or_zero();
         let distance = desired.distance(shoulder).clamp(0.10, 0.575);
         let grip = shoulder + axis * distance;
-        let along = (0.30_f32.powi(2) - 0.28_f32.powi(2) + distance * distance) / (2.0 * distance);
-        let bend = (0.30_f32.powi(2) - along * along).max(0.0).sqrt();
         // Keep elbows outside the thorax while the hands meet at the weapon.
         // A straight-down pole folds the trigger upper arm inside the chest.
         let pole = Vec3::new(side * 0.8, -1.0, 0.0).normalize();
-        let down = (pole - axis * pole.dot(axis)).normalize_or_zero();
-        let elbow = shoulder + axis * along + down * bend;
+        let elbow = handling::elbow_for_reachable(shoulder, grip, pole);
         result[upper.index()] = bone(shoulder, elbow);
         result[lower.index()] = bone(elbow, grip);
         result[hand.index()].position = grip.into();
@@ -428,12 +427,8 @@ pub fn evaluate_pose_with_action(
             let axis = (desired - shoulder).normalize_or_zero();
             let distance = desired.distance(shoulder).clamp(0.10, 0.575);
             let grip = shoulder + axis * distance;
-            let along =
-                (0.30_f32.powi(2) - 0.28_f32.powi(2) + distance * distance) / (2.0 * distance);
-            let bend = (0.30_f32.powi(2) - along * along).max(0.0).sqrt();
             let pole = Vec3::new(side * 0.2, -1.0, -0.25).normalize();
-            let elbow =
-                shoulder + axis * along + (pole - axis * pole.dot(axis)).normalize_or_zero() * bend;
+            let elbow = handling::elbow_for_reachable(shoulder, grip, pole);
             result[upper.index()] = bone(shoulder, elbow);
             result[lower.index()] = bone(elbow, grip);
             result[hand.index()].position = grip.into();
