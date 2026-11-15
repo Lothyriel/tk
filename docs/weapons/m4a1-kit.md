@@ -255,3 +255,14 @@ the source assembly and preserves the 2.990 kg budget. Client fixtures exercise
 compact/SL/PMAG/CTR, suppressed/PRO/RVG and AFG-2 variants through local and
 remote ADS/reload paths, checking actual rendered contacts and rigid arms.
 These are engineering checks; native artistic/LOD acceptance remains pending.
+
+Native acceptance fixtures are selected with `scripts/playtest.py --clients 2
+--animation-review --weapon-debug --weapon-kit compact|suppressed|afg`.
+The server reads `TK_PLAYTEST_WEAPON_KIT` once at startup and creates valid
+initial owned equipment at connection and raid reset. `compact` uses PMAG20,
+collapsed CTR, SL, DD10.3 and A2; `suppressed` uses magazine30, extended CTR,
+RAS, FN14.5, SFMB/RC2, PRO/QRP2 and RVG at the rear rail endpoint; `afg` uses
+PMAG20, collapsed CTR, RAS, DD10.3, SFMB and AFG-2 at the forward endpoint.
+This is an opt-in acceptance fixture, not a player preset or inventory transfer.
+The runner records the fixture and checks replicated definitions/capacity;
+reload assertions use the replicated configuration's resolved capacity.

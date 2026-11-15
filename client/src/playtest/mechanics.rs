@@ -398,6 +398,10 @@ mod tests {
                         elapsed: step as f64 / 128.0,
                         peer: index == 1,
                         world_fov: actors[index].fov(),
+                        magazine_size: registry
+                            .weapon(snapshots[index].weapon_id)
+                            .unwrap()
+                            .magazine_size,
                     };
                     sequences[index].control(
                         &mut actors[index].input,

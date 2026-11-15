@@ -24,6 +24,8 @@ def main():
     parser.add_argument("--client-path", type=Path)
     parser.add_argument("--video", action="store_true", help="Record native framebuffers and encode timestamped MP4 reviews")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
+    parser.add_argument("--weapon-kit", choices=("compact", "suppressed", "afg"),
+                        help="Seed server-owned M4A1 kit and physical magazines for native acceptance")
     parser.add_argument("--weapon-debug", action="store_true",
                         help="Show live socket/pivot overlays and use a close side observer during animation review")
     parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
@@ -47,6 +49,9 @@ def main():
                             "--", "-o", str(output / f"{binary}{suffix}")], cwd=root, check=True)
     suffix = ".exe" if os.name == "nt" else ""
     env = os.environ.copy()
+    env.pop("TK_PLAYTEST_WEAPON_KIT", None)
+    if args.weapon_kit:
+        env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
     for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY",
                  "TK_WEAPON_DEBUG", "TK_WEAPON_LOD"):
         env.pop(flag, None)
@@ -77,6 +82,7 @@ def main():
         "resolution": [1280, 800], "world_fov_degrees": 70,
         "video": args.video, "animation_review": args.animation_review,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
+        "initial_weapon_kit_fixture": args.weapon_kit,
         "capture_target_hz": 30 if args.video else 0,
         "shot_diagnostics": env.get("TK_SHOT_DIAGNOSTICS") is not None,
         "loadouts": "leader Rifle / peer SMG; AP; heavy vest; helmet; both carry pistol",
@@ -131,6 +137,14 @@ def main():
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
     assert "PLAYTEST PASS" in client_text, f"Missing completion proof: {output / 'client.log'}"
+    if args.weapon_kit:
+        assert f"INITIAL EQUIPMENT FIXTURE {args.weapon_kit}" in server_text
+        capacity, definitions = {
+            "compact": (20, [120, 122, 124, 126, 127, 130, 131]),
+            "suppressed": (30, [101, 122, 123, 125, 128, 130, 131, 129, 132, 133, 134]),
+            "afg": (20, [120, 122, 123, 126, 128, 130, 131, 135]),
+        }[args.weapon_kit]
+        assert f"DEPLOY KIT capacity={capacity} definitions={definitions}" in client_text, "Wrong replicated kit"
     if args.clients == 2:
         peer_text = (output / "peer" / "client.log").read_text(encoding="utf-8", errors="replace")
         assert "PLAYTEST PASS" in peer_text, "Peer did not finish the normal raid cycle"
