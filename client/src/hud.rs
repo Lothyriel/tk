@@ -1,4 +1,7 @@
-use bevy::prelude::*;
+use bevy::{
+    diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    prelude::*,
+};
 use bevy_renet2::prelude::RenetClient;
 use common::{combat::*, map::*, raid::*, *};
 
@@ -8,13 +11,25 @@ pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup)
-            .add_systems(Update, update.in_set(ClientSystems::Present));
+        app.add_plugins(FrameTimeDiagnosticsPlugin::default())
+            .add_systems(Startup, setup)
+            .add_systems(
+                Update,
+                (
+                    update.in_set(ClientSystems::Present),
+                    update_metrics
+                        .after(FrameTimeDiagnosticsPlugin::diagnostic_system)
+                        .in_set(ClientSystems::Present),
+                ),
+            );
     }
 }
 
 #[derive(Component)]
 struct RaidHud;
+
+#[derive(Component)]
+struct MetricsHud;
 
 fn setup(mut commands: Commands) {
     commands.spawn((
@@ -33,6 +48,43 @@ fn setup(mut commands: Commands) {
         },
         GlobalZIndex(200),
     ));
+    commands.spawn((
+        MetricsHud,
+        Text::new("FPS --\nFRAME -- ms"),
+        TextFont::from_font_size(14.0),
+        TextColor(Color::srgb(0.9, 0.97, 1.0)),
+        BackgroundColor(Color::srgba(0.015, 0.025, 0.04, 0.72)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(18.0),
+            right: Val::Px(18.0),
+            padding: UiRect::axes(Val::Px(10.0), Val::Px(7.0)),
+            ..default()
+        },
+        GlobalZIndex(200),
+    ));
+}
+
+fn update_metrics(
+    diagnostics: Res<DiagnosticsStore>,
+    mut hud: Single<&mut Text, With<MetricsHud>>,
+) {
+    let fps = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|diagnostic| diagnostic.smoothed());
+    let frame_time = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
+        .and_then(|diagnostic| diagnostic.smoothed());
+    ***hud = metrics_text(fps, frame_time);
+}
+
+fn metrics_text(fps: Option<f64>, frame_time_ms: Option<f64>) -> String {
+    match (fps, frame_time_ms) {
+        (Some(fps), Some(frame_time_ms)) => {
+            format!("FPS {fps:>5.0}\nFRAME {frame_time_ms:>5.1} ms")
+        }
+        _ => "FPS --\nFRAME -- ms".to_string(),
+    }
 }
 
 fn update(
@@ -168,6 +220,14 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn performance_overlay_formats_smoothed_fps_and_frame_time() {
+        assert_eq!(metrics_text(None, None), "FPS --\nFRAME -- ms");
+        let text = metrics_text(Some(60.0), Some(16.7));
+        assert!(text.contains("FPS    60"));
+        assert!(text.contains("FRAME  16.7 ms"));
+    }
 
     #[test]
     fn lobby_and_result_explain_the_actual_next_action() {
