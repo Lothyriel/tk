@@ -45,11 +45,40 @@ Only the caller's frame/shoulders/poles change; the contact tree remains rigid.
 
 ## Integration and evidence
 
-The existing humanoid's aiming and fallen/bracing paths now reuse the analytic
-elbow calculation after their existing reach clamp. Configured callers use the
-checked APIs and must handle `HandlingError`. This increment does not yet wire
-configuration-revision visual assembly or replace the view-model's legacy arm
-placement; those remain TAR-23 integration work.
+The existing humanoid's aiming and fallen/bracing paths reuse the analytic elbow
+calculation after their existing reach clamp. Configured callers use the checked
+APIs and must handle `HandlingError`.
+
+`client::render::voxel::configured` consumes `ClientSession.configurations.cache`
+by epoch/handle. Client-owned `VisualBindings` map weapon/component definitions
+to baked asset IDs; catalogue/network data carries no asset paths. Node zero is
+the weapon definition, and attachment nodes retain their resolved IDs, definitions
+and root-local poses. Flattening those already-composed poses under one weapon
+root preserves the resolved rigid tree.
+
+Both perspectives use this assembler, the shared voxel buffers/materials and
+three shared upper-arm/forearm/palm meshes. Render layers and view-model detail
+are explicit instance settings. `ConfiguredHandling` supplies a preferred root,
+shoulders/poles, optional stock target, bounded root adjustment, and mechanical
+deltas addressed by node/part. A node/socket address can select the support hand's
+current contact. The trigger grip stays authored.
+
+Revision replacement preflights all bindings, assets and handling before spawning
+the next owned hierarchy. Old revisions of the same instance are rejected.
+An unavailable configuration, missing binding or infeasible pose retains the
+previous hierarchy and transforms with a named `ConfigurationVisualError`.
+Removing the request cleans its owned hierarchy and error, including an initial
+request which failed before an instance existed.
+
+Per-frame preparation composes authored pivots and mechanical deltas, resolves
+the moving socket, solves both arms and validates every ECS target before writing
+any transforms. Identity mismatches, invalid motion or missing targets reject the
+whole update. This shares meshes, not entity hierarchies, across instances.
+
+Production actor/view-model producers and baseline asset bindings still need to
+migrate to these components. The engineering fixtures bind root, magazine and
+grip to the same pipeline exemplar; they prove assembly/contact/cache mechanics,
+not completed weapon art or native weapon presentation.
 
 Fixtures independently measure both bone lengths, exact contact position and
 orientation, elbow limits and pole direction. They cover collinear poles,
@@ -57,3 +86,11 @@ crouch/lean/pitch, moving magazine sockets, clothing thickness, infeasible stock
 grip combinations, root-adjustment limits, missing/nonrigid anchors and equivalent
 solutions across rigid reference frames. These are geometric headless checks;
 the card's final local/remote in-game acceptance is still required.
+
+Minimal Bevy apps additionally verify a real resolved rail/grip revision changes
+support position/orientation without changing the trigger contact, local/world
+instances share buffers, moving magazine sockets match palm position and all
+three oriented axes, 60 frames keep entities and allocation counts stable, and
+rejected updates preserve the entire previous pose. Affine decomposition produces
+nearly-unit quaternions; angular comparisons normalize these first, alongside
+direct basis-vector comparisons, without loosening the contact tolerances.

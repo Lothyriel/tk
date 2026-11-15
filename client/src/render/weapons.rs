@@ -211,7 +211,7 @@ fn magazine(w: WeaponKind) -> Mesh {
     boxes(&parts)
 }
 
-fn glove() -> Mesh {
+pub(super) fn glove() -> Mesh {
     let mut parts = vec![
         (Vec3::new(0.062, 0.045, 0.07), Vec3::ZERO),
         (Vec3::new(0.058, 0.052, 0.035), Vec3::new(0.0, 0.0, 0.048)),
