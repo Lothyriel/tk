@@ -20,6 +20,7 @@ def source():
 def cube_source():
     asset = source()
     asset["parts"] = [asset["parts"][0]]
+    asset["parts"][0].pop("far_boxes", None)
     asset["parts"][0]["boxes"] = [{"min": [0, 0, 0], "max": [1, 1, 1], "material": "steel"}]
     asset["sockets"] = []
     return asset
@@ -107,6 +108,8 @@ class VoxelBakeTests(unittest.TestCase):
         asset["materials"].reverse()
         for part in asset["parts"]:
             part["boxes"].reverse()
+            if "far_boxes" in part:
+                part["far_boxes"].reverse()
         second = compiled(asset)
         self.assertNotEqual(first["source_sha256"], second["source_sha256"])
         first.pop("source_sha256")
@@ -138,6 +141,35 @@ class VoxelBakeTests(unittest.TestCase):
                 with self.assertRaisesRegex(bake.InvalidAsset, diagnostic):
                     bake.bake(asset, b"invalid test input")
 
+    def test_lod_bounds_whole_solids_and_keeps_mechanisms_and_anchors(self):
+        asset = source()
+        result = compiled(asset)
+        self.assertAlmostEqual(result["manifest"]["lod_deviation"], 0.002)
+        self.assertLess(result["manifest"]["far_triangles"], result["manifest"]["triangles"])
+        for original, part in zip(sorted(asset["parts"], key=lambda p: p["id"]), result["parts"]):
+            self.assertEqual(part["pivot"], original["pivot"])
+            if part["movable"]:
+                self.assertEqual(part["meshes"], part["far_meshes"])
+        self.assertEqual(result["sockets"], sorted(asset["sockets"], key=lambda s: s["id"]))
+        for displacement, accepted in [(0.001, True), (0.003, False)]:
+            for direction in [-1, 1]:
+                test = cube_source()
+                test["parts"][0]["far_boxes"] = copy.deepcopy(test["parts"][0]["boxes"])
+                test["parts"][0]["far_boxes"][0]["max"][0] += displacement * direction
+                if accepted:
+                    self.assertAlmostEqual(compiled(test)["manifest"]["lod_deviation"], displacement)
+                else:
+                    with self.assertRaisesRegex(bake.InvalidAsset, "silhouette deviation"):
+                        compiled(test)
+        asset["parts"][1]["far_boxes"] = asset["parts"][1]["boxes"]
+        with self.assertRaisesRegex(bake.InvalidAsset, "movable mechanisms"):
+            compiled(asset)
+        asset = cube_source()
+        asset["parts"][0]["far_boxes"] = copy.deepcopy(asset["parts"][0]["boxes"])
+        asset["parts"][0]["far_boxes"][0]["material"] = "wood"
+        with self.assertRaisesRegex(bake.InvalidAsset, "material groups"):
+            compiled(asset)
+
     def test_limits_and_duplicate_json_keys_are_rejected(self):
         asset = cube_source()
         asset["parts"][0]["boxes"] = [
@@ -160,6 +192,10 @@ class VoxelBakeTests(unittest.TestCase):
             vertices = triangles = calls = memory = 0
             for part in result["parts"]:
                 for mesh in part["meshes"]:
+                    self.assertEqual(mesh["bounds"]["min"], [
+                        min(p[d] for p in mesh["positions"]) for d in range(3)])
+                    self.assertEqual(mesh["bounds"]["max"], [
+                        max(p[d] for p in mesh["positions"]) for d in range(3)])
                     vertices += len(mesh["positions"])
                     triangles += len(mesh["indices"]) // 3
                     calls += 1
@@ -167,6 +203,13 @@ class VoxelBakeTests(unittest.TestCase):
             self.assertEqual((vertices, triangles, calls, memory),
                              tuple(result["manifest"][k] for k in
                                    ("vertices", "triangles", "draw_calls", "mesh_bytes")))
+            far_memory = sum(len(m["positions"]) * 24 + len(m["indices"]) * 4
+                             for part in result["parts"] for m in part["far_meshes"])
+            extra_memory = sum(len(f["positions"]) * 24 + len(f["indices"]) * 4
+                               for part in result["parts"]
+                               for n, f in zip(part["meshes"], part["far_meshes"]) if n != f)
+            self.assertEqual(result["manifest"]["far_mesh_bytes"], far_memory)
+            self.assertEqual(result["manifest"]["cached_mesh_bytes"], memory + extra_memory)
 
     def test_build_rejects_stale_bake_and_invalid_batch_does_not_write(self):
         with tempfile.TemporaryDirectory() as tmp:
