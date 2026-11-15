@@ -49,6 +49,10 @@ pub(super) fn bot_tick(
                 distance + 0.1,
                 true,
                 QueryFilter::new()
+                    .groups(CollisionGroups::new(
+                        Group::ALL,
+                        Group::GROUP_1 | Group::GROUP_3,
+                    ))
                     .exclude_collider(entity)
                     .exclude_sensors(),
             )

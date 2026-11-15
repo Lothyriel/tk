@@ -54,4 +54,100 @@ mod tests {
         assert_eq!(try_decode::<Vec<u64>>(&frame[1..]).unwrap(), vec![1, 2, 3]);
         assert!(try_decode::<Vec<u64>>(&[1, 2, 3]).is_err());
     }
+
+    #[test]
+    fn persistent_anatomy_pose_and_piece_state_roundtrip_with_bounded_snapshot() {
+        use crate::{combat::*, humanoid::*, *};
+        let mut player = ClientData { id: 7, ..default() };
+        player.body.anatomy.separate(Segment::LeftForearm);
+        player.body.anatomy.organs[Organ::Heart as usize] = 25.0;
+        player.pose.mode = PhysicalMode::Fallen;
+        player.pose.mode_time = 1.2;
+        let piece = PhysicsPieceData {
+            id: 123,
+            owner: 7,
+            segment: Segment::LeftForearm,
+            pose: SegmentPose {
+                position: [1.0, 0.2, 3.0],
+                rotation: Quat::from_rotation_x(0.5).to_array(),
+            },
+            detached: true,
+            bot: false,
+        };
+        let shot = FiredProjectileData {
+            id: 44,
+            weapon: WeaponKind::Smg,
+            shooter: 7,
+            time: 3.8,
+            muzzle: [0.2, 1.2, 0.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        let snapshot = WorldSnapshot {
+            sequence: 200,
+            raid: default(),
+            players: vec![player.clone()],
+            projectiles: vec![],
+            impact_marks: vec![],
+            fired_projectiles: vec![shot],
+            physics_pieces: vec![piece],
+            simulation_time: 4.0,
+        };
+        let decoded = try_decode::<WorldSnapshot>(&encode(&snapshot)).unwrap();
+        assert_eq!(decoded.players[0].body.anatomy.missing, (1 << 6) | (1 << 7));
+        assert_eq!(decoded.players[0].body.anatomy.organs[1], 25.0);
+        assert_eq!(decoded.players[0].pose.mode, PhysicalMode::Fallen);
+        assert_eq!(decoded.players[0].pose.mode_time, 1.2);
+        assert_eq!(decoded.physics_pieces[0].id, 123);
+        assert_eq!(decoded.physics_pieces[0].owner, 7);
+        assert_eq!(decoded.physics_pieces[0].pose.position, [1.0, 0.2, 3.0]);
+        assert_eq!(decoded.fired_projectiles[0].shooter, 7);
+        assert_eq!(decoded.fired_projectiles[0].id, 44);
+        let mut worst = snapshot;
+        worst.players = (0..32)
+            .map(|id| ClientData {
+                id,
+                ..player.clone()
+            })
+            .collect();
+        worst.physics_pieces = (0..320)
+            .map(|id| PhysicsPieceData {
+                id,
+                ..worst.physics_pieces[0].clone()
+            })
+            .collect();
+        worst.impact_marks = (0..256)
+            .map(|id| ImpactMarkData {
+                id,
+                pos: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+            })
+            .collect();
+        worst.fired_projectiles = (0..224)
+            .map(|id| FiredProjectileData {
+                id,
+                ..worst.fired_projectiles[0].clone()
+            })
+            .collect();
+        let bytes = encode(&worst);
+        println!(
+            "TK MAX SNAPSHOT actors=32 pieces=320 impacts=256 recent_shots=224 bytes={}",
+            bytes.len()
+        );
+        assert!(bytes.len() < 60_000);
+        for player in &mut worst.players {
+            let rig = evaluate_pose(&PoseState::default(), 1.0, 1.0);
+            player.pose.physical = Some(Box::new(PackedRig::pack(&rig)));
+        }
+        let packed = encode(&worst);
+        println!(
+            "TK MAX PHYSICAL SNAPSHOT actors=32 physical_rigs=32 pieces=320 bytes={}",
+            packed.len()
+        );
+        assert!(
+            packed.len() < 60_000,
+            "physical rig state must retain the existing network budget"
+        );
+        let decoded = try_decode::<WorldSnapshot>(&packed).unwrap();
+        assert!(decoded.players.iter().all(|p| p.pose.physical.is_some()));
+    }
 }

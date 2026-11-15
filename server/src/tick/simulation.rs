@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
+use common::humanoid::*;
 use common::{combat::*, raid::*, *};
 
 use super::{Projectile, WorldState, can_stand_up, set_crouched_state};
@@ -12,12 +13,14 @@ pub(super) fn physx_tick(
         Entity,
         &ClientInput,
         &BodyHealth,
+        &PoseState,
         &Participant,
         &mut MovementState,
         &mut Collider,
         &mut KinematicCharacterController,
         Option<&KinematicCharacterControllerOutput>,
         &mut Transform,
+        Has<super::live_body::Body>,
     )>,
 ) {
     let Ok(context) = context.single() else {
@@ -28,17 +31,31 @@ pub(super) fn physx_tick(
         entity,
         input,
         body,
+        pose,
         player,
         mut movement,
         mut collider,
         mut controller,
         output,
         mut transform,
+        articulated,
     ) in &mut query
     {
         if raid.phase != RaidPhase::Active || player.status != RaidStatus::Active || !body.alive() {
             movement.velocity = Vec3::ZERO;
             controller.translation = None;
+            continue;
+        }
+        if matches!(pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering) {
+            if articulated {
+                movement.velocity = Vec3::ZERO;
+                controller.translation = None;
+                continue;
+            }
+            movement.velocity.x *= (-delta * 3.0).exp();
+            movement.velocity.z *= (-delta * 3.0).exp();
+            movement.velocity.y -= PLAYER_GRAVITY * delta;
+            controller.translation = Some(movement.velocity * delta);
             continue;
         }
         if input.crouch && !movement.crouched {
@@ -56,7 +73,7 @@ pub(super) fn physx_tick(
         let horizontal = Vec3::new(movement.velocity.x, 0.0, movement.velocity.z);
         let speed = if movement.crouched {
             PLAYER_CROUCH_SPEED
-        } else if input.run {
+        } else if input.run && body.anatomy.vigor > 10.0 && body.anatomy.speed() > 0.6 {
             PLAYER_RUN_SPEED
         } else {
             PLAYER_WALK_SPEED
@@ -81,10 +98,19 @@ pub(super) fn physx_tick(
                 * control;
         movement.velocity.x = horizontal.x;
         movement.velocity.z = horizontal.z;
+        if pose.mode == PhysicalMode::Stumbling {
+            let impulse = Vec3::from(pose.impulse);
+            movement.velocity.x += impulse.x * delta * 3.0;
+            movement.velocity.z += impulse.z * delta * 3.0;
+        }
         if grounded {
             movement.velocity.y = movement.velocity.y.max(0.0);
-            if input.jump && !movement.jump_queued {
-                movement.velocity.y = PLAYER_JUMP_SPEED;
+            if input.jump
+                && !movement.jump_queued
+                && body.anatomy.speed() > 0.4
+                && body.anatomy.vigor > 10.0
+            {
+                movement.velocity.y = PLAYER_JUMP_SPEED * body.anatomy.speed().sqrt();
                 movement.grounded = false;
                 movement.jump_queued = true;
             }
@@ -103,7 +129,6 @@ pub(super) fn weapons_tick(
     mut commands: Commands,
     time: Res<Time>,
     raid: Res<RaidState>,
-    context: ReadRapierContext,
     mut world_state: ResMut<WorldState>,
     mut query: Query<(
         Entity,
@@ -111,19 +136,29 @@ pub(super) fn weapons_tick(
         &Transform,
         &MovementState,
         &BodyHealth,
+        &Client,
+        &PoseState,
         &Participant,
         &mut Arsenal,
     )>,
 ) {
-    let Ok(context) = context.single() else {
-        return;
-    };
-    for (entity, input, transform, movement, body, player, mut arsenal) in &mut query {
+    for (entity, input, transform, movement, body, client, pose, player, mut arsenal) in &mut query
+    {
         if raid.phase != RaidPhase::Active || player.status != RaidStatus::Active || !body.alive() {
             arsenal.synchronize_sequences(input);
+            arsenal.reload_remaining = 0.0;
             continue;
         }
-        let Some(weapon) = arsenal.step(input, time.delta_secs(), time.elapsed_secs()) else {
+        if matches!(pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering)
+            || body.anatomy.capacity(Region::RightArm) <= 0.0
+        {
+            arsenal.synchronize_sequences(input);
+            arsenal.reload_remaining = 0.0;
+            continue;
+        }
+        let handling = 0.45 + body.anatomy.handling() * 0.55;
+        let Some(weapon) = arsenal.step(input, time.delta_secs() * handling, time.elapsed_secs())
+        else {
             continue;
         };
         let rotation = Quat::from(&input.camera);
@@ -136,20 +171,10 @@ pub(super) fn weapons_tick(
                     } else {
                         0.0
                     });
-        let muzzle = eye + rotation * Vec3::from(weapon.spec().barrel_offset);
-        let barrel = muzzle - eye;
-        // A barrel protruding through cover must not bypass that cover.
-        let obstructed = context
-            .cast_ray(
-                eye,
-                barrel.normalize(),
-                barrel.length(),
-                true,
-                QueryFilter::new()
-                    .exclude_collider(entity)
-                    .exclude_sensors(),
-            )
-            .is_some();
+        let muzzle = eye + rotation * common::weapon_animation::barrel_offset(weapon, pose.ads);
+        // Resolve actual eye-to-muzzle contacts in projectiles_tick. A broad
+        // movement capsule must neither redirect a clear offset ray to the eye
+        // nor let a muzzle spawn beyond real anatomy/concrete at point blank.
         let id = world_state.next_projectile_id;
         world_state.next_projectile_id = id.wrapping_add(1);
         commands.spawn((
@@ -162,11 +187,23 @@ pub(super) fn weapons_tick(
                 owner_entity: entity,
                 penetrated: Vec::new(),
             },
-            Transform::from_translation(if obstructed { eye } else { muzzle }),
+            super::MuzzleClearance(muzzle),
+            Transform::from_translation(eye),
         ));
-        world_state
-            .fired_projectiles
-            .push(FiredProjectileData { id, weapon });
+        if std::env::var_os("TK_SHOT_DIAGNOSTICS").is_some() {
+            info!(
+                "SHOT ORIGIN id={id} shooter={} eye={eye:?} muzzle={muzzle:?} direction={direction:?} ads={} clearance=posed-anatomy-and-world",
+                client.id, pose.ads
+            );
+        }
+        world_state.fired_projectiles.push(FiredProjectileData {
+            id,
+            weapon,
+            shooter: client.id,
+            time: time.elapsed_secs(),
+            muzzle: muzzle.into(),
+            direction: direction.into(),
+        });
     }
 }
 
@@ -175,100 +212,234 @@ pub(super) fn projectiles_tick(
     mut world_state: ResMut<WorldState>,
     context: ReadRapierContext,
     time: Res<Time>,
-    mut projectiles: Query<(Entity, &mut Projectile, &mut Transform)>,
+    mut projectiles: Query<(
+        Entity,
+        &mut Projectile,
+        &mut Transform,
+        Option<&super::MuzzleClearance>,
+    )>,
     mut players: Query<
         (
+            Entity,
             &mut BodyHealth,
             &mut ArmorState,
             &mut MovementState,
             &Transform,
             &Participant,
+            Option<&mut PoseState>,
+            Option<&Client>,
+            Has<super::Bot>,
+            Option<&mut super::ragdoll::Impact>,
+            Option<&mut super::live_body::Body>,
         ),
         Without<Projectile>,
     >,
     surfaces: Query<(&SurfaceKind, &Collider, &Transform), Without<Projectile>>,
+    mut physics_pieces: Query<(Entity, &mut super::physical::PhysicsPiece)>,
 ) {
     let Ok(context) = context.single() else {
         return;
     };
     let delta = time.delta_secs();
-    for (entity, mut projectile, mut transform) in &mut projectiles {
+    for (entity, mut projectile, mut transform, clearance) in &mut projectiles {
         projectile.velocity.y -= PROJECTILE_GRAVITY * delta;
         let displacement = projectile.velocity * delta;
-        let mut remaining = displacement.length();
-        let direction = displacement.normalize_or_zero();
-        let mut start = transform.translation;
+        let muzzle = clearance.map_or(transform.translation, |pending| pending.0);
+        if clearance.is_some() {
+            commands.entity(entity).remove::<super::MuzzleClearance>();
+        }
         let mut stopped = false;
-        for _ in 0..8 {
-            if remaining <= 0.0 {
-                break;
-            }
-            let predicate = |hit_entity, _: &_| {
-                !projectile.penetrated.contains(&hit_entity)
-                    && players.get(hit_entity).map_or(true, |(body, _, _, _, p)| {
-                        body.alive() && p.status == RaidStatus::Active
-                    })
-            };
-            let filter = QueryFilter::new()
-                .exclude_collider(projectile.owner_entity)
-                .exclude_sensors()
-                .predicate(&predicate);
-            let Some((hit_entity, hit)) =
-                context.cast_ray_and_get_normal(start, direction, remaining, true, filter)
-            else {
-                break;
-            };
-            if let Ok((mut body, mut armor, mut movement, player_transform, _)) =
-                players.get_mut(hit_entity)
-            {
-                let mut point = player_transform.rotation.inverse()
-                    * (hit.point - player_transform.translation);
-                if movement.crouched {
-                    point.y /= PLAYER_CROUCH_SCALE;
+        // The short clearance segment and the ordinary muzzle ray share exactly
+        // the same ordered anatomy/cover/penetration resolver. Surface IDs stay
+        // in `penetrated` across both paths, so wood is never charged twice.
+        for (path, origin, travel) in [
+            (
+                "clearance",
+                transform.translation,
+                muzzle - transform.translation,
+            ),
+            ("flight", muzzle, displacement),
+        ] {
+            let mut remaining = travel.length();
+            let direction = travel.normalize_or_zero();
+            let mut start = origin;
+            for _ in 0..8 {
+                if remaining <= 0.0 {
+                    break;
                 }
-                let part = BodyPart::at_local_point(point);
-                body.hit(part, projectile.damage, projectile.penetration, &mut armor);
-                if !body.alive() {
-                    movement.velocity = Vec3::ZERO;
+                let predicate = |hit_entity, _: &_| {
+                    !projectile.penetrated.contains(&hit_entity)
+                        && players.get(hit_entity).is_err()
+                        && physics_pieces.get(hit_entity).is_err()
+                };
+                let filter = QueryFilter::new()
+                    .exclude_collider(projectile.owner_entity)
+                    .exclude_sensors()
+                    .predicate(&predicate);
+                let wall =
+                    context.cast_ray_and_get_normal(start, direction, remaining, true, filter);
+                let max = wall.as_ref().map_or(remaining, |(_, h)| h.time_of_impact);
+                let mut nearest = None;
+                for (target, body, _, movement, t, p, pose, _, _, _, _) in &players {
+                    if target == projectile.owner_entity
+                        || !body.alive()
+                        || p.status != RaidStatus::Active
+                    {
+                        continue;
+                    }
+                    let fallback = PoseState {
+                        crouch: if movement.crouched { 1.0 } else { 0.0 },
+                        ..default()
+                    };
+                    let pose = evaluate_pose(
+                        pose.as_deref().unwrap_or(&fallback),
+                        body.anatomy.capacity(Region::LeftLeg),
+                        body.anatomy.capacity(Region::RightLeg),
+                    );
+                    let inv = t.rotation.inverse();
+                    let local = inv * (start - t.translation);
+                    if let Some((segment, distance, _)) =
+                        ray_segments(local, inv * direction, max, &pose, body.anatomy.missing)
+                            .first()
+                            .copied()
+                    {
+                        if nearest
+                            .as_ref()
+                            .is_none_or(|(_, _, d): &(Entity, Segment, f32)| distance < *d)
+                        {
+                            nearest = Some((target, segment, distance));
+                        }
+                    }
                 }
-                stopped = true;
-                break;
+                if let Some((target, segment, distance)) = nearest {
+                    if path == "clearance" && std::env::var_os("TK_SHOT_DIAGNOSTICS").is_some() {
+                        info!(
+                            "SHOT CLEARANCE HIT id={} actor={target:?} segment={segment:?} origin={origin:?} start={start:?} direction={direction:?} distance={distance} point={:?}",
+                            projectile.id,
+                            start + direction * distance
+                        );
+                    }
+                    let (
+                        _,
+                        mut body,
+                        mut armor,
+                        movement,
+                        t,
+                        _,
+                        mut pose,
+                        client,
+                        bot,
+                        mut impact,
+                        mut articulated,
+                    ) = players.get_mut(target).unwrap();
+                    let fallback = PoseState {
+                        crouch: if movement.crouched { 1.0 } else { 0.0 },
+                        ..default()
+                    };
+                    let rig = evaluate_pose(
+                        pose.as_deref().unwrap_or(&fallback),
+                        body.anatomy.capacity(Region::LeftLeg),
+                        body.anatomy.capacity(Region::RightLeg),
+                    );
+                    let inv = t.rotation.inverse();
+                    let mask = body.hit_anatomy(
+                        segment,
+                        projectile.damage,
+                        projectile.penetration,
+                        &mut armor,
+                        inv * (start - t.translation),
+                        inv * direction,
+                        max,
+                        &rig,
+                    );
+                    if let Some(pose) = pose.as_deref_mut() {
+                        pose.impulse = (Vec3::from(pose.impulse)
+                            + direction * projectile.damage * 0.028)
+                            .into();
+                    }
+                    if let Some(impact) = impact.as_deref_mut() {
+                        impact.add(
+                            direction * projectile.damage * 0.14,
+                            start + direction * distance,
+                        );
+                    }
+                    if mask != 0 {
+                        let mut reused = 0;
+                        if let Some(articulated) = articulated.as_deref_mut() {
+                            for (piece_entity, mut piece) in &mut physics_pieces {
+                                if piece.owner == client.map_or(0, |c| c.id)
+                                    && !piece.detached
+                                    && mask & (1 << piece.segment.index()) != 0
+                                {
+                                    piece.detached = true;
+                                    reused |= 1 << piece.segment.index();
+                                    articulated.parts[piece.segment.index()] = None;
+                                    commands.entity(piece_entity).remove::<ImpulseJoint>();
+                                }
+                            }
+                        }
+                        super::physical::spawn_fragments(
+                            &mut commands,
+                            &mut world_state,
+                            mask & !reused,
+                            &rig,
+                            t,
+                            movement.velocity + direction * 3.0,
+                            client.map_or(0, |c| c.id),
+                            bot,
+                        );
+                    }
+                    stopped = true;
+                    break;
+                }
+                let Some((hit_entity, hit)) = wall else {
+                    break;
+                };
+                if path == "clearance" && std::env::var_os("TK_SHOT_DIAGNOSTICS").is_some() {
+                    info!(
+                        "SHOT CLEARANCE HIT id={} surface={hit_entity:?} origin={origin:?} start={start:?} direction={direction:?} distance={} point={:?}",
+                        projectile.id, hit.time_of_impact, hit.point
+                    );
+                }
+                world_state.impact(hit.point, hit.normal);
+                let Ok((surface, collider, surface_transform)) = surfaces.get(hit_entity) else {
+                    stopped = true;
+                    break;
+                };
+                if matches!(surface, SurfaceKind::Concrete) {
+                    stopped = true;
+                    break;
+                }
+                let reverse_origin = hit.point + direction * 100.0;
+                let Some(exit) = collider.cast_ray_and_get_normal(
+                    surface_transform.translation,
+                    surface_transform.rotation,
+                    reverse_origin,
+                    -direction,
+                    100.0,
+                    true,
+                ) else {
+                    stopped = true;
+                    break;
+                };
+                let thickness = hit.point.distance(exit.point);
+                let Some(energy) = surface.penetrate(projectile.penetration, thickness) else {
+                    stopped = true;
+                    break;
+                };
+                projectile.damage *= energy / projectile.penetration;
+                projectile.penetration = energy;
+                projectile.penetrated.push(hit_entity);
+                world_state.impact(exit.point, exit.normal);
+                let traveled = hit.time_of_impact + 0.002;
+                start = hit.point + direction * 0.002;
+                remaining -= traveled;
+                if projectile.penetrated.len() >= 8 {
+                    stopped = true;
+                    break;
+                }
             }
-            world_state.impact(hit.point, hit.normal);
-            let Ok((surface, collider, surface_transform)) = surfaces.get(hit_entity) else {
-                stopped = true;
-                break;
-            };
-            if matches!(surface, SurfaceKind::Concrete) {
-                stopped = true;
-                break;
-            }
-            let reverse_origin = hit.point + direction * 100.0;
-            let Some(exit) = collider.cast_ray_and_get_normal(
-                surface_transform.translation,
-                surface_transform.rotation,
-                reverse_origin,
-                -direction,
-                100.0,
-                true,
-            ) else {
-                stopped = true;
-                break;
-            };
-            let thickness = hit.point.distance(exit.point);
-            let Some(energy) = surface.penetrate(projectile.penetration, thickness) else {
-                stopped = true;
-                break;
-            };
-            projectile.damage *= energy / projectile.penetration;
-            projectile.penetration = energy;
-            projectile.penetrated.push(hit_entity);
-            world_state.impact(exit.point, exit.normal);
-            let traveled = hit.time_of_impact + 0.002;
-            start = hit.point + direction * 0.002;
-            remaining -= traveled;
-            if projectile.penetrated.len() >= 8 {
-                stopped = true;
+            if stopped {
                 break;
             }
         }
@@ -276,15 +447,28 @@ pub(super) fn projectiles_tick(
         if stopped || projectile.lifetime <= 0.0 {
             commands.entity(entity).despawn();
         } else {
-            transform.translation += displacement;
+            transform.translation = muzzle + displacement;
         }
     }
 }
 
 pub(super) fn sync_ground_state(
-    mut query: Query<(&mut MovementState, &KinematicCharacterControllerOutput)>,
+    mut query: Query<(
+        &mut MovementState,
+        &KinematicCharacterControllerOutput,
+        &mut PoseState,
+    )>,
 ) {
-    for (mut movement, output) in &mut query {
+    for (mut movement, output, mut pose) in &mut query {
+        if pose.physical.is_some() {
+            continue;
+        }
+        if output.grounded && !movement.grounded && movement.velocity.y < -2.0 {
+            pose.landing = (-movement.velocity.y / 10.0).min(1.0);
+            if movement.velocity.y < -9.0 {
+                pose.impulse = [3.0, 0.0, 0.0];
+            }
+        }
         movement.grounded = output.grounded;
         if output.grounded && movement.velocity.y < 0.0 {
             movement.velocity.y = 0.0;

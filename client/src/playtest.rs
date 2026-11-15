@@ -6,15 +6,21 @@ use bevy::{
 use common::{combat::*, map::*, raid::*, *};
 
 use crate::{ClientSystems, input::InputCapture, sync::ClientSession};
+mod animation;
+mod physical;
+mod video;
 
 pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Driver>().add_systems(
-            Update,
-            drive.in_set(ClientSystems::Input).after(InputCapture),
-        );
+        app.init_resource::<Driver>()
+            .add_systems(
+                Update,
+                drive.in_set(ClientSystems::Input).after(InputCapture),
+            )
+            .init_resource::<video::CaptureQueue>()
+            .add_systems(PostUpdate, video::record);
     }
 }
 
@@ -24,6 +30,13 @@ enum Step {
     Connect,
     Equip,
     Deploy,
+    Showcase,
+    AnimationSetup,
+    PhysicalSetup,
+    PhysicalAction,
+    PhysicalRest,
+    Animation,
+    Weapons,
     Loot,
     Fight,
     Exit,
@@ -31,6 +44,7 @@ enum Step {
     Result,
     Return,
     Restart,
+    Injury,
     Done,
 }
 
@@ -39,6 +53,15 @@ struct Driver {
     step: Step,
     since: f64,
     extraction_capture: bool,
+    frames: Vec<f32>,
+    captures: u32,
+    actions: u32,
+    flash_captures: u8,
+    animation: animation::Sequence,
+    physical: physical::Review,
+    fall_ids: Vec<u64>,
+    recovery_seen: bool,
+    recovery_recorded: bool,
 }
 
 impl Driver {
@@ -50,6 +73,13 @@ impl Driver {
 }
 
 fn capture(commands: &mut Commands, name: &str) {
+    if std::env::var_os("TK_PLAYTEST_VIDEO").is_some() {
+        let name = name.to_owned();
+        commands.queue(move |world: &mut World| {
+            world.resource_mut::<video::CaptureQueue>().0.push(name)
+        });
+        return;
+    }
     let root = std::env::var("TK_PLAYTEST_DIR").unwrap_or_else(|_| "target/playtest".into());
     std::fs::create_dir_all(&root).expect("Create playtest evidence directory");
     commands
@@ -70,6 +100,34 @@ fn move_toward(input: &mut ClientInput, position: [f32; 3], target: [f32; 3]) ->
     delta.length()
 }
 
+fn aim_barrel(input: &mut ClientInput, local: &ClientData, target: Vec3) {
+    let eye = Vec3::from(local.pos)
+        + Vec3::Y
+            * (PLAYER_VIEW_HEIGHT
+                + if local.crouched {
+                    PLAYER_CROUCH_VIEW_OFFSET
+                } else {
+                    0.0
+                });
+    input.camera = barrel_aim(eye, target, input.weapon);
+}
+
+/// Exact zero-roll offset-ray solution. Fixed-point look-at iteration oscillates near the muzzle.
+fn barrel_aim(eye: Vec3, target: Vec3, weapon: WeaponKind) -> CameraInput {
+    let d = target - eye;
+    let b = Vec3::from(weapon.spec().barrel_offset);
+    let h = (d.length_squared() - b.x * b.x - b.y * b.y)
+        .max(0.0001)
+        .sqrt();
+    let pitch = (d.y / (h * h + b.y * b.y).sqrt()).clamp(-1.0, 1.0).asin() - b.y.atan2(h);
+    let local_z = b.y * pitch.sin() - h * pitch.cos();
+    CameraInput {
+        pitch,
+        yaw: (-d.x).atan2(-d.z) + b.x.atan2(-local_z),
+        roll: 0.0,
+    }
+}
+
 fn drive(
     mut commands: Commands,
     time: Res<Time<Real>>,
@@ -78,9 +136,45 @@ fn drive(
     mut input: ResMut<LocalInput>,
     mut driver: ResMut<Driver>,
     mut exit: MessageWriter<AppExit>,
+    audio: Query<(), With<AudioPlayer>>,
+    mut view_camera: Single<&mut Camera, With<crate::render::ViewModelCamera>>,
+    flashes: Query<&Visibility, With<crate::render::feedback::Flash>>,
+    projections: Query<(&Projection, Has<crate::render::ViewModelCamera>), With<Camera3d>>,
 ) {
     let now = time.elapsed_secs_f64();
-    assert!(now < 120.0, "PLAYTEST timed out at {:?}", driver.step);
+    let lens = |view: bool| {
+        projections
+            .iter()
+            .find_map(|(projection, is_view)| {
+                if view != is_view {
+                    return None;
+                }
+                if let Projection::Perspective(p) = projection {
+                    Some(p.fov.to_degrees())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0.0)
+    };
+    let world_fov = lens(false);
+    assert!(now < 240.0, "PLAYTEST timed out at {:?}", driver.step);
+    assert_eq!(
+        audio.iter().count(),
+        0,
+        "Temporary shot mute must not create audio entities"
+    );
+    driver.frames.push(time.delta_secs() * 1000.0);
+    if driver.frames.len() == 300 {
+        driver.frames.sort_by(f32::total_cmp);
+        info!(
+            "TK PERF frame_ms mean={:.3} p95={:.3} max={:.3}",
+            driver.frames.iter().sum::<f32>() / 300.0,
+            driver.frames[285],
+            driver.frames[299]
+        );
+        driver.frames.clear();
+    }
     // Reset only held controls. Sequence counters remain monotonic across stages.
     input.forward = false;
     input.backward = false;
@@ -90,25 +184,71 @@ fn drive(
     input.crouch = false;
     input.jump = false;
     input.fire = false;
+    // ADS_PROOF_BEGIN
+    input.aim = false;
+    // ADS_PROOF_END
     input.interact = false;
     let Some(local) = session.local(id.0) else {
         return;
     };
     let p = &local.participant;
-    assert!(
-        !matches!(p.status, RaidStatus::Dead | RaidStatus::Missing),
-        "PLAYTEST raid failed: {:?}, body={:?}",
-        p.status,
-        local.body.parts
-    );
+    let peer = std::env::var("TK_PLAYTEST_ROLE").is_ok_and(|role| role == "1");
+    view_camera.is_active = !(driver.step == Step::Injury || peer && driver.step == Step::Showcase);
+    let loot_index = if peer { 1 } else { 0 };
+    let bot_id = if peer { u64::MAX - 1 } else { u64::MAX };
+    if driver.step == Step::Weapons
+        && driver.flash_captures & (1 << local.weapon.index()) == 0
+        && flashes.iter().any(|v| *v == Visibility::Inherited)
+    {
+        driver.flash_captures |= 1 << local.weapon.index();
+        let name = format!(
+            "confirmed-{}-flash",
+            local.weapon.spec().name.to_lowercase()
+        );
+        capture(&mut commands, &name);
+        info!(
+            "CONFIRMED FLASH EVIDENCE {:?} ammo={} visible_flash_entities={}",
+            local.weapon,
+            local.ammo_in_mag,
+            flashes
+                .iter()
+                .filter(|v| **v == Visibility::Inherited)
+                .count()
+        );
+    }
+    if !matches!(
+        driver.step,
+        Step::Injury | Step::Done | Step::PhysicalAction | Step::PhysicalRest
+    ) {
+        assert!(
+            !matches!(p.status, RaidStatus::Dead | RaidStatus::Missing),
+            "PLAYTEST raid failed: {:?}, body={:?}",
+            p.status,
+            local.body.parts
+        );
+    }
     let desired = Loadout {
-        primary: WeaponKind::Rifle,
+        primary: if peer {
+            WeaponKind::Smg
+        } else {
+            WeaponKind::Rifle
+        },
         ammo: AmmoKind::Ap,
         armor: ArmorKind::Heavy,
         helmet: true,
     };
     match driver.step {
         Step::Connect if now > 3.0 => {
+            let root = std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").unwrap());
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(
+                root.join("camera-settings.json"),
+                format!(
+                    "{{\"world_fov_degrees\":{world_fov},\"weapon_fov_degrees\":{}}}",
+                    lens(true)
+                ),
+            )
+            .unwrap();
             assert_eq!(session.raid.phase, RaidPhase::Lobby);
             capture(&mut commands, "lobby");
             input.loadout = desired;
@@ -124,17 +264,291 @@ fn drive(
             assert_eq!(local.armor.vest, 100.0);
             assert_eq!(local.armor.helmet, 40.0);
             assert_eq!(local.body.parts, [35.0, 85.0, 60.0, 70.0]);
-            assert_eq!(local.ammo_in_mag, 30);
+            assert_eq!(local.ammo_in_mag, desired.primary.spec().magazine_size);
             assert_eq!(session.players.iter().filter(|p| p.bot).count(), 2);
             capture(&mut commands, "raid");
-            driver.advance(Step::Loot, now);
+            driver.advance(
+                if physical::scenario().is_some() {
+                    Step::PhysicalSetup
+                } else if std::env::var("TK_PLAYTEST_CLIENTS").is_ok_and(|v| v == "2") {
+                    if std::env::var_os("TK_ANIMATION_REVIEW").is_some() {
+                        Step::AnimationSetup
+                    } else {
+                        Step::Showcase
+                    }
+                } else {
+                    Step::Loot
+                },
+                now,
+            );
+        }
+        Step::PhysicalSetup => {
+            let name = physical::scenario().unwrap();
+            let distance = physical::setup(&mut input, local, peer, &name);
+            if now - driver.since > 4.0 {
+                assert!(
+                    distance < 0.7,
+                    "physical review setup must use ordinary movement"
+                );
+                driver.advance(Step::PhysicalAction, now);
+            }
+        }
+        Step::PhysicalAction => {
+            let name = physical::scenario().unwrap();
+            view_camera.is_active = peer;
+            let other = session
+                .players
+                .iter()
+                .find(|p| !p.bot && p.id != id.0)
+                .unwrap();
+            let elapsed = now - driver.since;
+            if physical::action(
+                &mut commands,
+                &mut driver.physical,
+                &mut input,
+                local,
+                other,
+                peer,
+                &name,
+                elapsed,
+            ) {
+                driver.advance(Step::PhysicalRest, now);
+            }
+        }
+        Step::PhysicalRest => {
+            let name = physical::scenario().unwrap();
+            view_camera.is_active = peer;
+            let target = if peer {
+                local
+            } else {
+                session
+                    .players
+                    .iter()
+                    .find(|p| !p.bot && p.id != id.0)
+                    .unwrap()
+            };
+            let elapsed = now - driver.since;
+            if physical::rest(
+                &mut commands,
+                &mut driver.physical,
+                &mut input,
+                local,
+                target,
+                &session.physics_pieces,
+                peer,
+                &name,
+                elapsed,
+            ) {
+                driver.advance(Step::Done, now);
+            }
+        }
+        Step::AnimationSetup => {
+            let target = if peer {
+                [-7.0, 1.0, 18.0]
+            } else {
+                [-5.0, 1.0, 16.0]
+            };
+            if move_toward(&mut input, local.pos, target) < 0.4 {
+                input.forward = false;
+                input.backward = false;
+                input.left = false;
+                input.right = false;
+            }
+            if now - driver.since > 3.5 {
+                let distance =
+                    Vec2::new(local.pos[0] - target[0], local.pos[2] - target[2]).length();
+                assert!(
+                    distance < 0.7,
+                    "Animation review must reach safe staging through ordinary movement"
+                );
+                driver.advance(Step::Animation, now);
+            }
+        }
+        Step::Animation => {
+            let elapsed = now - driver.since;
+            let observer = animation::drive(
+                &mut commands,
+                &mut driver.animation,
+                &mut input,
+                local,
+                session.players.iter().find(|p| !p.bot && p.id != id.0),
+                elapsed,
+                peer,
+                desired.primary,
+                world_fov,
+            );
+            view_camera.is_active = !observer;
+            if elapsed > 59.0 {
+                info!(
+                    "CONTINUOUS ANIMATION PASS reciprocal M1911 + {:?}; empty/tactical/interrupted reloads through normal UDP inputs",
+                    desired.primary
+                );
+                driver.advance(Step::Showcase, now);
+            }
+        }
+        Step::Showcase => {
+            let elapsed = now - driver.since;
+            if peer {
+                if let Some(actor) = session.players.iter().find(|p| !p.bot && p.id != id.0) {
+                    input.camera = Transform::from_translation(
+                        Vec3::from(local.pos) + Vec3::Y * PLAYER_VIEW_HEIGHT,
+                    )
+                    .looking_at(Vec3::from(actor.pos) + Vec3::Y * 0.15, Vec3::Y)
+                    .rotation
+                    .into();
+                    // Follow from the side at readable full-body distance,
+                    // outside the green exit pillars. All movement remains UDP input.
+                    let goal = Vec3::from(actor.pos) + Vec3::new(-3.0, 0.0, 0.5);
+                    let delta =
+                        Quat::from_rotation_y(-input.camera.yaw) * (goal - Vec3::from(local.pos));
+                    if Vec2::new(delta.x, delta.z).length() > 0.45 {
+                        input.left = delta.x < -0.25;
+                        input.right = delta.x > 0.25;
+                        input.forward = delta.z < -0.25;
+                        input.backward = delta.z > 0.25;
+                        input.run = delta.length() > 4.5;
+                    }
+                }
+            } else {
+                input.camera = default();
+                if (1.5..2.5).contains(&elapsed) {
+                    input.forward = true;
+                }
+                if (2.5..3.2).contains(&elapsed) {
+                    input.backward = true;
+                    input.run = true;
+                }
+                if (3.2..3.8).contains(&elapsed) {
+                    input.left = true;
+                }
+                if (3.8..4.6).contains(&elapsed) {
+                    input.right = true;
+                    input.crouch = true;
+                }
+                if (4.6..5.3).contains(&elapsed) {
+                    input.jump = true;
+                }
+                if (5.8..6.3).contains(&elapsed) {
+                    input.backward = true;
+                }
+            }
+            for (index, (at, name)) in [
+                (1.4, "pose-idle"),
+                (2.2, "pose-walk"),
+                (2.9, "pose-run"),
+                (3.6, "pose-strafe"),
+                (4.4, "pose-crouch"),
+                (4.9, "pose-jump"),
+                (5.6, "pose-land"),
+                (6.4, "pose-stop"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if elapsed >= at && driver.captures & (1 << index) == 0 {
+                    capture(&mut commands, name);
+                    driver.captures |= 1 << index;
+                    let actor = if peer {
+                        session
+                            .players
+                            .iter()
+                            .find(|p| !p.bot && p.id != id.0)
+                            .unwrap_or(local)
+                    } else {
+                        local
+                    };
+                    info!(
+                        "POSE EVIDENCE {} actor={} position={:?} velocity={:?} grounded={} crouch={} phase={:.3}",
+                        name,
+                        actor.id,
+                        actor.pos,
+                        actor.pose.velocity,
+                        actor.pose.grounded,
+                        actor.pose.crouch,
+                        actor.pose.phase
+                    );
+                }
+            }
+            if elapsed > 6.8 {
+                driver.advance(Step::Weapons, now);
+            }
+        }
+        Step::Weapons => {
+            let elapsed = now - driver.since;
+            input.camera = CameraInput {
+                pitch: 0.8,
+                ..default()
+            };
+            input.weapon = if (4.1..7.1).contains(&elapsed) {
+                WeaponKind::Pistol
+            } else {
+                desired.primary
+            };
+            if elapsed < 3.25 {
+                input.fire = true;
+            }
+            // One-shot sequence inputs, exactly like normal reload and pistol clicks.
+            for (index, at) in [3.4, 4.3, 4.6, 7.2].into_iter().enumerate() {
+                if elapsed >= at && driver.actions & (1 << index) == 0 {
+                    driver.actions |= 1 << index;
+                    if index == 1 {
+                        input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
+                    } else {
+                        input.reload_sequence = input.reload_sequence.wrapping_add(1);
+                    }
+                }
+            }
+            for (index, (at, name)) in [
+                (0.8, "weapon-burst"),
+                (3.3, "weapon-empty"),
+                (3.9, "weapon-reload"),
+                (4.4, "weapon-pistol"),
+                (5.3, "weapon-pistol-reload"),
+                (7.0, "weapon-pistol-ready"),
+                (8.3, "weapon-primary-reload"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let bit = 1 << (index + 8);
+                if elapsed >= at && driver.captures & bit == 0 {
+                    capture(&mut commands, name);
+                    driver.captures |= bit;
+                    info!(
+                        "WEAPON EVIDENCE {} {:?} mag={} reserve={} reload={:.3} audio_entities={}",
+                        name,
+                        local.weapon,
+                        local.ammo_in_mag,
+                        local.reserve_ammo,
+                        local.reload_remaining,
+                        audio.iter().count()
+                    );
+                    if name == "weapon-empty" {
+                        assert_eq!(local.ammo_in_mag, 0);
+                    }
+                    if name == "weapon-pistol-ready" {
+                        assert_eq!(local.weapon, WeaponKind::Pistol);
+                        assert_eq!(local.ammo_in_mag, 17);
+                        assert_eq!(local.reload_remaining, 0.0);
+                    }
+                }
+            }
+            if elapsed > 10.0 {
+                assert_eq!(local.weapon, desired.primary);
+                assert_eq!(local.ammo_in_mag, desired.primary.spec().magazine_size);
+                assert_eq!(local.reload_remaining, 0.0);
+                info!(
+                    "WEAPON EXERCISE PASS primary empty, blocked trigger, interrupted reload, pistol shot/full reload, primary full reload; audio_entities=0"
+                );
+                driver.advance(Step::Loot, now);
+            }
         }
         Step::Loot => {
             if p.carried == 1 {
-                assert!(!session.raid.loot_available[0]);
+                assert!(!session.raid.loot_available[loot_index]);
                 info!("PLAYTEST loot confirmed at {:?}", local.pos);
                 driver.advance(Step::Fight, now);
-            } else if move_toward(&mut input, local.pos, LOOT_POSITIONS[0]) < 1.5 {
+            } else if move_toward(&mut input, local.pos, LOOT_POSITIONS[loot_index]) < 1.5 {
                 input.forward = false;
                 input.backward = false;
                 input.left = false;
@@ -143,8 +557,12 @@ fn drive(
             }
         }
         Step::Fight => {
-            if session.players.iter().any(|p| p.bot && !p.body.alive()) {
-                assert!(local.ammo_in_mag < 30);
+            if session
+                .players
+                .iter()
+                .any(|p| p.id == bot_id && !p.body.alive())
+            {
+                assert!(local.ammo_in_mag < desired.primary.spec().magazine_size);
                 info!(
                     "PLAYTEST authoritative sentry kill; ammo={}",
                     local.ammo_in_mag
@@ -155,15 +573,13 @@ fn drive(
                 let target = session
                     .players
                     .iter()
-                    .find(|p| p.bot && p.id == u64::MAX)
+                    .find(|p| p.bot && p.id == bot_id)
                     .expect("First sentry replicated");
                 let origin = Vec3::from(local.pos) + Vec3::Y * PLAYER_VIEW_HEIGHT;
                 let target = Vec3::from(target.pos) + Vec3::Y * 0.68;
-                input.camera = Transform::from_translation(origin)
-                    .looking_at(target, Vec3::Y)
-                    .rotation
-                    .into();
-                input.weapon = WeaponKind::Rifle;
+                // Aim the actual offset barrel at the smaller anatomical head, not the old broad capsule.
+                input.camera = barrel_aim(origin, target, desired.primary);
+                input.weapon = desired.primary;
                 input.fire = true;
                 if local.ammo_in_mag == 0 {
                     input.reload_sequence = input.reload_sequence.wrapping_add(1);
@@ -194,7 +610,9 @@ fn drive(
             }
         }
         Step::Result if now - driver.since > 2.0 => {
-            input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
+            if !peer {
+                input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
+            }
             driver.advance(Step::Return, now);
         }
         Step::Return if session.raid.phase == RaidPhase::Lobby => {
@@ -213,7 +631,22 @@ fn drive(
             assert_eq!(p.secured, 1);
             assert_eq!(p.carried, 0);
             assert_eq!(session.raid.loot_available, [true; 3]);
-            assert_eq!(local.ammo_in_mag, 30);
+            assert_eq!(local.ammo_in_mag, desired.primary.spec().magazine_size);
+            assert_eq!(local.body.anatomy.missing, 0);
+            assert_eq!(local.body.anatomy.organs, [100.0; 4]);
+            assert_eq!(local.body.anatomy.blood, 100.0);
+            assert!(
+                session.physics_pieces.is_empty(),
+                "Previous raid physics leaked"
+            );
+            info!(
+                "ANATOMY RESET raid={} missing={} wounds={} blood={} organs={:?} physics_pieces=0",
+                session.raid.raid_id,
+                local.body.anatomy.missing,
+                local.body.anatomy.wounds,
+                local.body.anatomy.blood,
+                local.body.anatomy.organs
+            );
             assert_eq!(
                 session
                     .players
@@ -225,11 +658,318 @@ fn drive(
             info!(
                 "PLAYTEST PASS: lobby -> combat -> loot -> extraction -> debrief -> lobby -> raid 2; secured=1"
             );
-            driver.advance(Step::Done, now);
+            if std::env::var("TK_PLAYTEST_CLIENTS").is_ok_and(|v| v == "2") {
+                driver.captures = 0;
+                driver.actions = 0;
+                driver.advance(Step::Injury, now);
+            } else {
+                driver.advance(Step::Done, now);
+            }
+        }
+        Step::Injury => {
+            use common::humanoid::*;
+            let elapsed = now - driver.since;
+            let Some(other) = session.players.iter().find(|p| !p.bot && p.id != id.0) else {
+                return;
+            };
+            // LIVE_RAGDOLL_PROOF_BEGIN
+            let victim = if peer { local } else { other };
+            let mut body_ids: Vec<_> = session
+                .physics_pieces
+                .iter()
+                .filter(|p| p.owner == victim.id && !p.detached)
+                .map(|p| p.id)
+                .collect();
+            body_ids.sort_unstable();
+            if victim.pose.mode == PhysicalMode::Fallen && driver.fall_ids.is_empty() {
+                assert!(
+                    victim.pose.physical.is_some(),
+                    "native fall must exercise articulated physics, not the budget fallback"
+                );
+                assert_eq!(
+                    body_ids.len(),
+                    SEGMENT_COUNT - victim.body.anatomy.missing.count_ones() as usize
+                );
+                driver.fall_ids = body_ids.clone();
+                capture(&mut commands, "injury-physical-begin");
+                info!(
+                    "LIVE RECOVERY EVIDENCE fall victim={} ids={body_ids:?}",
+                    victim.id
+                );
+            }
+            if victim.pose.mode == PhysicalMode::Recovering {
+                assert!(victim.pose.physical.is_some());
+                assert_eq!(
+                    body_ids, driver.fall_ids,
+                    "get-up replaced physical IDs under snapshot loss"
+                );
+                if !driver.recovery_seen {
+                    capture(&mut commands, "injury-getup");
+                    info!(
+                        "LIVE RECOVERY EVIDENCE getup victim={} ids={body_ids:?}",
+                        victim.id
+                    );
+                    driver.recovery_seen = true;
+                }
+            }
+            if victim.pose.mode == PhysicalMode::Standing
+                && driver.recovery_seen
+                && !driver.recovery_recorded
+            {
+                assert!(
+                    victim.pose.physical.is_none() && body_ids.is_empty(),
+                    "standing must remove the old physical visual in the same snapshot"
+                );
+                let path = std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").unwrap())
+                    .join("live-recovery.json");
+                std::fs::write(path, format!("{{\"victim\":{},\"fall_ids\":{:?},\"getup_ids\":{:?},\"control_restored\":true}}", victim.id, driver.fall_ids, driver.fall_ids)).unwrap();
+                capture(&mut commands, "injury-restored");
+                info!(
+                    "LIVE RECOVERY PASS victim={} stable_ids={} control_restored=true",
+                    victim.id,
+                    driver.fall_ids.len()
+                );
+                driver.recovery_recorded = true;
+            }
+            if elapsed > 21.9 {
+                assert!(
+                    driver.recovery_recorded,
+                    "missing articulated recovery evidence"
+                );
+            }
+            if elapsed > 18.2 {
+                assert!(
+                    driver.recovery_recorded,
+                    "supported articulated recovery must complete by the approved 18.2s checkpoint"
+                );
+            }
+            // LIVE_RAGDOLL_PROOF_END
+            if elapsed < 2.5 {
+                move_toward(
+                    &mut input,
+                    local.pos,
+                    if peer {
+                        [0.0, 1.0, 17.0]
+                    } else {
+                        [-5.0, 1.0, 14.0]
+                    },
+                );
+            } else {
+                input.weapon = if !peer && elapsed > 18.0 {
+                    desired.primary
+                } else {
+                    WeaponKind::Pistol
+                };
+                let mut segment = if elapsed < 7.0 {
+                    if peer {
+                        Segment::RightShin
+                    } else {
+                        Segment::LeftShin
+                    }
+                } else if elapsed < 10.0 {
+                    Segment::RightUpperArm
+                } else if elapsed < 18.0 {
+                    Segment::LeftShin
+                } else {
+                    Segment::Head
+                };
+                // A separated segment has no live pose. Keep the ordinary
+                // observer camera on the body instead of aiming at its absent
+                // limb's placeholder; no further shin shot is fired once absent.
+                if other.body.anatomy.missing & (1 << segment.index()) != 0 {
+                    segment = Segment::Thorax;
+                }
+                let rig = evaluate_pose(
+                    &other.pose,
+                    other.body.anatomy.capacity(Region::LeftLeg),
+                    other.body.anatomy.capacity(Region::RightLeg),
+                );
+                let target = Vec3::from(other.pos)
+                    + Quat::from_rotation_y(other.rot.yaw)
+                        * Vec3::from(rig[segment.index()].position);
+                aim_barrel(&mut input, local, target);
+                for (index, at) in [3.0, 7.4, 11.0, 11.5, 12.0, 12.5, 13.0]
+                    .into_iter()
+                    .enumerate()
+                {
+                    if elapsed >= at && driver.actions & (1 << index) == 0 {
+                        driver.actions |= 1 << index;
+                        if index == 0
+                            || !peer
+                                && (index == 1
+                                    || other.body.anatomy.missing
+                                        & (1 << Segment::LeftShin.index())
+                                        == 0)
+                        {
+                            input.fire_pressed_sequence =
+                                input.fire_pressed_sequence.wrapping_add(1);
+                        }
+                    }
+                }
+                if (4.0..5.0).contains(&elapsed) {
+                    input.backward = true;
+                }
+                // Approach through ordinary movement so wound/stump evidence is readable, not a distant speck.
+                let distance =
+                    Vec2::new(local.pos[0] - other.pos[0], local.pos[2] - other.pos[2]).length();
+                if !peer && (5.1..7.0).contains(&elapsed) && distance > 3.2 {
+                    input.forward = true;
+                    input.run = true;
+                }
+                if !peer && (14.6..16.2).contains(&elapsed) && distance > 1.8 {
+                    input.forward = true;
+                }
+                if peer && (13.5..14.1).contains(&elapsed) {
+                    input.forward = true;
+                }
+                if !peer && elapsed > 18.5 && other.body.alive() {
+                    input.fire = true;
+                }
+                if !peer && elapsed > 20.0 && !other.body.alive() {
+                    if let Some(piece) = session.physics_pieces.iter().find(|p| {
+                        p.owner == other.id && p.segment == Segment::Thorax && !p.detached
+                    }) {
+                        aim_barrel(&mut input, local, piece.pose.position.into());
+                    }
+                }
+            }
+            for (index, (at, name)) in [
+                (2.8, "injury-healthy"),
+                (3.2, "injury-correction"),
+                (4.7, "injury-lateral-limp"),
+                (7.7, "injury-arm"),
+                (13.3, "injury-separation"),
+                (14.2, "injury-fall"),
+                (18.2, "injury-recovery"),
+                (20.5, "injury-ragdoll"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut capture_due = elapsed >= at;
+                // LIVE_RAGDOLL_PROOF_BEGIN
+                if name == "injury-recovery" {
+                    // Capture the actual supported completion, not an assumed
+                    // fixed settling trajectory. The 18.2s bound above remains.
+                    capture_due = driver.recovery_recorded;
+                }
+                // LIVE_RAGDOLL_PROOF_END
+                if capture_due && driver.captures & (1 << index) == 0 {
+                    driver.captures |= 1 << index;
+                    capture(&mut commands, name);
+                    info!(
+                        "INJURY EVIDENCE {} local={} anatomy={:?} mode={:?} other={} anatomy={:?} mode={:?} pieces={:?}",
+                        name,
+                        id.0,
+                        local.body.anatomy,
+                        local.pose.mode,
+                        other.id,
+                        other.body.anatomy,
+                        other.pose.mode,
+                        session
+                            .physics_pieces
+                            .iter()
+                            .map(|p| (p.id, p.owner, p.segment, p.detached))
+                            .collect::<Vec<_>>()
+                    );
+                    if name == "injury-lateral-limp" {
+                        let region = if peer {
+                            Region::LeftLeg
+                        } else {
+                            Region::RightLeg
+                        };
+                        assert!(
+                            local.body.anatomy.capacity(region) < 1.0,
+                            "Normal peer shot did not injure expected leg"
+                        );
+                    }
+                    if name == "injury-separation" {
+                        let target = if peer { local } else { other };
+                        assert!(
+                            target.body.anatomy.missing & (1 << Segment::LeftShin.index()) != 0
+                        );
+                    }
+                    let target = if peer { local } else { other };
+                    if name == "injury-fall" {
+                        assert_eq!(target.pose.mode, PhysicalMode::Fallen);
+                    }
+                    if name == "injury-recovery" {
+                        assert_eq!(target.pose.mode, PhysicalMode::Standing);
+                    }
+                    if name == "injury-arm" {
+                        assert!(target.body.anatomy.capacity(Region::RightArm) < 1.0);
+                    }
+                }
+            }
+            if elapsed > 22.0 {
+                let target = if peer { local } else { other };
+                assert!(
+                    !target.body.alive(),
+                    "Normal brain/vital shots must end control"
+                );
+                assert!(
+                    session
+                        .physics_pieces
+                        .iter()
+                        .any(|p| p.detached && p.owner == target.id)
+                );
+                assert!(
+                    session
+                        .physics_pieces
+                        .iter()
+                        .any(|p| !p.detached && p.owner == target.id)
+                );
+                let mut ids: Vec<_> = session.physics_pieces.iter().map(|p| p.id).collect();
+                ids.sort_unstable();
+                let count = ids.len();
+                ids.dedup();
+                assert_eq!(count, ids.len());
+                info!(
+                    "CONVERGENCE victim={} missing={} wounds={} organs={:?} pieces={:?}",
+                    target.id,
+                    target.body.anatomy.missing,
+                    target.body.anatomy.wounds,
+                    target.body.anatomy.organs,
+                    ids
+                );
+                info!(
+                    "PHYSICAL PLAYTEST PASS: normal peer limb shots, lateral impairment, separation and ragdoll converge; unique_pieces={} audio_entities=0",
+                    count
+                );
+                driver.advance(Step::Done, now);
+            }
         }
         Step::Done if now - driver.since > 2.0 => {
             exit.write(AppExit::Success);
         }
         _ => (),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn close_and_far_offset_barrels_reach_the_intended_point_without_changing_ballistics() {
+        let eye = Vec3::new(1.0, 1.55, 17.0);
+        for weapon in [WeaponKind::Rifle, WeaponKind::Smg, WeaponKind::Pistol] {
+            for offset in [
+                Vec3::new(1.3, 0.3, 0.8),
+                Vec3::new(-1.6, -0.9, -0.7),
+                Vec3::new(4.0, 0.1, -10.0),
+            ] {
+                let target = eye + offset;
+                let input = barrel_aim(eye, target, weapon);
+                let rotation = Quat::from(&input);
+                let muzzle = eye + rotation * Vec3::from(weapon.spec().barrel_offset);
+                let direction = rotation * (-Vec3::Z);
+                let distance = (target - muzzle).dot(direction);
+                assert!(distance > 0.0);
+                assert!(
+                    (muzzle + direction * distance).distance(target) < 0.001,
+                    "{weapon:?} {offset:?}"
+                );
+            }
+        }
     }
 }

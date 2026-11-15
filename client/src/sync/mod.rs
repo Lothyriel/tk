@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_renet2::prelude::{DefaultChannel, RenetClient, client_connected};
 use common::{
     ClientData, ImpactMarkData, Lobby, PlayerId, PlayerVisualState, ProjectileData, ServerMessage,
-    WeaponKind, WorldSnapshot, data,
+    WorldSnapshot, data,
 };
 
 use crate::ClientSystems;
@@ -15,6 +15,10 @@ pub(crate) struct ClientSession {
     pub players: Vec<ClientData>,
     pub last_sequence: u64,
     pub last_received: f64,
+    pub physics_pieces: Vec<common::PhysicsPieceData>,
+    pub simulation_time: f32,
+    pub shots: Vec<common::FiredProjectileData>,
+    pub last_shot: Option<u64>,
 }
 
 impl ClientSession {
@@ -31,10 +35,22 @@ impl ClientSession {
 
 pub struct Plugin;
 
+#[derive(Resource)]
+struct SnapshotLoss {
+    every: u64,
+    dropped: u64,
+}
+
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WeaponAudio>()
-            .init_resource::<ClientSession>()
+        app.init_resource::<ClientSession>()
+            .insert_resource(SnapshotLoss {
+                every: std::env::var("TK_DROP_SNAPSHOT_EVERY")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0),
+                dropped: 0,
+            })
             .add_systems(
                 Update,
                 (recv_connectivity, recv_players_pos)
@@ -48,23 +64,6 @@ impl bevy::prelude::Plugin for Plugin {
                     .in_set(ClientSystems::Send)
                     .run_if(client_connected),
             );
-    }
-}
-
-#[derive(Debug, Resource)]
-struct WeaponAudio {
-    rifle: Handle<AudioSource>,
-    pistol: Handle<AudioSource>,
-}
-
-impl FromWorld for WeaponAudio {
-    fn from_world(world: &mut World) -> Self {
-        let asset_server = world.resource::<AssetServer>();
-
-        Self {
-            rifle: asset_server.load("sound/rifle-shot.ogg"),
-            pistol: asset_server.load("sound/pistol-shot.ogg"),
-        }
     }
 }
 
@@ -110,15 +109,25 @@ fn recv_players_pos(
     projectile_visuals: Query<(Entity, &ProjectileVisual)>,
     impact_visuals: Query<(Entity, &ImpactMarkVisual)>,
     player_id: Res<PlayerId>,
-    weapon_audio: Res<WeaponAudio>,
     mut session: ResMut<ClientSession>,
     time: Res<Time<Real>>,
+    mut loss: ResMut<SnapshotLoss>,
 ) {
     let mut latest: Option<WorldSnapshot> = None;
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
         let Ok(snapshot) = data::try_decode::<WorldSnapshot>(&message) else {
             continue;
         };
+        if loss.every > 0 && snapshot.sequence % loss.every == 0 {
+            loss.dropped += 1;
+            if loss.dropped % 60 == 1 {
+                info!(
+                    "SNAPSHOT LOSS dropped={} sequence={}",
+                    loss.dropped, snapshot.sequence
+                );
+            }
+            continue;
+        }
         if snapshot.sequence > session.last_sequence
             && latest
                 .as_ref()
@@ -130,6 +139,11 @@ fn recv_players_pos(
     let Some(snapshot) = latest else {
         return;
     };
+    let new_raid = session.raid.raid_id != snapshot.raid.raid_id
+        || session.raid.phase != snapshot.raid.phase && snapshot.raid.phase == RaidPhase::Lobby;
+    if new_raid {
+        session.shots.clear();
+    }
 
     let removed: Vec<_> = lobby
         .players
@@ -146,6 +160,7 @@ fn recv_players_pos(
         if !lobby.players.contains_key(&player.id) && player.id != player_id.0 {
             let entity = commands
                 .spawn((
+                    common::Client { id: player.id },
                     PlayerVisualState::default(),
                     Transform::default(),
                     Visibility::Inherited,
@@ -155,32 +170,39 @@ fn recv_players_pos(
             lobby.players.insert(player.id, entity);
         }
         if let Some(player_entity) = lobby.players.get(&player.id) {
-            commands.entity(*player_entity).insert((
-                Transform {
+            if player.id == player_id.0 {
+                commands.entity(*player_entity).insert(Transform {
                     translation: player.pos.into(),
-                    rotation: (&player.rot).into(),
-                    ..Default::default()
-                },
-                PlayerVisualState {
-                    alive: player.alive,
-                    crouched: player.crouched,
-                    health: player.health,
-                    weapon: player.weapon,
-                    ammo_in_mag: player.ammo_in_mag,
-                },
-            ));
+                    rotation: Quat::from_rotation_y(player.rot.yaw),
+                    ..default()
+                });
+            } else {
+                commands
+                    .entity(*player_entity)
+                    .insert(crate::render::actors::RemoteTarget {
+                        position: player.pos.into(),
+                        rotation: Quat::from_rotation_y(player.rot.yaw),
+                        snap: new_raid
+                            || session
+                                .local(player.id)
+                                .is_some_and(|previous| previous.pose.mode != player.pose.mode),
+                    });
+            }
+            commands.entity(*player_entity).insert((PlayerVisualState {
+                alive: player.alive,
+                crouched: player.crouched,
+                health: player.health,
+                weapon: player.weapon,
+                ammo_in_mag: player.ammo_in_mag,
+            },));
         }
     }
 
-    for fired_projectile in snapshot.fired_projectiles.iter() {
-        commands.spawn((
-            AudioPlayer::new(match fired_projectile.weapon {
-                WeaponKind::Rifle | WeaponKind::Smg => weapon_audio.rifle.clone(),
-                WeaponKind::Pistol => weapon_audio.pistol.clone(),
-            }),
-            PlaybackSettings::DESPAWN,
-        ));
-    }
+    session.shots = fresh_shots(
+        &snapshot.fired_projectiles,
+        &mut session.last_shot,
+        snapshot.simulation_time,
+    );
 
     sync_projectile_visuals(
         &mut commands,
@@ -200,6 +222,60 @@ fn recv_players_pos(
     session.last_received = time.elapsed_secs_f64();
     session.raid = snapshot.raid;
     session.players = snapshot.players;
+    session.physics_pieces = snapshot.physics_pieces;
+    session.simulation_time = snapshot.simulation_time;
+}
+
+/// Consume IDs even when too old to present. Recovery never stacks delayed recoil in one frame.
+fn fresh_shots(
+    shots: &[common::FiredProjectileData],
+    last: &mut Option<u64>,
+    now: f32,
+) -> Vec<common::FiredProjectileData> {
+    let mut fresh = Vec::new();
+    for shot in shots {
+        if last.is_none_or(|id| shot.id > id) {
+            *last = Some(shot.id);
+            if now - shot.time < 0.15 {
+                if let Some(index) = fresh
+                    .iter()
+                    .position(|s: &common::FiredProjectileData| s.shooter == shot.shooter)
+                {
+                    fresh[index] = shot.clone();
+                } else {
+                    fresh.push(shot.clone());
+                }
+            }
+        }
+    }
+    fresh
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn snapshot_repetition_and_loss_never_stack_delayed_shots() {
+        let shots: Vec<_> = (0..10)
+            .map(|id| common::FiredProjectileData {
+                id,
+                weapon: common::WeaponKind::Smg,
+                shooter: 7,
+                time: id as f32 * 0.1,
+                muzzle: [0.0; 3],
+                direction: [0.0, 0.0, -1.0],
+            })
+            .collect();
+        let mut last = None;
+        let fresh = fresh_shots(&shots, &mut last, 1.0);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, 9);
+        assert_eq!(last, Some(9));
+        assert!(fresh_shots(&shots, &mut last, 1.1).is_empty());
+        let mut last = None;
+        assert!(fresh_shots(&shots, &mut last, 2.0).is_empty());
+        assert_eq!(last, Some(9));
+    }
 }
 
 fn sync_projectile_visuals(

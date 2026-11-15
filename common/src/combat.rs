@@ -4,6 +4,9 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::{ClientInput, WeaponKind};
 
+mod anatomy;
+pub use anatomy::*;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub enum AmmoKind {
     #[default]
@@ -147,6 +150,7 @@ impl BodyPart {
 pub struct BodyHealth {
     pub parts: [f32; 4],
     pub last_hit: Option<BodyPart>,
+    pub anatomy: Anatomy,
 }
 
 impl Default for BodyHealth {
@@ -154,13 +158,14 @@ impl Default for BodyHealth {
         Self {
             parts: [35.0, 85.0, 60.0, 70.0],
             last_hit: None,
+            anatomy: Anatomy::default(),
         }
     }
 }
 
 impl BodyHealth {
     pub fn alive(&self) -> bool {
-        self.parts[0] > 0.0 && self.parts[1] > 0.0
+        self.parts[0] > 0.0 && self.parts[1] > 0.0 && self.anatomy.alive()
     }
 
     pub fn total(&self) -> f32 {
@@ -168,11 +173,8 @@ impl BodyHealth {
     }
 
     pub fn speed_factor(&self) -> f32 {
-        if self.parts[3] < 35.0 {
-            0.55
-        } else {
-            1.0
-        }
+        let legacy: f32 = if self.parts[3] < 35.0 { 0.55 } else { 1.0 };
+        legacy.min(self.anatomy.speed())
     }
 
     pub fn hit(&mut self, part: BodyPart, damage: f32, penetration: f32, armor: &mut ArmorState) {

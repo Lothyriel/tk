@@ -1,19 +1,23 @@
 // Keep Bevy's access filters visible in the system signature.
 #![allow(clippy::type_complexity)]
 use crate::{ClientSystems, sync::ClientSession};
-use bevy::{
-    camera::visibility::RenderLayers, color::palettes::tailwind, light::NotShadowCaster, prelude::*,
-};
+use bevy::{camera::visibility::RenderLayers, light::NotShadowCaster, prelude::*};
 use common::{
-    Client, Lobby, LocalInput, LocalPlayer, PLAYER_CROUCH_SCALE, PLAYER_CROUCH_VIEW_OFFSET,
-    PLAYER_VIEW_HEIGHT, PlayerId, PlayerVisualState, WeaponKind,
+    Client, Lobby, LocalInput, LocalPlayer, PLAYER_CROUCH_VIEW_OFFSET, PLAYER_VIEW_HEIGHT,
+    PlayerId, PlayerVisualState, WeaponKind,
 };
 use common::{combat::SurfaceKind, map::*, raid::EXTRACTION_RADIUS};
+pub(crate) mod actors;
+pub(crate) mod feedback;
+mod weapons;
 
 pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<ViewSettings>();
+        app.add_plugins(actors::Plugin);
+        app.add_plugins(feedback::Plugin);
         let startup_systems = (
             spawn_view_model,
             spawn_world_model,
@@ -25,14 +29,16 @@ impl bevy::prelude::Plugin for Plugin {
         app.add_systems(Startup, startup_systems).add_systems(
             Update,
             (
-                change_fov,
+                change_fov.after(feedback::advance),
+                fit_view_aspect
+                    .after(change_fov)
+                    .before(feedback::animate_local),
                 sync_local_player_rotation,
                 sync_local_view,
-                sync_player_visuals,
                 sync_local_alive_visibility,
-                sync_view_weapon_visibility,
+                sync_view_weapon_visibility.after(feedback::advance),
                 sync_ammo_hud,
-                sync_barrel_laser,
+                sync_barrel_laser.after(feedback::advance),
                 sync_loot_visuals,
             )
                 .in_set(ClientSystems::Present),
@@ -44,7 +50,7 @@ impl bevy::prelude::Plugin for Plugin {
 struct WorldModelCamera;
 
 #[derive(Debug, Component)]
-struct ViewModelCamera;
+pub(crate) struct ViewModelCamera;
 
 #[derive(Debug, Component)]
 struct LocalView;
@@ -83,9 +89,6 @@ struct WeaponMeshRoot;
 struct BarrelLaser;
 
 #[derive(Component)]
-struct ViewArm;
-
-#[derive(Component)]
 struct LootVisual(usize);
 
 #[derive(Resource)]
@@ -98,6 +101,35 @@ const DEFAULT_RENDER_LAYER: usize = 0;
 const VIEW_MODEL_RENDER_LAYER: usize = 1;
 const BARREL_LASER_LENGTH: f32 = 25.0;
 
+#[derive(Resource)]
+struct ViewSettings {
+    world_fov: f32,
+    current_fov: f32,
+}
+impl Default for ViewSettings {
+    fn default() -> Self {
+        Self {
+            world_fov: 70.0_f32.to_radians(),
+            current_fov: 70.0_f32.to_radians(),
+        }
+    }
+}
+
+fn aimed_fov(base: f32, weapon: WeaponKind, ads: f32) -> f32 {
+    let target = base.min(
+        if weapon == WeaponKind::Pistol {
+            52.0_f32
+        } else {
+            44.0_f32
+        }
+        .to_radians(),
+    );
+    // Interpolate magnification, not raw angle, so zoom has no perceptual lurch.
+    let a = (base * 0.5).tan();
+    let b = (target * 0.5).tan();
+    (a + (b - a) * common::weapon_animation::ease(ads)).atan() * 2.0
+}
+
 fn spawn_view_model(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -105,9 +137,6 @@ fn spawn_view_model(
     mut lobby: ResMut<Lobby>,
     player_id: Res<PlayerId>,
 ) {
-    let arm = meshes.add(Cuboid::new(0.055, 0.055, 0.34));
-    let arm_material = materials.add(Color::from(tailwind::TEAL_200));
-
     let player = commands
         .spawn((
             Client { id: player_id.0 },
@@ -117,7 +146,6 @@ fn spawn_view_model(
             children![
                 world_camera(),
                 view_model_camera(),
-                player_right_arm(arm, arm_material),
                 weapon_view_model(
                     &mut meshes,
                     &mut materials,
@@ -154,10 +182,15 @@ fn world_camera() -> impl Bundle {
         BaseLocalOffset(Vec3::ZERO),
         WorldModelCamera,
         Camera3d::default(),
+        Msaa::Off,
+        bevy::pbr::ScreenSpaceAmbientOcclusion {
+            radius: 0.35,
+            ..default()
+        },
         IsDefaultUiCamera,
         Transform::default(),
         Projection::from(PerspectiveProjection {
-            fov: 90.0_f32.to_radians(),
+            fov: 70.0_f32.to_radians(),
             ..default()
         }),
     )
@@ -169,6 +202,7 @@ fn view_model_camera() -> impl Bundle {
         BaseLocalOffset(Vec3::ZERO),
         ViewModelCamera,
         Camera3d::default(),
+        Msaa::Off,
         Camera {
             order: 1,
             clear_color: ClearColorConfig::None,
@@ -176,30 +210,10 @@ fn view_model_camera() -> impl Bundle {
         },
         Transform::default(),
         Projection::from(PerspectiveProjection {
-            fov: 90.0_f32.to_radians(),
+            fov: 65.0_f32.to_radians(),
             ..default()
         }),
         RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
-    )
-}
-
-fn player_right_arm(arm: Handle<Mesh>, arm_material: Handle<StandardMaterial>) -> impl Bundle {
-    let translation = Vec3::new(0.34, -0.2, -0.08);
-
-    (
-        ViewArm,
-        LocalView,
-        BaseLocalOffset(translation),
-        Mesh3d(arm),
-        MeshMaterial3d(arm_material),
-        Transform::from_translation(translation).with_rotation(Quat::from_euler(
-            EulerRot::XYZ,
-            -0.25,
-            0.18,
-            -0.55,
-        )),
-        RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
-        NotShadowCaster,
     )
 }
 
@@ -210,33 +224,6 @@ fn weapon_view_model(
     visibility: Visibility,
 ) -> impl Bundle {
     let spec = weapon.spec();
-    let model_translation = Vec3::from(spec.model_offset);
-    let barrel_tip = Vec3::from(spec.barrel_offset) - model_translation;
-    let barrel_base = Vec3::new(0.0, 0.03, -0.02);
-    let barrel_vector = barrel_tip - barrel_base;
-    let barrel_length = barrel_vector.length().max(0.01);
-    let barrel_center = barrel_base + barrel_vector * 0.5;
-    let barrel_rotation = Quat::from_rotation_arc(Vec3::Z, barrel_vector.normalize_or_zero());
-    let barrel_width = match weapon {
-        WeaponKind::Rifle | WeaponKind::Smg => 0.08,
-        WeaponKind::Pistol => 0.06,
-    };
-    let body_mesh = meshes.add(Cuboid::new(0.18, 0.12, 0.28));
-    let body_material = materials.add(Color::srgb(
-        spec.model_color[0],
-        spec.model_color[1],
-        spec.model_color[2],
-    ));
-    let grip_mesh = meshes.add(Cuboid::new(0.12, 0.22, 0.1));
-    let grip_material = materials.add(Color::srgb(0.1, 0.1, 0.1));
-    let barrel_mesh = meshes.add(Cuboid::new(barrel_width, barrel_width * 0.8, barrel_length));
-    let barrel_material = materials.add(Color::srgb(
-        spec.model_color[0] * 1.1,
-        spec.model_color[1] * 1.1,
-        spec.model_color[2] * 1.1,
-    ));
-    let muzzle_mesh = meshes.add(Cuboid::new(barrel_width * 0.85, barrel_width * 0.85, 0.04));
-    let muzzle_material = materials.add(Color::srgb(0.05, 0.05, 0.05));
     let laser_mesh = meshes.add(Cuboid::new(0.008, 0.008, BARREL_LASER_LENGTH));
     let laser_material = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.0, 0.0),
@@ -254,32 +241,7 @@ fn weapon_view_model(
         children![
             (
                 WeaponMeshRoot,
-                Transform::from_translation(model_translation),
-                Visibility::Inherited,
-                children![
-                    weapon_part(
-                        body_mesh,
-                        body_material,
-                        Transform::from_translation(Vec3::new(0.0, -0.02, 0.02)),
-                    ),
-                    weapon_part(
-                        grip_mesh,
-                        grip_material,
-                        Transform::from_translation(Vec3::new(0.0, -0.13, 0.08))
-                            .with_rotation(Quat::from_rotation_x(-0.35)),
-                    ),
-                    weapon_part(
-                        barrel_mesh,
-                        barrel_material,
-                        Transform::from_translation(barrel_center).with_rotation(barrel_rotation),
-                    ),
-                    weapon_part(
-                        muzzle_mesh,
-                        muzzle_material,
-                        Transform::from_translation(barrel_tip).with_rotation(barrel_rotation),
-                    ),
-                    weapon_kind_extra(meshes, materials, weapon),
-                ],
+                weapons::assembly(meshes, materials, weapon, view_model_translation(weapon)),
             ),
             (
                 BarrelLaser,
@@ -296,38 +258,8 @@ fn weapon_view_model(
     )
 }
 
-fn weapon_kind_extra(
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    weapon: WeaponKind,
-) -> impl Bundle {
-    match weapon {
-        WeaponKind::Rifle | WeaponKind::Smg => weapon_part(
-            meshes.add(Cuboid::new(0.12, 0.1, 0.34)),
-            materials.add(Color::srgb(0.18, 0.12, 0.08)),
-            Transform::from_translation(Vec3::new(0.0, -0.03, 0.25))
-                .with_rotation(Quat::from_rotation_x(0.18)),
-        ),
-        WeaponKind::Pistol => weapon_part(
-            meshes.add(Cuboid::new(0.12, 0.06, 0.16)),
-            materials.add(Color::srgb(0.14, 0.14, 0.16)),
-            Transform::from_translation(Vec3::new(0.0, 0.06, -0.1)),
-        ),
-    }
-}
-
-fn weapon_part(
-    mesh: Handle<Mesh>,
-    material: Handle<StandardMaterial>,
-    transform: Transform,
-) -> impl Bundle {
-    (
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-        transform,
-        RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
-        NotShadowCaster,
-    )
+fn view_model_translation(weapon: WeaponKind) -> Vec3 {
+    weapons::view_offset(weapon)
 }
 
 fn spawn_crosshair(mut commands: Commands) {
@@ -383,18 +315,60 @@ fn spawn_world_model(
         };
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::from_size(Vec3::from(block.half_size) * 2.0))),
-            MeshMaterial3d(materials.add(color)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: color,
+                perceptual_roughness: if matches!(block.surface, SurfaceKind::Wood) {
+                    0.88
+                } else {
+                    0.98
+                },
+                ..default()
+            })),
             Transform::from_translation(Vec3::from(block.center)),
         ));
+        if matches!(block.surface, SurfaceKind::Wood) {
+            let seam = meshes.add(Cuboid::new(0.014, block.half_size[1] * 1.98, 0.006));
+            let seam_material = materials.add(Color::srgb(0.17, 0.09, 0.035));
+            for plank in -4..=4 {
+                commands.spawn((
+                    Mesh3d(seam.clone()),
+                    MeshMaterial3d(seam_material.clone()),
+                    Transform::from_xyz(
+                        block.center[0] + plank as f32 * block.half_size[0] * 0.22,
+                        block.center[1],
+                        block.center[2] + block.half_size[2] + 0.004,
+                    ),
+                ));
+            }
+        }
     }
     let full = materials.add(Color::srgb(1.0, 0.38, 0.045));
     let empty = materials.add(Color::srgb(0.27, 0.25, 0.22));
     for (i, position) in LOOT_POSITIONS.into_iter().enumerate() {
+        let band_mesh = meshes.add(Cuboid::new(1.12, 0.06, 1.12));
+        let band_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.16, 0.19, 0.17),
+            metallic: 0.7,
+            perceptual_roughness: 0.45,
+            ..default()
+        });
         commands.spawn((
             LootVisual(i),
             Mesh3d(meshes.add(Cuboid::new(1.1, 0.9, 1.1))),
             MeshMaterial3d(full.clone()),
             Transform::from_translation(Vec3::from(position)),
+            children![
+                (
+                    Mesh3d(band_mesh.clone()),
+                    MeshMaterial3d(band_material.clone()),
+                    Transform::from_xyz(0.0, -0.27, 0.0)
+                ),
+                (
+                    Mesh3d(band_mesh),
+                    MeshMaterial3d(band_material),
+                    Transform::from_xyz(0.0, 0.27, 0.0)
+                )
+            ],
         ));
     }
     commands.insert_resource(LootMaterials { full, empty });
@@ -419,12 +393,14 @@ fn spawn_world_model(
 
 fn spawn_lights(mut commands: Commands) {
     commands.insert_resource(GlobalAmbientLight {
-        brightness: 300.0,
+        brightness: 190.0,
+        color: Color::srgb(0.65, 0.78, 1.0),
         ..default()
     });
     commands.spawn((
         DirectionalLight {
             illuminance: 12000.0,
+            color: Color::srgb(1.0, 0.89, 0.72),
             shadow_maps_enabled: true,
             ..default()
         },
@@ -435,12 +411,17 @@ fn spawn_lights(mut commands: Commands) {
 
 fn change_fov(
     input: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut settings: ResMut<ViewSettings>,
+    id: Res<PlayerId>,
+    session: Res<ClientSession>,
+    feedback: Res<feedback::Feedback>,
     mut projections: ParamSet<(
         Single<&mut Projection, With<WorldModelCamera>>,
         Single<&mut Projection, With<ViewModelCamera>>,
     )>,
 ) {
-    let fov = {
+    {
         let mut world_projection = projections.p0();
         let Projection::Perspective(perspective) = world_projection.as_mut() else {
             unreachable!(
@@ -449,16 +430,25 @@ fn change_fov(
         };
 
         if input.pressed(KeyCode::ArrowUp) {
-            perspective.fov -= 1.0_f32.to_radians();
-            perspective.fov = perspective.fov.max(20.0_f32.to_radians());
+            settings.world_fov -= 45.0_f32.to_radians() * time.delta_secs();
         }
         if input.pressed(KeyCode::ArrowDown) {
-            perspective.fov += 1.0_f32.to_radians();
-            perspective.fov = perspective.fov.min(160.0_f32.to_radians());
+            settings.world_fov += 45.0_f32.to_radians() * time.delta_secs();
         }
-
-        perspective.fov
-    };
+        settings.world_fov = settings
+            .world_fov
+            .clamp(20.0_f32.to_radians(), 160.0_f32.to_radians());
+        let ads = feedback.responses.get(&id.0).map_or(0.0, |r| r.ads);
+        let weapon = feedback
+            .responses
+            .get(&id.0)
+            .and_then(|r| r.displayed)
+            .unwrap_or_else(|| session.local(id.0).map_or(WeaponKind::Rifle, |p| p.weapon));
+        let target = aimed_fov(settings.world_fov, weapon, ads);
+        settings.current_fov +=
+            (target - settings.current_fov) * (1.0 - (-time.delta_secs() * 14.0).exp());
+        perspective.fov = settings.current_fov;
+    }
 
     let mut view_projection = projections.p1();
     let Projection::Perspective(view_model_perspective) = view_projection.as_mut() else {
@@ -466,7 +456,31 @@ fn change_fov(
             "The `Projection` component was explicitly built with `Projection::Perspective`"
         );
     };
-    view_model_perspective.fov = fov;
+    // A stable weapon lens avoids the old fisheye/magnified-stock changes when
+    // world zoom changes. ADS aligns actual iron sights on the camera centreline.
+    view_model_perspective.fov = 65.0_f32.to_radians();
+}
+
+fn fit_view_aspect(
+    projection: Single<&Projection, With<ViewModelCamera>>,
+    mut roots: Query<(&ChildOf, &mut Transform), With<WeaponMeshRoot>>,
+    weapons: Query<&WeaponViewModel>,
+    id: Res<PlayerId>,
+    feedback: Res<feedback::Feedback>,
+) {
+    let Projection::Perspective(projection) = &**projection else {
+        return;
+    };
+    for (parent, mut root) in &mut roots {
+        if let Ok(weapon) = weapons.get(parent.0) {
+            let ads = feedback
+                .responses
+                .get(&id.0)
+                .map_or(0.0, |r| common::weapon_animation::ease(r.ads));
+            root.translation = self::weapons::framed_offset(weapon.weapon, projection.aspect_ratio)
+                .lerp(common::weapon_animation::ads_offset(weapon.weapon), ads);
+        }
+    }
 }
 
 fn sync_local_view(
@@ -499,41 +513,15 @@ fn sync_local_player_rotation(
     player_transform.rotation = Quat::from_rotation_y(player_input.camera.yaw);
 }
 
-fn sync_player_visuals(
-    parents: Query<&ChildOf, With<PlayerBodyVisual>>,
-    player_states: Query<&PlayerVisualState>,
-    mut query: Query<(Entity, &mut Transform, &mut Visibility), With<PlayerBodyVisual>>,
-) {
-    for (entity, mut transform, mut visibility) in query.iter_mut() {
-        let Ok(parent) = parents.get(entity) else {
-            continue;
-        };
-        let Ok(visual_state) = player_states.get(parent.0) else {
-            continue;
-        };
-
-        *visibility = if visual_state.alive {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-
-        if visual_state.crouched {
-            transform.translation.y = 0.0;
-            transform.scale = Vec3::new(1.0, PLAYER_CROUCH_SCALE, 1.0);
-        } else {
-            transform.translation.y = 0.0;
-            transform.scale = Vec3::ONE;
-        }
-    }
-}
-
 fn sync_local_alive_visibility(
     player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
-    mut overlays: Query<&mut Visibility, Or<(With<Crosshair>, With<AmmoHud>, With<ViewArm>)>>,
+    mut overlays: Query<(&mut Visibility, Has<Crosshair>), Or<(With<Crosshair>, With<AmmoHud>)>>,
+    id: Res<PlayerId>,
+    feedback: Res<feedback::Feedback>,
 ) {
-    for mut visibility in overlays.iter_mut() {
-        *visibility = if player_state.alive {
+    let aimed = feedback.responses.get(&id.0).is_some_and(|r| r.ads > 0.8);
+    for (mut visibility, crosshair) in overlays.iter_mut() {
+        *visibility = if player_state.alive && !(crosshair && aimed) {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -543,11 +531,27 @@ fn sync_local_alive_visibility(
 
 fn sync_view_weapon_visibility(
     player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
+    session: Res<ClientSession>,
+    id: Res<PlayerId>,
+    feedback: Res<feedback::Feedback>,
     mut query: Query<(&WeaponViewModel, &Children, &mut Visibility)>,
     mut mesh_roots: Query<&mut Visibility, (With<WeaponMeshRoot>, Without<WeaponViewModel>)>,
 ) {
+    let usable = session.local(id.0).is_none_or(|p| {
+        p.body.anatomy.capacity(common::combat::Region::RightArm) > 0.0
+            && match p.pose.mode {
+                common::humanoid::PhysicalMode::Fallen => p.pose.mode_time < 0.2,
+                common::humanoid::PhysicalMode::Recovering => p.pose.mode_time > 0.75,
+                _ => true,
+            }
+    });
+    let displayed = feedback
+        .responses
+        .get(&id.0)
+        .and_then(|r| r.displayed)
+        .unwrap_or(player_state.weapon);
     for (weapon_view, children, mut visibility) in query.iter_mut() {
-        let weapon_visibility = if player_state.alive && weapon_view.weapon == player_state.weapon {
+        let weapon_visibility = if player_state.alive && usable && weapon_view.weapon == displayed {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -578,16 +582,25 @@ fn sync_barrel_laser(
     player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     weapon_views: Query<&WeaponViewModel>,
     mut lasers: Query<(&ChildOf, &mut Transform, &mut Visibility), With<BarrelLaser>>,
+    id: Res<PlayerId>,
+    feedback: Res<feedback::Feedback>,
+    session: Res<ClientSession>,
 ) {
     for (parent, mut transform, mut visibility) in lasers.iter_mut() {
         let Ok(weapon_view) = weapon_views.get(parent.0) else {
             continue;
         };
 
-        let spec = weapon_view.weapon.spec();
-        transform.translation =
-            Vec3::from(spec.barrel_offset) + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5);
-        *visibility = if player_state.alive && player_state.weapon == weapon_view.weapon {
+        let ads = feedback.responses.get(&id.0).map_or(0.0, |r| r.ads);
+        transform.translation = common::weapon_animation::barrel_offset(weapon_view.weapon, ads)
+            + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5);
+        *visibility = if player_state.alive
+            && player_state.weapon == weapon_view.weapon
+            && ads < 0.1
+            && session
+                .local(id.0)
+                .is_none_or(|p| p.reload_remaining <= 0.0)
+        {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -596,60 +609,11 @@ fn sync_barrel_laser(
 }
 
 pub fn player_body_mesh(
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    bot: bool,
+    _meshes: &mut Assets<Mesh>,
+    _materials: &mut Assets<StandardMaterial>,
+    _bot: bool,
 ) -> impl Bundle {
-    let material = materials.add(if bot {
-        Color::srgb(0.75, 0.13, 0.1)
-    } else {
-        Color::srgb(0.1, 0.55, 0.65)
-    });
-    let head = materials.add(Color::srgb(0.75, 0.61, 0.45));
-    let part = |mesh: Handle<Mesh>, material: Handle<StandardMaterial>, translation: Vec3| {
-        (
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::from_translation(translation),
-        )
-    };
-    (
-        PlayerBodyVisual,
-        Transform::default(),
-        Visibility::Inherited,
-        children![
-            part(
-                meshes.add(Cuboid::new(0.46, 0.65, 0.35)),
-                material.clone(),
-                Vec3::new(0.0, 0.1, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.38, 0.35, 0.35)),
-                head,
-                Vec3::new(0.0, 0.6, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.12, 0.55, 0.18)),
-                material.clone(),
-                Vec3::new(-0.29, 0.05, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.12, 0.55, 0.18)),
-                material.clone(),
-                Vec3::new(0.29, 0.05, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.18, 0.5, 0.22)),
-                material.clone(),
-                Vec3::new(-0.13, -0.55, 0.0)
-            ),
-            part(
-                meshes.add(Cuboid::new(0.18, 0.5, 0.22)),
-                material,
-                Vec3::new(0.13, -0.55, 0.0)
-            ),
-        ],
-    )
+    actors::body()
 }
 
 fn sync_loot_visuals(
@@ -663,5 +627,241 @@ fn sync_loot_visuals(
         } else {
             materials.empty.clone()
         };
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+    #[test]
+    fn budget_fallback_fall_and_getup_lower_sights_restore_fov_and_hide_the_weapon() {
+        use common::humanoid::PhysicalMode;
+        for mode in [PhysicalMode::Fallen, PhysicalMode::Recovering] {
+            let mut app = App::new();
+            let mut session = ClientSession::default();
+            session.players.push(common::ClientData {
+                id: 7,
+                alive: true,
+                weapon: WeaponKind::Rifle,
+                ..default()
+            });
+            app.insert_resource(session)
+                .insert_resource(PlayerId(7))
+                .insert_resource(LocalInput(common::ClientInput {
+                    aim: true,
+                    weapon: WeaponKind::Rifle,
+                    ..default()
+                }))
+                .init_resource::<Time>()
+                .init_resource::<ButtonInput<KeyCode>>()
+                .init_resource::<ViewSettings>()
+                .init_resource::<feedback::Feedback>()
+                .add_systems(
+                    Update,
+                    (
+                        sync_local_view,
+                        feedback::advance,
+                        change_fov,
+                        feedback::animate_local,
+                        sync_view_weapon_visibility,
+                    )
+                        .chain(),
+                );
+            let world_camera = app
+                .world_mut()
+                .spawn((
+                    WorldModelCamera,
+                    LocalView,
+                    BaseLocalOffset(Vec3::ZERO),
+                    Transform::default(),
+                    Projection::from(PerspectiveProjection::default()),
+                ))
+                .id();
+            app.world_mut().spawn((
+                ViewModelCamera,
+                LocalView,
+                BaseLocalOffset(Vec3::ZERO),
+                Transform::default(),
+                Projection::from(PerspectiveProjection::default()),
+            ));
+            app.world_mut().spawn((
+                LocalPlayer,
+                PlayerVisualState {
+                    alive: true,
+                    weapon: WeaponKind::Rifle,
+                    ..default()
+                },
+            ));
+            let mesh = app
+                .world_mut()
+                .spawn((WeaponMeshRoot, Visibility::Inherited))
+                .id();
+            let weapon = app
+                .world_mut()
+                .spawn((
+                    WeaponViewModel {
+                        weapon: WeaponKind::Rifle,
+                    },
+                    Visibility::Inherited,
+                    LocalView,
+                    BaseLocalOffset(Vec3::ZERO),
+                    Transform::default(),
+                ))
+                .add_child(mesh)
+                .id();
+            for _ in 0..180 {
+                app.world_mut()
+                    .resource_mut::<Time>()
+                    .advance_by(std::time::Duration::from_secs_f32(1.0 / 120.0));
+                app.update();
+            }
+            assert!(app.world().resource::<feedback::Feedback>().responses[&7].ads > 0.99);
+            let Projection::Perspective(lens) =
+                app.world().get::<Projection>(world_camera).unwrap()
+            else {
+                panic!("world lens")
+            };
+            assert!((lens.fov.to_degrees() - 44.0).abs() < 0.1);
+            let mut previous = lens.fov;
+            {
+                let mut session = app.world_mut().resource_mut::<ClientSession>();
+                session.players[0].pose.mode = mode;
+                session.players[0].pose.mode_time = 0.5;
+                assert!(
+                    session.players[0].pose.physical.is_none(),
+                    "exercise saturated-budget fallback"
+                );
+            }
+            for _ in 0..120 {
+                app.update();
+                let Projection::Perspective(lens) =
+                    app.world().get::<Projection>(world_camera).unwrap()
+                else {
+                    panic!("world lens")
+                };
+                assert!(lens.fov + 0.00001 >= previous && lens.fov - previous < 0.035);
+                previous = lens.fov;
+            }
+            assert!(app.world().resource::<feedback::Feedback>().responses[&7].ads < 0.001);
+            assert!((previous.to_degrees() - 70.0).abs() < 0.1);
+            assert_eq!(
+                *app.world().get::<Visibility>(weapon).unwrap(),
+                Visibility::Hidden
+            );
+            assert_eq!(
+                *app.world().get::<Visibility>(mesh).unwrap(),
+                Visibility::Hidden
+            );
+            if mode == PhysicalMode::Fallen {
+                let mut previous = PLAYER_VIEW_HEIGHT;
+                for t in [0.0, 0.05, 0.10, 0.15, 0.20] {
+                    app.world_mut().resource_mut::<ClientSession>().players[0]
+                        .pose
+                        .mode_time = t;
+                    app.update();
+                    let y = app.world().get::<Transform>(weapon).unwrap().translation.y;
+                    assert!(
+                        y <= previous + 0.0001 && previous - y < 0.13,
+                        "fall must lower the actual view weapon continuously"
+                    );
+                    previous = y;
+                }
+                assert!((previous - (PLAYER_VIEW_HEIGHT - 0.34)).abs() < 0.0001);
+            } else {
+                let mut previous = PLAYER_VIEW_HEIGHT - 0.34;
+                for t in [0.0, 0.50, 0.75, 0.80, 0.85, 0.90, 0.95, 1.0] {
+                    app.world_mut().resource_mut::<ClientSession>().players[0]
+                        .pose
+                        .mode_time = t;
+                    app.update();
+                    let y = app.world().get::<Transform>(weapon).unwrap().translation.y;
+                    assert!(
+                        y + 0.0001 >= previous && y - previous < 0.11,
+                        "get-up must raise the actual view weapon continuously"
+                    );
+                    assert_eq!(
+                        *app.world().get::<Visibility>(weapon).unwrap(),
+                        if t > 0.75 {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        }
+                    );
+                    previous = y;
+                }
+                assert!((previous - PLAYER_VIEW_HEIGHT).abs() < 0.0001);
+            }
+        }
+    }
+    #[test]
+    fn fov_key_speed_is_time_based_instead_of_one_degree_per_render_frame() {
+        let simulate = |hz: usize| {
+            let mut app = App::new();
+            app.init_resource::<ButtonInput<KeyCode>>()
+                .init_resource::<Time>()
+                .init_resource::<ViewSettings>()
+                .init_resource::<ClientSession>()
+                .init_resource::<feedback::Feedback>()
+                .insert_resource(PlayerId(7))
+                .add_systems(Update, change_fov);
+            app.world_mut().spawn((
+                WorldModelCamera,
+                Projection::from(PerspectiveProjection::default()),
+            ));
+            app.world_mut().spawn((
+                ViewModelCamera,
+                Projection::from(PerspectiveProjection::default()),
+            ));
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::ArrowDown);
+            for _ in 0..hz {
+                app.world_mut()
+                    .resource_mut::<Time>()
+                    .advance_by(std::time::Duration::from_secs_f32(1.0 / hz as f32));
+                app.update();
+            }
+            app.world()
+                .resource::<ViewSettings>()
+                .world_fov
+                .to_degrees()
+        };
+        let a = simulate(60);
+        let b = simulate(144);
+        assert!((a - 115.0).abs() < 0.01 && (b - a).abs() < 0.01);
+    }
+    #[test]
+    fn ads_zoom_is_continuous_monotonic_and_returns_to_the_selected_world_fov() {
+        for weapon in [WeaponKind::Pistol, WeaponKind::Smg, WeaponKind::Rifle] {
+            let base = 70.0_f32.to_radians();
+            assert!((aimed_fov(base, weapon, 0.0) - base).abs() < 0.0001);
+            let expected = if weapon == WeaponKind::Pistol {
+                52.0_f32
+            } else {
+                44.0_f32
+            }
+            .to_radians();
+            assert!((aimed_fov(base, weapon, 1.0) - expected).abs() < 0.0001);
+            let mut previous = base;
+            for i in 1..=100 {
+                let current = aimed_fov(base, weapon, i as f32 / 100.0);
+                assert!(current <= previous && previous - current < 0.015);
+                previous = current;
+            }
+        }
+    }
+    #[test]
+    fn both_grips_remain_inside_the_default_first_person_view() {
+        for weapon in [WeaponKind::Rifle, WeaponKind::Smg, WeaponKind::Pistol] {
+            for grip in [
+                Vec3::new(0.025, -0.13, 0.10),
+                Vec3::new(-0.07, -0.06, -0.22),
+            ] {
+                let p = view_model_translation(weapon) + grip;
+                assert!(p.z < 0.0);
+                assert!(p.y.abs() / (-p.z) < 0.8, "{weapon:?}: {p:?}");
+                assert!(p.x.abs() / (-p.z) < 1.5);
+            }
+        }
     }
 }

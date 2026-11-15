@@ -25,6 +25,8 @@ pub(super) fn lobby_tick(
     >,
     bots: Query<Entity, With<Bot>>,
     projectiles: Query<Entity, With<Projectile>>,
+    pieces: Query<Entity, With<super::physical::PhysicsPiece>>,
+    mut poses: Query<(Entity, &mut common::humanoid::PoseState)>,
 ) {
     let previous_phase = raid.phase;
     let mut return_requested = false;
@@ -76,6 +78,8 @@ pub(super) fn lobby_tick(
             arsenal.synchronize_sequences(input);
             movement.velocity = Vec3::ZERO;
             set_crouched_state(&mut movement, &mut collider, &mut transform, false);
+            *collider = Collider::capsule_y(PLAYER_COLLIDER_HALF_HEIGHT, PLAYER_COLLIDER_RADIUS);
+            *movement = MovementState::default();
             let index = ids.iter().position(|id| *id == client.id).unwrap();
             transform.translation = Vec3::from(SPAWN_CENTER)
                 + Vec3::new(
@@ -91,6 +95,14 @@ pub(super) fn lobby_tick(
         || (raid.phase == RaidPhase::Lobby && previous_phase != RaidPhase::Lobby)
         || total == 0
     {
+        for entity in &pieces {
+            commands.entity(entity).despawn();
+        }
+        for (entity, mut pose) in &mut poses {
+            *pose = default();
+            commands.entity(entity).remove::<super::physical::Corpsed>();
+            commands.entity(entity).remove::<super::live_body::Body>();
+        }
         for entity in &bots {
             commands.entity(entity).despawn();
         }
