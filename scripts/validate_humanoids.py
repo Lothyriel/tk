@@ -1,4 +1,4 @@
-"""Run the specification's structural, simulation and native UDP acceptance gates."""
+"""Run central checks, measured physics fixtures and explicit rendered UDP acceptance."""
 import argparse
 from datetime import datetime
 import json
@@ -17,17 +17,15 @@ def main():
     output = (args.output or root / "target/playtest" / datetime.now().strftime("acceptance-%Y%m%d-%H%M%S")).resolve()
     output.mkdir(parents=True, exist_ok=False)
     files = sorted([*root.glob("common/src/**/*.rs"), *root.glob("client/src/**/*.rs"), *root.glob("server/src/**/*.rs"),
-                    root / "Cargo.toml", root / "Cargo.lock", root / "scripts/playtest.py"])
+                    root / "Cargo.toml", root / "Cargo.lock", *root.glob("scripts/*.py")])
     fingerprint = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
     (output / "source-fingerprint.json").write_text(json.dumps(fingerprint, indent=2), encoding="utf-8")
     commands = [
-        ("fmt", ["cargo", "fmt", "--all", "--", "--check"]),
-        ("check", ["cargo", "check", "--workspace"]),
-        ("tests", ["cargo", "test", "--workspace", "-j", "4"]),
-        ("physical-load", ["cargo", "test", "-p", "server", "full_physical_load", "--", "--nocapture"]),
-        ("snapshot-budget", ["cargo", "test", "-p", "common", "persistent_anatomy", "--", "--nocapture"]),
-        ("normal-raid", ["python", "scripts/playtest.py", "--output", str(output / "normal")]),
-        ("dual-raid", ["python", "scripts/playtest.py", "--clients", "2", "--no-build", "--output", str(output / "dual"),
+        ("verify", [sys.executable, "scripts/verify.py", "--mode", "full"]),
+        ("physical-load", ["cargo", "test", "--locked", "-p", "server", "full_physical_load", "--", "--nocapture"]),
+        ("snapshot-budget", ["cargo", "test", "--locked", "-p", "common", "persistent_anatomy", "--", "--nocapture"]),
+        ("normal-raid", [sys.executable, "scripts/playtest.py", "--output", str(output / "normal")]),
+        ("dual-raid", [sys.executable, "scripts/playtest.py", "--clients", "2", "--no-build", "--output", str(output / "dual"),
                        "--server-path", str(output / "normal" / ("server.exe" if os.name == "nt" else "server")),
                        "--client-path", str(output / "normal" / ("client.exe" if os.name == "nt" else "client"))]),
     ]

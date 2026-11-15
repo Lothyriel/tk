@@ -1,4 +1,4 @@
-"""DEV-03..08: verification CLI contracts, without executing Cargo or the game."""
+"""Verification CLI contracts, without executing Cargo or the game."""
 
 import contextlib
 import io
@@ -14,9 +14,9 @@ import verify
 
 
 class VerifyTests(unittest.TestCase):
-    def commands(self, *arguments, root=None):
+    def commands(self, *arguments):
         args = verify.parser().parse_args(arguments)
-        return verify.commands_for(args, root or verify.ROOT)
+        return verify.commands_for(args)
 
     def cargo(self, commands):
         return [command for command in commands if command[0] == "cargo"]
@@ -24,7 +24,7 @@ class VerifyTests(unittest.TestCase):
     def test_default_runs_only_common_and_server_tests(self):
         commands = self.commands()
         self.assertEqual(self.cargo(commands), [
-            ["cargo", "test", "-p", "common", "-p", "server", "-j", "4"],
+            ["cargo", "test", "--locked", "-p", "common", "-p", "server", "-j", "4"],
         ])
         self.assertEqual(commands[:2], [
             ["git", "diff", "--check"], ["git", "diff", "--cached", "--check"],
@@ -34,9 +34,9 @@ class VerifyTests(unittest.TestCase):
     def test_full_runs_the_exact_workspace_gates_once(self):
         self.assertEqual(self.cargo(self.commands("--mode", "full")), [
             ["cargo", "fmt", "--all", "--", "--check"],
-            ["cargo", "check", "--workspace", "-j", "4"],
-            ["cargo", "clippy", "--workspace", "--all-targets", "-j", "4", "--", "-D", "warnings"],
-            ["cargo", "test", "--workspace", "-j", "4"],
+            ["cargo", "check", "--locked", "--workspace", "-j", "4"],
+            ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "-j", "4", "--", "-D", "warnings"],
+            ["cargo", "test", "--locked", "--workspace", "-j", "4"],
         ])
 
     def test_docs_runs_tooling_tests_but_no_cargo(self):
@@ -56,23 +56,29 @@ class VerifyTests(unittest.TestCase):
 
     def test_package_filter_and_jobs_are_forwarded_as_arguments(self):
         self.assertEqual(self.cargo(self.commands("--package", "server", "--filter", "real_rapier", "--jobs", "2")), [
-            ["cargo", "test", "-p", "server", "-j", "2", "real_rapier"],
+            ["cargo", "test", "--locked", "-p", "server", "-j", "2", "real_rapier"],
         ])
         self.assertEqual(self.cargo(self.commands("--package", "common")), [
-            ["cargo", "test", "-p", "common", "-j", "4"],
+            ["cargo", "test", "--locked", "-p", "common", "-j", "4"],
         ])
+
+    def test_client_selection_runs_unit_tests_without_launching_the_game(self):
+        commands = self.commands("--package", "client", "--filter", "local_motion")
+        self.assertEqual(self.cargo(commands), [
+            ["cargo", "test", "--locked", "-p", "client", "-j", "4", "local_motion"],
+        ])
+        self.assertNotIn("run", [arg for command in commands for arg in command])
 
     def test_invalid_arguments_exit_two_before_any_command(self):
         invalid = [
-            ["--filter", "ragdoll"], ["--package", "client"],
+            ["--filter", "ragdoll"], ["--package", "unknown"],
             ["--package", "server", "--filter", "   "],
             ["--package", "server", "--filter=--workspace"],
             ["--mode", "full", "--package", "server"],
             ["--mode", "docs", "--package", "common"],
             ["--mode", "full", "--filter", "ragdoll"],
             ["--jobs", "0"], ["--jobs", "-1"], ["--jobs", "abc"],
-            ["--mode", "unknown"], ["--feature", "../escape"],
-            ["--feature", "missing-feature"], ["--feature", ""],
+            ["--mode", "unknown"],
         ]
         for arguments in invalid:
             with self.subTest(arguments=arguments), patch("verify.subprocess.run") as run:
@@ -80,24 +86,6 @@ class VerifyTests(unittest.TestCase):
                     verify.main(arguments)
                 self.assertEqual(error.exception.code, 2)
                 run.assert_not_called()
-
-    def test_feature_validators_use_local_absolute_paths(self):
-        commands = self.commands("--mode", "docs", "--feature", "developer-standardization")
-        skill = verify.ROOT / ".agents/skills/tlc-spec-driven/scripts"
-        for validator in ["validate_spec.py", "validate_tasks.py"]:
-            self.assertIn([sys.executable, str(skill / validator), "developer-standardization", "--root", str(verify.ROOT)], commands)
-        self.assertEqual(self.cargo(commands), [])
-
-    def test_a_feature_without_formal_tasks_validates_only_its_spec(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            feature = root / ".specs/features/small-change"
-            feature.mkdir(parents=True)
-            (feature / "spec.md").write_text("# Inline feature", encoding="utf-8")
-            commands = self.commands("--mode", "docs", "--feature", "small-change", root=root)
-            names = [Path(command[1]).name for command in commands if command[0] == sys.executable]
-            self.assertIn("validate_spec.py", names)
-            self.assertNotIn("validate_tasks.py", names)
 
     def test_failure_stops_the_pipeline_and_preserves_the_exit_code(self):
         with patch("verify.subprocess.run", side_effect=[subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 9)]) as run:
@@ -115,7 +103,7 @@ class VerifyTests(unittest.TestCase):
             self.assertIn("not found", errors.getvalue())
 
     def test_commands_use_repository_cwd_without_a_shell(self):
-        # DEV-08: caller cwd cannot influence command paths; no process-wide chdir.
+        # Caller cwd cannot influence command paths; no process-wide chdir.
         with tempfile.TemporaryDirectory() as directory, patch("verify.subprocess.run", return_value=subprocess.CompletedProcess([], 0)) as run:
             with patch("pathlib.Path.cwd", return_value=Path(directory)), contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(verify.main(["--mode", "docs"]), 0)
@@ -123,13 +111,6 @@ class VerifyTests(unittest.TestCase):
                 self.assertIsInstance(call.args[0], list)
                 self.assertEqual(call.kwargs, {"cwd": verify.ROOT, "check": False})
             self.assertIn("PASS", output.getvalue())
-
-    def test_feature_errors_are_resolved_before_running_even_diff_checks(self):
-        with tempfile.TemporaryDirectory() as directory, patch("verify.ROOT", Path(directory)), patch("verify.subprocess.run") as run:
-            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
-                verify.main(["--mode", "docs", "--feature", "not-here"])
-            self.assertEqual(error.exception.code, 2)
-            run.assert_not_called()
 
 
 if __name__ == "__main__":

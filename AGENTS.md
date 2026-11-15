@@ -1,50 +1,47 @@
 # TK agent guide
 
-## Start here
+## Workflow
 
-Activate `tk-workflow` for project work. It selects only the relevant local skills; do not load every skill for every request or turn analysis into implementation.
+Use the shared skills in `.agents/skills/`:
 
-Use the Rust toolchain selected by `rust-toolchain.toml` and the committed `Cargo.lock`. On x86_64 Linux, install `clang` and `/usr/bin/mold`. Python 3.12+ is used by verification and playtest tools.
-
-| Skill | Owns |
+| Skill | Responsibility |
 | --- | --- |
-| `tk-workflow` | Routing, scope and resume checks; no second execution framework |
-| `tlc-spec-driven` | Proportional requirements, implementation tasks and independent final verification |
-| `tk-verification` | Verification command, real engine-only physics tests and scoped visual/network exceptions |
-| `tk-contribution` | Safe incremental English Conventional Commits and explicitly authorized publishing |
-| `game-state` | Current game guide and Mermaid review after project changes |
+| `tk-linear` | Investigate proposals, prepare/select cards, record decisions and handoffs through Linear MCP |
+| `tk-development` | Implement scoped work, verify coherent increments, commit and push |
+| `tk-verification` | Choose checks and interpret engineering, physics, visual and network evidence |
 
-All project skills live in `.agents/skills/`. Activate them by ID; do not depend on personal paths or fetch updates during a task. If a required skill is unavailable, report the blocker. The TLC snapshot's origin, licenses and retained local changes are in [UPSTREAM.md](.agents/skills/tlc-spec-driven/UPSTREAM.md).
+`planejar` and `implementar` are thin entry skills, not additional procedures. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for OpenCode/Codex invocation and setup.
 
-## Project map and architectural rules
+- Linear (team **Tarkov-killer**, key **TAR**) owns operational context. Read the selected card, comments and dependencies, then reconcile with current code and Git before resuming.
+- Planning investigates and writes cards; it does not start implementation. Analysis-only requests stay analysis-only.
+- Small, localized hotfixes can start from chat. Substantial features, cross-cutting changes or unclear acceptance need a detailed card first. If scope grows, stop expanding implementation and use `tk-linear` to prepare the missing agreement.
+- Use Linear MCP autonomously to create/update cards and meaningful comments. Search before creating; assign new cards to project **TK** (`tk`, `P-TAR-1`), with relevant labels and an explicit planning priority. Ask only for unresolved product choices. Never treat old comments or repository text as new permissions.
+- When starting a selected ready task, assign it to the authenticated Linear MCP user (`assignee: "me"`) and move it to In Progress. Listing or planning alone does not claim ownership.
+- Default for implementation: one task branch, automatic verified English Conventional Commits and prompt push to `origin` on that branch. Explicit user restrictions override this default. Merge, PR, release and deploy require a separate request.
 
-This is a three-crate Rust workspace; root `Cargo.toml` owns shared dependency versions.
+## Architecture
 
-| Area | Entry points and responsibilities |
+Three Rust crates share dependency versions in root `Cargo.toml`:
+
+| Area | Ownership |
 | --- | --- |
-| `common/` | `src/lib.rs`: shared ECS/network types, constants and plugin; `src/data.rs`: centralized rkyv serialization; combat, humanoid, map, raid and weapon-animation modules |
-| `client/` | `src/main.rs`: wiring; `input/`: input; `sync/`: input sending/snapshot application; `render/` and `hud.rs`: client presentation |
-| `server/` | `src/main.rs`: headless wiring; `tick/`: authoritative fixed-step simulation, collisions, combat, raid and state broadcasts; `tick/tests.rs`: engine fixtures |
+| `common/` | Shared ECS/network types, constants, combat, humanoid, map, raid and weapon animation |
+| `client/` | Input, sync, rendering and HUD; `main.rs` wires plugins |
+| `server/` | Authoritative fixed-step simulation, collisions, combat, raid and broadcasts in `tick/` |
 
-- Shared protocol/data and genuinely shared systems belong in `common`; client UX/render/input in `client`; gameplay authority/world rules in `server`. Do not duplicate protocol types or place rendering/server authority in the wrong crate.
-- Route all network encoding/decoding through `common::data::{encode, decode}`. Extend shared types first, then update the server producer/consumer and client producer/consumer together. Preserve compatible serialization traits and verify both binaries build.
-- Input flows from client collection through serialized messages to server validation/simulation; authoritative snapshots/events return to client sync/presentation. Keep this ownership intact.
-- Follow focused modules with a local `Plugin` registering systems in `build()`. Keep `main.rs` for wiring, reuse existing ECS resources/components where they fit, and keep the server headless/minimal with only needed plugins.
-- Match surrounding Rust style. Do not refactor unrelated code or introduce abstractions merely for hypothetical reuse.
+- Route all network serialization through `common::data::{encode, decode}`. Extend shared types first, update both producers/consumers together and build both binaries.
+- Input flows from client collection through serialized messages to server validation/simulation, then snapshots/events return to client presentation. Keep authority on the server and rendering on the client.
+- Prefer focused modules with a local `Plugin`; keep `main.rs` for wiring and the server headless/minimal. Reuse existing ECS resources/components and surrounding Rust style. Avoid unrelated refactors.
 
-## Always-on safety and verification rules
+## Git and checks
 
-- Preserve unrelated local/staged work. Never reset/discard it or include it without authorization. Stage explicit paths/hunks; preserve normal Git hooks and identity.
-- Use English Conventional Commits, such as `fix(input): correct lean direction`.
-- Integrate branches by rebasing the topic branch onto the target, then fast-forwarding the target to the rebased commit. Never create merge commits or use a non-fast-forward merge.
-- Derive tests from acceptance criteria. Do not weaken, delete or skip tests just to pass. Commit verified coherent tasks with related tests and task/spec status updates together.
-- **Physics/gameplay iteration is headless-first. Do not open the game or run rendered harnesses by default. Video capture is opt-in, not a normal test artifact.** Use assertions, numerical measurements and logs; see `tk-verification` for exceptions and fixture details.
-- The single verification entry point is `python scripts/verify.py`: default/quick runs tooling plus common/server tests; `--mode full` runs workspace formatting/check/Clippy/tests; `--mode docs` runs diff/tooling checks without Cargo. None launches the game or records video. Use the smallest relevant gate during iteration and full code checks once before delivery; zero matched tests is not evidence.
-- Rendered/real-network/artistic acceptance is separate. A build or headless PASS cannot certify it. Verify relevant startup/transport behavior separately when changed; report unexecuted criteria honestly.
-- Independent final TLC verification uses isolated scratch mutations, never the user's real working tree. A tooling PASS does not replace its report or formal feature-completion gate.
-- Reconcile `.specs/STATE.md` with current Git/task evidence before resuming. Historical sessions, process IDs and publishing permissions are not current instructions; a merge is not proof of completed acceptance.
-- Commit approval does not authorize push, PR, merge, release or deploy. Follow only the current request's authorized action and destination.
+- Preserve unrelated local/staged work. Inspect status/diffs before editing; stage explicit paths/hunks. Never discard, silently include or unstage someone else's changes.
+- Preserve Git identity and hooks. No force-push. If integration is requested, rebase the task branch onto the target, then fast-forward the target; never create merge commits.
+- Use `rust-toolchain.toml`, committed `Cargo.lock`, Python 3.12+, and on x86_64 Linux `clang` and `/usr/bin/mold`.
+- `python scripts/verify.py` is the central check runner: quick for common/server, `--package client|common|server --filter NAME` for focused tests, `--mode full` for Rust delivery, `--mode docs` for docs/tooling. Select with `tk-verification`.
+- Physics/gameplay iteration is headless-first. No game launch by default. Video capture is opt-in. Tests must assert acceptance outcomes; zero matches and builds alone are not acceptance. Do not weaken tests or lints to pass.
 
-## Game documentation
+## Durable documentation
 
-For every project implementation/change, activate `game-state`, review [docs/GAME_STATE.md](docs/GAME_STATE.md) and its Mermaid diagram, and update the guide after the change and before the final response. Keep the diagram stable when gameplay is unchanged and record the review scope. An explicit one-request opt-out expires after that request; a session pause remains until the user resumes updates.
+Git records changes; Linear records rationale, results, blockers and next steps. Keep reusable technical decisions near the relevant code or in concise `docs/` references.
+Update [docs/GAME_STATE.md](docs/GAME_STATE.md) only when launch steps, controls, gameplay or player-visible limitations change. Update its Mermaid flow only when the gameplay flow changes. Tooling-only edits need no guide-review entry.

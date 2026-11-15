@@ -2,7 +2,6 @@
 
 import argparse
 from pathlib import Path
-import re
 import shlex
 import subprocess
 import sys
@@ -14,14 +13,13 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--mode", choices=["quick", "full", "docs"], default="quick",
                         help="quick: common/server tests; full: workspace lint/check/tests; docs: no Cargo")
-    result.add_argument("--package", choices=["common", "server"], help="quick mode only")
+    result.add_argument("--package", choices=["client", "common", "server"], help="quick mode only; tests, no game launch")
     result.add_argument("--filter", help="nonempty Cargo test name filter; requires --package")
     result.add_argument("--jobs", type=int, default=4, help="Cargo build jobs (default: 4)")
-    result.add_argument("--feature", help="validate this .specs/features/<name> spec and optional tasks")
     return result
 
 
-def commands_for(args, root):
+def commands_for(args):
     if args.jobs < 1:
         raise ValueError("--jobs must be positive")
     if args.mode != "quick" and (args.package or args.filter is not None):
@@ -36,28 +34,17 @@ def commands_for(args, root):
         ["git", "diff", "--cached", "--check"],
         [sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-v"],
     ]
-    if args.feature is not None:
-        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", args.feature):
-            raise ValueError("--feature must be a simple lowercase feature name")
-        feature = (root / ".specs/features" / args.feature).resolve()
-        if not feature.is_relative_to((root / ".specs/features").resolve()) or not (feature / "spec.md").is_file():
-            raise ValueError(f"feature spec not found inside .specs/features: {args.feature}")
-        validators = root / ".agents/skills/tlc-spec-driven/scripts"
-        for artifact in ["spec", "tasks"]:
-            if (feature / f"{artifact}.md").is_file():
-                commands.append([sys.executable, str(validators / f"validate_{artifact}.py"),
-                                 args.feature, "--root", str(root)])
 
     jobs = ["-j", str(args.jobs)]
     if args.mode == "quick":
         packages = ["-p", args.package] if args.package else ["-p", "common", "-p", "server"]
-        commands.append(["cargo", "test", *packages, *jobs, *([args.filter] if args.filter is not None else [])])
+        commands.append(["cargo", "test", "--locked", *packages, *jobs, *([args.filter] if args.filter is not None else [])])
     elif args.mode == "full":
         commands.extend([
             ["cargo", "fmt", "--all", "--", "--check"],
-            ["cargo", "check", "--workspace", *jobs],
-            ["cargo", "clippy", "--workspace", "--all-targets", *jobs, "--", "-D", "warnings"],
-            ["cargo", "test", "--workspace", *jobs],
+            ["cargo", "check", "--locked", "--workspace", *jobs],
+            ["cargo", "clippy", "--locked", "--workspace", "--all-targets", *jobs, "--", "-D", "warnings"],
+            ["cargo", "test", "--locked", "--workspace", *jobs],
         ])
     return commands
 
@@ -66,7 +53,7 @@ def main(argv=None):
     arguments = parser()
     args = arguments.parse_args(argv)
     try:
-        commands = commands_for(args, ROOT)
+        commands = commands_for(args)
     except ValueError as error:
         arguments.error(str(error))
 
