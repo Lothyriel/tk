@@ -1,4 +1,5 @@
 //! Original stepped voxel weapon assemblies. One set of parts in weapon-local metres.
+//! Base identities and authoring targets: docs/WEAPON_REFERENCES.md.
 use super::{VIEW_MODEL_RENDER_LAYER, feedback};
 use bevy::{camera::visibility::RenderLayers, light::NotShadowCaster, prelude::*};
 use common::{WeaponKind, weapon_animation::WeaponRig};

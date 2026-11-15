@@ -213,10 +213,7 @@ fn drive(
         && flashes.iter().any(|v| *v == Visibility::Inherited)
     {
         driver.flash_captures |= 1 << local.weapon.index();
-        let name = format!(
-            "confirmed-{}-flash",
-            local.weapon.spec().name.to_lowercase()
-        );
+        let name = format!("confirmed-{}-flash", local.weapon.spec().catalog_key);
         capture(&mut commands, &name);
         info!(
             "CONFIRMED FLASH EVIDENCE {:?} ammo={} visible_flash_entities={}",
