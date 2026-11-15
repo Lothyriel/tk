@@ -20,6 +20,34 @@
             "magazine.grasp": (translation: (-0.04500000178813934, -0.02500000037252903, 0.02500000037252903), rotation: (0.0, 0.0, -0.1494381420979968, 0.9887710764814569)),
         },
     ),
+    "m4a1_a2": (
+        pivots: {
+            "muzzle_device": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "muzzle_device.exit": (translation: (0.0, 0.0, -0.045), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+    ),
+    "m4a1_afg2": (
+        pivots: {
+            "grip": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "grip.support": (translation: (0.0, -0.032, -0.013), rotation: (-0.2588190487441982, 0.0, 0.0, 0.9659258253132839)),
+        },
+    ),
+    "m4a1_barrel_145": (
+        pivots: {
+            "barrel": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "front_sight": (translation: (0.0, 0.0, -0.198), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "bore.breech": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "bore.muzzle": (translation: (0.0, 0.0, -0.3683), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "muzzle_device.mount": (translation: (0.0, 0.0, -0.35065), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "sight.front": (translation: (0.0, 0.066, -0.2), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+    ),
     "m4a1_baseline": (
         pivots: {
             "bolt": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
@@ -30,6 +58,14 @@
         sockets: {
             "control.grasp": (translation: (-0.06700000166893005, 0.054999999701976776, -0.08500000089406967), rotation: (-0.025693233044101833, -0.341933857792591, 0.07038692617957241, 0.9367319655556808)),
             "muzzle": (translation: (0.0, 0.07500000298023224, -0.699999988079071), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+    ),
+    "m4a1_ctr": (
+        pivots: {
+            "stock": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "stock.shoulder": (translation: (0.0, -0.035, 0.1778), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
     ),
     "m4a1_magazine_30": (
@@ -49,6 +85,15 @@
             "magazine.grasp": (translation: (-0.04500000178813934, -0.02500000037252903, 0.02500000037252903), rotation: (0.0, 0.0, -0.1494381420979968, 0.9887710764814569)),
         },
     ),
+    "m4a1_moe_sl": (
+        pivots: {
+            "handguard": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "grip.support": (translation: (0.0, -0.03048, -0.085), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "mlok.bottom": (translation: (0.0, -0.03048, -0.105), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+    ),
     "m4a1_pmag_20": (
         pivots: {
             "magazine": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
@@ -56,6 +101,53 @@
         sockets: {
             "magazine.grasp": (translation: (-0.014, -0.068, 0.004), rotation: (0.0, 0.0, 0.0, 1.0)),
             "magazine.seat": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+    ),
+    "m4a1_ras": (
+        pivots: {
+            "handguard": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "rail_covers": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "grip.support": (translation: (0.0, -0.027, -0.1), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+    ),
+    "m4a1_rear_iron": (
+        pivots: {
+            "rear_sight": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "sight.rear": (translation: (0.0, 0.033, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+    ),
+    "m4a1_receiver": (
+        pivots: {
+            "bolt": (translation: (0.0, 0.0, 0.008), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "buffer_tube": (translation: (0.0, 0.0, 0.182), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "charging_handle": (translation: (0.0, 0.019, 0.17), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "control": (translation: (-0.021, -0.015, 0.064), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "dust_cover": (translation: (0.019, -0.012, 0.048), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "forward_assist": (translation: (0.018, 0.002, 0.116), rotation: (0.0, 0.3826834312342333, 0.0, 0.9238795329797028)),
+            "lower": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "magazine_release": (translation: (0.018, -0.039, 0.073), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "pistol_grip": (translation: (0.0, -0.046, 0.14), rotation: (-0.2164399834189664, 0.0, 0.0, 0.9762959252079247)),
+            "rail": (translation: (0.0, 0.025, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "receiver": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "selector": (translation: (-0.019, -0.036, 0.127), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "trigger": (translation: (0.0, -0.049, 0.11), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "barrel.mount": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "control.bolt_catch": (translation: (-0.025, -0.006999999999999999, 0.064), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "control.charge": (translation: (-0.024, 0.019, 0.17800000000000002), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "control.grasp": (translation: (-0.025, -0.006999999999999999, 0.064), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "ejection": (translation: (0.019, 0.0, 0.048), rotation: (0.0, -0.7071067811865476, 0.0, 0.7071067811865476)),
+            "grip.trigger": (translation: (0.0, -0.08079636507376013, 0.13636503402304695), rotation: (-0.2164399834189664, 0.0, 0.0, 0.9762959252079247)),
+            "handguard.mount": (translation: (0.0, 0.0, -0.01), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "magazine.seat": (translation: (0.0, -0.065, 0.029), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "rail.mount": (translation: (0.0, 0.033, 0.002), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "sight.eye": (translation: (0.0, 0.066, 0.27), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "stock.mount": (translation: (0.0, 0.0, 0.182), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
     ),
     "m4a1_refined": (
@@ -82,6 +174,7 @@
             "trigger": (translation: (0.0, -0.049, 0.11), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
         sockets: {
+            "barrel.mount": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
             "bore.breech": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
             "bore.muzzle": (translation: (0.0, 0.0, -0.3683), rotation: (0.0, 0.0, 0.0, 1.0)),
             "control.bolt_catch": (translation: (-0.025, -0.006999999999999999, 0.064), rotation: (0.0, 0.0, 0.0, 1.0)),
@@ -90,14 +183,32 @@
             "ejection": (translation: (0.019, 0.0, 0.048), rotation: (0.0, -0.7071067811865476, 0.0, 0.7071067811865476)),
             "grip.support": (translation: (0.0, -0.027, -0.11), rotation: (0.0, 0.0, 0.0, 1.0)),
             "grip.trigger": (translation: (0.0, -0.08079636507376013, 0.13636503402304695), rotation: (-0.2164399834189664, 0.0, 0.0, 0.9762959252079247)),
+            "handguard.mount": (translation: (0.0, 0.0, -0.01), rotation: (0.0, 0.0, 0.0, 1.0)),
             "magazine.seat": (translation: (0.0, -0.065, 0.029), rotation: (0.0, 0.0, 0.0, 1.0)),
             "muzzle_device.exit": (translation: (0.0, 0.0, -0.39565), rotation: (0.0, 0.0, 0.0, 1.0)),
             "muzzle_device.mount": (translation: (0.0, 0.0, -0.35065), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "rail.mount": (translation: (0.0, 0.033, 0.002), rotation: (0.0, 0.0, 0.0, 1.0)),
             "sight.eye": (translation: (0.0, 0.066, 0.27), rotation: (0.0, 0.0, 0.0, 1.0)),
             "sight.front": (translation: (0.0, 0.066, -0.2), rotation: (0.0, 0.0, 0.0, 1.0)),
             "sight.rear": (translation: (0.0, 0.066, 0.142), rotation: (0.0, 0.0, 0.0, 1.0)),
             "stock.mount": (translation: (0.0, 0.0, 0.182), rotation: (0.0, 0.0, 0.0, 1.0)),
             "stock.shoulder": (translation: (0.0, -0.035, 0.44255), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+    ),
+    "m4a1_rvg": (
+        pivots: {
+            "grip": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "grip.support": (translation: (0.0, -0.05, 0.016), rotation: (-0.7071067811865476, 0.0, 0.0, 0.7071067811865476)),
+        },
+    ),
+    "m4a1_stock": (
+        pivots: {
+            "stock": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "stock.shoulder": (translation: (0.0, -0.035, 0.178), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
     ),
     "mp5_baseline": (

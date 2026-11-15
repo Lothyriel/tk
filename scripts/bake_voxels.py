@@ -4,6 +4,7 @@ No third-party packages, editor, window or network required. This is an offline
 asset build: movable parts are never fused and socket transforms are not snapped.
 """
 import argparse
+import copy
 import hashlib
 import itertools
 import json
@@ -67,7 +68,7 @@ def transform(value, path):
 
 
 def validate(source):
-    fields(source, "version id units axes provenance materials parts sockets", "asset")
+    fields(source, "version id units axes provenance materials parts sockets", "asset", "exports")
     require(type(source["version"]) is int and source["version"] == 1,
             "version", "unsupported version; expected 1")
     name(source["id"], "id")
@@ -317,17 +318,64 @@ def reject_duplicates(pairs):
     return result
 
 
-def load(path):
+def read_source(path):
     raw = path.read_bytes()
     require(len(raw) <= MAX_BYTES, str(path), f"source exceeds {MAX_BYTES} bytes")
     try:
         source = json.loads(raw, object_pairs_hook=reject_duplicates)
     except (ValueError, RecursionError) as error:
         raise InvalidAsset(f"{path}: {error}") from error
+    return source, raw
+
+
+def load(path):
     try:
-        return bake(source, raw)
+        return bake(*read_source(path))
     except InvalidAsset as error:
         raise InvalidAsset(f"{path}: {error}") from error
+
+
+def exported_sources(source):
+    """Component-local assets cut from one authored assembly, without copied art.
+
+    Each export retains its root's geometry but moves its pivot to identity.
+    The catalog attaches it through the corresponding assembly socket. Internal
+    moving hierarchies and their socket frames are preserved.
+    """
+    parts = validate(source)
+    exports = source.get("exports", [])
+    sequence(exports, 0, 32, "exports")
+    ids = {source["id"]}
+    for i, selection in enumerate(exports):
+        path = f"exports[{i}]"
+        fields(selection, "id root parts", path)
+        name(selection["id"], f"{path}.id")
+        require(selection["id"] not in ids, path, "duplicate exported asset ID")
+        ids.add(selection["id"])
+        sequence(selection["parts"], 1, 64, f"{path}.parts")
+        require(all(isinstance(p, str) and p in parts for p in selection["parts"]),
+                path, "unknown exported part")
+        included = set(selection["parts"])
+        require(len(included) == len(selection["parts"]), path, "duplicate exported part")
+        require(isinstance(selection["root"], str) and selection["root"] in included,
+                path, "export root must be an included part")
+        require(all(p == selection["root"] or parts[p]["parent"] in included for p in included),
+                path, "export disconnects a part from its parent")
+        exported = {key: copy.deepcopy(source[key])
+                    for key in ("version", "units", "axes", "provenance")}
+        exported["id"] = selection["id"]
+        exported["provenance"] += f" Component export from {source['id']}: {selection['root']}."
+        exported["parts"] = [copy.deepcopy(p) for p in source["parts"] if p["id"] in included]
+        root = next(p for p in exported["parts"] if p["id"] == selection["root"])
+        root["parent"] = None
+        root["pivot"] = {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]}
+        exported["sockets"] = [copy.deepcopy(s) for s in source["sockets"] if s["part"] in included]
+        materials = {b["material"] for p in exported["parts"]
+                     for level in ("boxes", "far_boxes") for b in p.get(level, [])}
+        exported["materials"] = [copy.deepcopy(m) for m in source["materials"]
+                                 if m["id"] in materials]
+        validate(exported)
+        yield exported
 
 
 def compose_pose(parent, local):
@@ -396,10 +444,17 @@ def build(sources=SOURCES, output=OUTPUT, check=False):
     results = []
     ids = set()
     for path in paths:
-        baked = load(path)
-        require(baked["id"] not in ids, str(path), "duplicate asset ID")
-        ids.add(baked["id"])
-        results.append((path, baked, canonical(baked)))
+        try:
+            source, raw = read_source(path)
+            definitions = [(source, raw)]
+            definitions.extend((part, raw) for part in exported_sources(source))
+            for definition, payload in definitions:
+                baked = bake(definition, payload)
+                require(baked["id"] not in ids, str(path), "duplicate asset ID")
+                ids.add(baked["id"])
+                results.append((path, baked, canonical(baked)))
+        except InvalidAsset as error:
+            raise InvalidAsset(f"{path}: {error}") from error
     # Validate the complete set before writing anything. Never leave a partial
     # successful build when the last asset is invalid.
     extras = {p.stem for p in output.glob("*.json")} - ids

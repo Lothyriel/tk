@@ -263,3 +263,48 @@ class VoxelBakeTests(unittest.TestCase):
         reversed_result = copy.deepcopy(result)
         reversed_result["parts"].reverse()
         self.assertEqual(bake.logical_ron([result]), bake.logical_ron([reversed_result]))
+
+    def test_component_export_preserves_local_geometry_motion_and_socket_frames(self):
+        asset = cube_source()
+        root = asset["parts"][0]
+        child = copy.deepcopy(root)
+        child.update(id="stock", parent=root["id"], movable=True,
+                     pivot={"translation": [0.1, 0.2, 0.3],
+                            "rotation": [0, 0, math.sqrt(0.5), math.sqrt(0.5)]})
+        pad = copy.deepcopy(root)
+        pad.update(id="pad", parent="stock",
+                   pivot={"translation": [0, 0.4, 0], "rotation": [0, 0, 0, 1]})
+        asset["parts"].extend([child, pad])
+        asset["sockets"] = [
+            {"id": "contact", "part": "pad",
+             "pose": {"translation": [0, 0.05, 0], "rotation": [0, 0, 0, 1]}}
+        ]
+        asset["exports"] = [{"id": "stock_asset", "root": "stock", "parts": ["stock", "pad"]}]
+        original = copy.deepcopy(asset)
+        exported, = bake.exported_sources(asset)
+        self.assertEqual(asset, original)
+        self.assertEqual(exported["parts"][0]["boxes"], child["boxes"])
+        self.assertTrue(exported["parts"][0]["movable"])
+        self.assertIsNone(exported["parts"][0]["parent"])
+        rig = bake.logical_rigs([compiled(exported)])["stock_asset"]
+        self.assertEqual(rig["sockets"]["contact"]["translation"], [0, 0.45, 0])
+        # Placing this export at its original rotated socket recovers the original
+        # contact: local +Y becomes -X, including the pad's own offset.
+        placed = bake.compose_pose(child["pivot"], rig["sockets"]["contact"])
+        for actual, expected in zip(placed["translation"], [-0.35, 0.2, 0.3]):
+            self.assertAlmostEqual(actual, expected)
+        original_cost = compiled(asset)["manifest"]["triangles"]
+        self.assertLess(compiled(exported)["manifest"]["triangles"], original_cost)
+
+    def test_component_export_rejects_disconnected_missing_and_duplicate_parts(self):
+        asset = source()
+        for selection, error in [
+            ({"id": "piece", "root": "receiver", "parts": ["missing"]}, "unknown"),
+            ({"id": "piece", "root": "receiver", "parts": ["receiver", "receiver"]}, "duplicate"),
+            ({"id": "piece", "root": "missing", "parts": ["receiver"]}, "root"),
+            ({"id": "piece", "root": "bolt", "parts": ["receiver", "bolt"]}, "disconnects"),
+        ]:
+            with self.subTest(selection=selection):
+                asset["exports"] = [selection]
+                with self.assertRaisesRegex(bake.InvalidAsset, error):
+                    list(bake.exported_sources(asset))

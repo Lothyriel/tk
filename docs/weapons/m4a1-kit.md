@@ -57,6 +57,17 @@ its accepted geometry when extracting stock, handguard, barrel/device and rear
 sight into components. Preserve continuous socket transforms and moving control
 names; a new component must not leave a second copy inside the receiver.
 
+The source assembly declares six component exports: `m4a1_receiver`,
+`m4a1_barrel_145`, `m4a1_a2`, `m4a1_ras`, `m4a1_stock` and
+`m4a1_rear_iron`. The baker derives them from the existing parts, resets each
+export root to identity, and retains its children, materials and socket frames.
+No source geometry is copied into independently editable component files.
+The complete `m4a1_refined` bake remains an authoring/reference fixture; the
+modular runtime will bind the component exports. Tests require a disjoint,
+complete partition and reconstruct every original surface at its source pivot.
+The generated exports carry the master source hash, so source edits invalidate
+the related bakes together. RAS dimensional qualification is still pending.
+
 The shared magazine source remains `m4a1_magazine_30`, definition 101. TAR-59 and
 TAR-87 consume this same origin; no alternate inventory mesh or magazine-ammo
 state is introduced here. Capacity is 30 or 20 according to the installed
@@ -74,11 +85,32 @@ Catalog integration and native visual acceptance are pending.
 [pmag-side]: https://magpul.com/media/catalog/product/cache/f8158826193ba5faa8b862a9bd1eb9e9/m/a/mag560-blk_magpul_pmag_20_ar_m4_gen_m3_02.1.jpg
 [pmag-oblique]: https://magpul.com/media/catalog/product/cache/f8158826193ba5faa8b862a9bd1eb9e9/m/a/mag560-blk_magpul_pmag_20_ar_m4_gen_m3_01.1.jpg
 
+The alternate furniture sources use the manufacturer galleries linked above.
+CTR preserves the open extension sleeve and A-frame, with a separate rubber
+pad and hardware. MOE SL preserves the barrel channel, side vents and lower
+front extension. RVG and AFG-2 have separate rail jaws, hardware and authored
+surface contacts; AFG-2's triangle is open geometry. All four use the same
+near/far surfaces at this size. Their published envelopes and open spaces are
+checked independently of the mesher; native silhouette review is still pending.
+
+| Source | Vertices / triangles | Submissions | Cached mesh bytes |
+| --- | --- | --- | --- |
+| `m4a1_ctr` | 580 / 290 | 3 | 17400 |
+| `m4a1_moe_sl` | 852 / 426 | 1 | 25560 |
+| `m4a1_rvg` | 376 / 188 | 2 | 11280 |
+| `m4a1_afg2` | 512 / 256 | 2 | 15360 |
+
 Use typed extension, barrel, handguard, muzzle, optic-mount and magazine
 interfaces. Required sockets enforce the barrel/device/furniture chain.
 Picatinny placements use bounded intervals; solids and swept corridors qualify
 placement. Manufacturer compatibility statements establish eligible interfaces,
 not automatic acceptance of every placement or an exemption from geometry.
+
+Semantic anchors inherit down an attachment chain: a foregrip refines its
+handguard's support contact and a suppressor refines its mount's device exit.
+The deepest provider wins regardless of node ID or packet ordering. Competing
+providers on separate branches remain an ambiguity error. Removing a child
+restores its ancestor's anchor without leaving a stale contact or outlet.
 
 Mass includes each physical group once. Subtract extracted groups from the
 baseline root before adding components. Label estimated base-group masses,

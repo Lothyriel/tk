@@ -1,0 +1,40 @@
+{
+  "version": 1, "id": "m4a1_ctr", "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK Magpul CTR Mil-Spec MAG310 exterior. F: 7.0 x 1.7 x 5.2 inch envelope, https://magpul.com/ctr-carbine-stock-mil-spec.html . V: A-frame, hollow tube sleeve, latch, QD recess and buttpad from manufacturer gallery mag310-blk_magpul_ctr_carbine_stock-mil-spec_02.1.jpg. G: surface simplification, contacts and palette. Receiver extension is a separate parent.",
+  "materials": [
+    {"id": "polymer", "surface": "polymer", "color": [0.055, 0.060, 0.054, 1], "roughness": 0.84, "metallic": 0},
+    {"id": "rubber", "surface": "rubber", "color": [0.023, 0.025, 0.022, 1], "roughness": 0.96, "metallic": 0},
+    {"id": "hardware", "surface": "metal", "color": [0.09, 0.10, 0.11, 1], "roughness": 0.54, "metallic": 0.65}
+  ],
+  "parts": [{
+    "id": "stock", "parent": null, "movable": true,
+    "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+    "boxes": [
+      {"min": [-0.020, -0.018, 0], "max": [-0.015, 0.018, 0.166], "material": "polymer"},
+      {"min": [0.015, -0.018, 0], "max": [0.020, 0.018, 0.166], "material": "polymer"},
+      {"min": [-0.015, 0.015, 0], "max": [0.015, 0.02108, 0.17018], "material": "polymer"},
+      {"min": [-0.015, -0.021, 0], "max": [0.015, -0.015, 0.166], "material": "polymer"},
+      {"min": [-0.02159, -0.111, 0.162], "max": [0.02159, 0.02108, 0.17018], "material": "polymer"},
+      {"min": [-0.02159, -0.111, 0.17018], "max": [0.02159, 0.02108, 0.1778], "material": "rubber"},
+      {"min": [-0.014, -0.039, 0.032], "max": [0.014, -0.021, 0.048], "material": "polymer"},
+      {"min": [-0.014, -0.050, 0.044], "max": [0.014, -0.034, 0.064], "material": "polymer"},
+      {"min": [-0.014, -0.061, 0.060], "max": [0.014, -0.045, 0.084], "material": "polymer"},
+      {"min": [-0.014, -0.072, 0.080], "max": [0.014, -0.061, 0.104], "material": "polymer"},
+      {"min": [-0.014, -0.083, 0.100], "max": [0.014, -0.067, 0.124], "material": "polymer"},
+      {"min": [-0.014, -0.094, 0.120], "max": [0.014, -0.078, 0.144], "material": "polymer"},
+      {"min": [-0.014, -0.105, 0.140], "max": [0.014, -0.089, 0.164], "material": "polymer"},
+      {"min": [-0.012, -0.029, 0.038], "max": [0.012, -0.021, 0.124], "material": "polymer"},
+      {"min": [-0.013, -0.035, 0.027], "max": [0.013, -0.023, 0.038], "material": "polymer"},
+      {"min": [-0.020, -0.025, 0.135], "max": [0.020, -0.018, 0.156], "material": "polymer"},
+      {"min": [-0.020, -0.046, 0.135], "max": [0.020, -0.039, 0.156], "material": "polymer"},
+      {"min": [-0.020, -0.039, 0.135], "max": [0.020, -0.025, 0.140], "material": "polymer"},
+      {"min": [-0.020, -0.039, 0.151], "max": [0.020, -0.025, 0.156], "material": "polymer"},
+      {"min": [-0.020, -0.027, 0.055], "max": [-0.014, -0.022, 0.061], "material": "hardware"},
+      {"min": [0.014, -0.027, 0.055], "max": [0.020, -0.022, 0.061], "material": "hardware"}
+    ]
+  }],
+  "sockets": [
+    {"id": "stock.shoulder", "part": "stock", "pose": {"translation": [0, -0.035, 0.1778], "rotation": [0, 0, 0, 1]}}
+  ]
+}

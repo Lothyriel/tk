@@ -184,7 +184,8 @@ impl Catalog {
 
         // Canonical node order, f64 accumulators: permutation of serialized
         // entries cannot change reductions or rounding. Root anchors are fallback;
-        // an installed part may override one, but two parts cannot compete.
+        // descendants refine their ancestors (grip on handguard, can on mount).
+        // Unrelated branches cannot compete for the same semantic anchor.
         let mut mass = f64::from(root.mass_kg);
         let mut moment = root.geometry.center_of_mass.map(|v| f64::from(v) * mass);
         let mut factors = [1.0_f64; 3];
@@ -194,7 +195,17 @@ impl Catalog {
             .iter()
             .map(|a| (a.kind, a.pose.transform()))
             .collect();
-        let mut provided = BTreeSet::new();
+        let mut provided = BTreeMap::new();
+        // Parent chains were already bounded and validated above.
+        let is_ancestor = |ancestor, mut child| {
+            while let Some(parent) = nodes[&child].parent {
+                if parent == ancestor {
+                    return true;
+                }
+                child = parent;
+            }
+            false
+        };
         let mut solids: Vec<(u16, Bounds)> = root.geometry.solids.iter().map(|b| (0, *b)).collect();
         let mut clearance: Vec<(u16, Bounds)> =
             root.geometry.clearance.iter().map(|b| (0, *b)).collect();
@@ -220,9 +231,15 @@ impl Catalog {
                 *value *= f64::from(factor);
             }
             for anchor in &geometry.anchors {
-                if !provided.insert(anchor.kind) {
-                    return Err(fail(format!("ambiguous {:?} anchor", anchor.kind)));
+                if let Some(&previous) = provided.get(&anchor.kind) {
+                    if is_ancestor(node.node, previous) {
+                        continue;
+                    }
+                    if !is_ancestor(previous, node.node) {
+                        return Err(fail(format!("ambiguous {:?} anchor", anchor.kind)));
+                    }
                 }
+                provided.insert(anchor.kind, node.node);
                 anchors.insert(anchor.kind, pose * anchor.pose.transform());
             }
             solids.extend(
