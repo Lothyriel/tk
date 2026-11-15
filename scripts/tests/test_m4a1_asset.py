@@ -184,11 +184,13 @@ class M4A1AssetTests(unittest.TestCase):
 
     def test_pro_mount_axis_open_sight_line_and_separate_surfaces(self):
         mount, optic = (load(name) for name in ("m4a1_qrp2", "m4a1_pro"))
-        seat = next(s for s in mount["sockets"] if s["id"] == "optic.mount")["pose"]["translation"]
-        self.assertEqual(seat, [0, 0.039, 0])
+        socket = next(s for s in mount["sockets"] if s["id"] == "optic.mount")
+        parts = {p["id"]: p for p in mount["parts"]}
+        seat = point(parts, socket["part"], socket["pose"]["translation"])
+        self.assertEqual(seat, [0, 0.039, 0.030])
         mount_solids, optic_solids = asset_solids(mount), asset_solids(optic, seat)
         self.assertTrue(all(not intersects(a, b) for a in mount_solids for b in optic_solids))
-        sight = [[-0.010, 0.029, -0.067], [0.010, 0.049, 0.111]]
+        sight = [[-0.010, 0.029, -0.037], [0.010, 0.049, 0.141]]
         self.assertTrue(all(not intersects(b, sight) for b in mount_solids + optic_solids))
         self.assertAlmostEqual(max(b[1][2] for b in optic_solids)
                                - min(b[0][2] for b in optic_solids), 0.132, delta=1e-6)
@@ -236,13 +238,31 @@ class M4A1AssetTests(unittest.TestCase):
         # This real exterior interference must become a declarative clearance
         # rejection in the catalog matrix, not a weapon/component deny-list.
 
+    def test_grip_rail_endpoints_clear_both_actual_magazine_sweeps(self):
+        rail = self.sockets["rail.bottom"]
+        for name, positions in (("m4a1_rvg", 10), ("m4a1_afg2", 3)):
+            for position in range(positions):
+                placement = [rail[0], rail[1], rail[2] + position * 0.01]
+                grip = asset_solids(load(name), placement)
+                for magazine in ("m4a1_magazine_30", "m4a1_pmag_20"):
+                    swept = asset_solids(load(magazine), self.sockets["magazine.seat"])
+                    for box in swept:
+                        box[0][1] -= 0.24
+                    self.assertTrue(all(not intersects(a, b) for a in grip for b in swept),
+                                    (name, position, magazine))
+                # Attachment frames start at the occupied footprint's front.
+                local = asset_solids(load(name))
+                self.assertAlmostEqual(min(b[0][2] for b in local), 0, delta=1e-8)
+                self.assertGreaterEqual(min(b[0][2] for b in grip), -0.176)
+                self.assertLessEqual(max(b[1][2] for b in grip), -0.030)
+
     def test_furniture_published_envelopes_openings_and_contacts(self):
         # Published dimensions, independently converted from inches.
         cases = [
             ("m4a1_ctr", [1.7, 5.2, 7.0], "stock.shoulder",
              [[-0.012, -0.012, 0.005], [0.012, 0.012, 0.160]]),
             ("m4a1_afg2", [1.37, 1.94, 4.70], "grip.support",
-             [[-0.010, -0.025, -0.045], [0.010, -0.015, -0.030]]),
+             [[-0.010, -0.025, 0.01469], [0.010, -0.015, 0.02969]]),
             ("m4a1_rvg", [None, 3.5, None], "grip.support", None),
             ("m4a1_moe_sl", [1.8, 2.4, 8.9], "grip.support",
              [[-0.012, -0.012, -0.220], [0.012, 0.012, 0]]),

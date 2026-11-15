@@ -54,31 +54,51 @@ fn authored_rigs_match_rendered_socket_frames_and_independent_carrier_motion() {
 }
 
 fn fixture() -> (App, Configuration) {
-    let source = common::catalog::CATALOG_SOURCE
-        .replacen(
-            "sockets: [(key:",
-            r#"sockets: [
-        (key: "grip", interface: (kind: Rail, standard: "fixture", size: 1),
+    use common::catalog::{Anchor, AnchorKind, CatalogDocument};
+    let mut doc: CatalogDocument = ron::from_str(common::catalog::CATALOG_SOURCE).unwrap();
+    doc.components.retain(|c| c.id.0 <= 103);
+    doc.weapons[0].components.retain(|n| n.node == 1);
+    let geometry = &mut doc.weapons[0].assembly.geometry;
+    geometry.authored_rig = Some("m4a1_refined".into());
+    geometry.solids.clear();
+    geometry.clearance.clear();
+    geometry.sockets.retain(|s| s.key == "magazine");
+    let rig = common::catalog::authored_rig("m4a1_refined").unwrap();
+    for (kind, socket) in [
+        (AnchorKind::Bore, "bore.muzzle"),
+        (AnchorKind::DeviceExit, "muzzle_device.exit"),
+        (AnchorKind::SupportGrip, "grip.support"),
+        (AnchorKind::StockContact, "stock.shoulder"),
+        (AnchorKind::FrontIron, "sight.front"),
+        (AnchorKind::RearIron, "sight.rear"),
+    ] {
+        geometry.anchors.push(Anchor {
+            kind,
+            pose: rig.sockets[socket],
+        });
+    }
+    geometry.sockets.push(
+        ron::from_str(
+            r#"(key: "grip", interface: (kind: Rail, standard: "fixture", size: 1),
             accepts: [Grip], positions: 3, pitch_m: 0.02,
-            pose: (translation: (0.0, 0.0, -0.30), rotation: (0.0, 0.0, 0.0, 1.0))),
-        (key:"#,
-            1,
+            pose: (translation: (0.0, 0.0, -0.30), rotation: (0.0, 0.0, 0.0, 1.0)))"#,
         )
-        .replacen(
-            "components: [\n",
-            r#"components: [
-        (id: 104, key: "fixture_grip", kind: Grip, ammo: 201, capacity: 0, mass_kg: 0.1,
+        .unwrap(),
+    );
+    doc.components.push(
+        ron::from_str(
+            r#"(id: 104, key: "fixture_grip", kind: Grip, ammo: 201, capacity: 0, mass_kg: 0.1,
             assembly: (interface: (kind: Rail, standard: "fixture", size: 1),
                 platform: Some("m4a1"), caliber: Some("556x45"), occupied_positions: 1,
                 geometry: (anchors: [
                     (kind: SupportGrip, pose: (translation: (-0.04, -0.04, -0.01),
                         rotation: (0.0, 0.0, 0.24740396, 0.9689124))),
-                ]))),
-    "#,
-            1,
-        );
-    let catalog = Catalog::parse("fixture", &source).unwrap();
-    let fingerprint = catalog_fingerprint(&source);
+                ])))"#,
+        )
+        .unwrap(),
+    );
+    let catalog = Catalog::validate("fixture", doc).unwrap();
+    let fingerprint = catalog_fingerprint("configured-visual-synthetic-fixture-v1");
     let packet = Configuration {
         epoch: 1,
         handle: 1,
@@ -673,7 +693,12 @@ fn configured_visual_baseline_bindings_preserve_native_geometry_and_contacts() {
         };
         assert!(magazine.pose.translation.distance(expected_seat) < 1e-6);
         let root_asset = &app.world().resource::<VoxelCache>().assets[&model.pieces[&0].asset];
-        let muzzle = root_asset
+        let barrel_asset = if authored {
+            &app.world().resource::<VoxelCache>().assets[&model.pieces[&4].asset]
+        } else {
+            root_asset
+        };
+        let muzzle = barrel_asset
             .sockets
             .iter()
             .find(|s| s.id == if authored { "bore.muzzle" } else { "muzzle" })
@@ -704,9 +729,9 @@ fn configured_visual_baseline_bindings_preserve_native_geometry_and_contacts() {
             }
         }
     }
-    // Six assets shared by both perspectives: refined rifle 23 near surfaces
+    // Twelve assets shared by both perspectives: modular rifle 23 near surfaces
     // plus one distinct far surface, two magazine surfaces, ten other baseline
     // surfaces and three shared arm/palm meshes.
-    assert_eq!(app.world().resource::<VoxelCache>().assets.len(), 6);
+    assert_eq!(app.world().resource::<VoxelCache>().assets.len(), 12);
     assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 39);
 }

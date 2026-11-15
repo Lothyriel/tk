@@ -224,7 +224,7 @@ fn replication_production_renet_bootstrap_commands_loss_late_join_and_epoch_rese
         .current()
         .instance();
     let mut configuration = instance.configuration.clone();
-    configuration.components[0].node = 2;
+    configuration.components[0].node = 30;
     let command = ConfigurationCommand {
         epoch: snapshot.configuration_epoch,
         request: 1,
@@ -293,7 +293,17 @@ fn replication_production_renet_bootstrap_commands_loss_late_join_and_epoch_rese
         )
         .unwrap();
     assert_eq!(cached.packet.revision, 1);
-    assert_eq!(cached.packet.weapon.components[0].node, 2);
+    assert_eq!(
+        cached
+            .packet
+            .weapon
+            .components
+            .iter()
+            .find(|n| n.definition.0 == 101)
+            .unwrap()
+            .node,
+        30
+    );
 
     let mut late = Peer::connect(&mut app, 9);
     pump(&mut app, &mut [&mut first, &mut late], 64, true);

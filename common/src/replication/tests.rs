@@ -187,7 +187,7 @@ fn replication_cache_waits_for_exact_reference_and_preserves_atomic_revisions() 
     let mut revised = original.clone();
     revised.handle = 2;
     revised.revision = 1;
-    revised.weapon.components[0].node = 2;
+    revised.weapon.components[0].node = 30;
     for order in [
         [original.clone(), revised.clone()],
         [revised.clone(), original.clone()],
@@ -211,10 +211,22 @@ fn replication_cache_waits_for_exact_reference_and_preserves_atomic_revisions() 
             );
         }
         assert_eq!(cache.get(1, 1).unwrap().packet.weapon.components[0].node, 1);
-        assert_eq!(cache.get(1, 2).unwrap().packet.weapon.components[0].node, 2);
+        assert_eq!(
+            cache
+                .get(1, 2)
+                .unwrap()
+                .packet
+                .weapon
+                .components
+                .iter()
+                .find(|n| n.definition == DefinitionId(101))
+                .unwrap()
+                .node,
+            30
+        );
         let pointer = cache.get(1, 2).unwrap().resolved.assembly.parts.as_ptr();
         let mut collision = revised.clone();
-        collision.weapon.components[0].node = 3;
+        collision.weapon.components[0].node = 31;
         assert_eq!(
             cache.apply(catalog(), fingerprint(), collision.clone()),
             Err(ConfigurationError::Conflict)
@@ -389,7 +401,7 @@ fn replication_cache_capacity_and_epoch_exhaustion_are_explicit_without_eviction
 fn command(arsenal: &Arsenal) -> ConfigurationCommand {
     let weapon = arsenal.current().instance();
     let mut configuration = weapon.configuration.clone();
-    configuration.components[0].node = 2;
+    configuration.components[0].node = 30;
     ConfigurationCommand {
         epoch: 1,
         request: 1,
@@ -418,8 +430,16 @@ fn replication_commands_compare_and_swap_deduplicate_and_preserve_physical_state
     assert_eq!(result.outcome, CommandOutcome::Applied);
     assert_eq!(result.revision, Some(1));
     assert_eq!(
-        arsenal.current().instance().configuration.components[0].node,
-        2
+        arsenal
+            .current()
+            .instance()
+            .configuration
+            .components
+            .iter()
+            .find(|n| n.definition == DefinitionId(101))
+            .unwrap()
+            .node,
+        30
     );
     assert_eq!(data::encode(arsenal.current().mechanics()), before);
     let pointer = arsenal.current().spec().assembly.parts.as_ptr();
@@ -430,7 +450,7 @@ fn replication_commands_compare_and_swap_deduplicate_and_preserve_physical_state
     );
     assert_eq!(arsenal.current().spec().assembly.parts.as_ptr(), pointer);
     let mut conflicting = command.clone();
-    conflicting.weapon.components[0].node = 3;
+    conflicting.weapon.components[0].node = 31;
     assert_eq!(
         ledger
             .execute(1, conflicting, true, &mut arsenal, catalog())

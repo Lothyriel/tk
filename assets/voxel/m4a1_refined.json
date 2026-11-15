@@ -288,14 +288,14 @@
     },
     {
       "id": "rear_sight", "parent": "rail", "movable": false,
-      "pivot": {"translation": [0, 0.008, 0.142], "rotation": [0, 0, 0, 1]},
+      "pivot": {"translation": [0, 0.008, 0.122], "rotation": [0, 0, 0, 1]},
       "boxes": [
-        {"min": [-0.018, 0, -0.020], "max": [0.018, 0.010, 0.016], "material": "steel"},
-        {"min": [-0.007, 0.010, -0.003], "max": [0.007, 0.030, 0.003], "material": "steel"},
-        {"min": [-0.005, 0.030, -0.002], "max": [-0.0015, 0.037, 0.002], "material": "steel"},
-        {"min": [0.0015, 0.030, -0.002], "max": [0.005, 0.037, 0.002], "material": "steel"},
-        {"min": [-0.0015, 0.035, -0.002], "max": [0.0015, 0.037, 0.002], "material": "steel"},
-        {"min": [0.018, 0.002, -0.006], "max": [0.025, 0.012, 0.006], "material": "steel"}
+        {"min": [-0.018, 0, 0], "max": [0.018, 0.010, 0.036], "material": "steel"},
+        {"min": [-0.007, 0.010, 0.017], "max": [0.007, 0.030, 0.023], "material": "steel"},
+        {"min": [-0.005, 0.030, 0.018], "max": [-0.0015, 0.037, 0.022], "material": "steel"},
+        {"min": [0.0015, 0.030, 0.018], "max": [0.005, 0.037, 0.022], "material": "steel"},
+        {"min": [-0.0015, 0.035, 0.018], "max": [0.0015, 0.037, 0.022], "material": "steel"},
+        {"min": [0.018, 0.002, 0.014], "max": [0.025, 0.012, 0.026], "material": "steel"}
       ]
     },
     {
@@ -344,7 +344,7 @@
     {"id": "grip.support", "part": "handguard", "pose": {"translation": [0, -0.027, -0.088], "rotation": [0, 0, 0, 1]}},
     {"id": "rail.bottom", "part": "handguard", "pose": {"translation": [0, -0.027, -0.148], "rotation": [0, 0, 0, 1]}},
     {"id": "sight.front", "part": "front_sight", "pose": {"translation": [0, 0.066, -0.002], "rotation": [0, 0, 0, 1]}},
-    {"id": "sight.rear", "part": "rear_sight", "pose": {"translation": [0, 0.033, 0], "rotation": [0, 0, 0, 1]}},
+    {"id": "sight.rear", "part": "rear_sight", "pose": {"translation": [0, 0.033, 0.020], "rotation": [0, 0, 0, 1]}},
     {"id": "sight.eye", "part": "receiver", "pose": {"translation": [0, 0.066, 0.270], "rotation": [0, 0, 0, 1]}},
     {"id": "stock.mount", "part": "buffer_tube", "pose": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]}},
     {"id": "stock.shoulder", "part": "stock", "pose": {"translation": [0, -0.035, 0.178], "rotation": [0, 0, 0, 1]}},

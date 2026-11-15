@@ -207,7 +207,7 @@ pub(crate) fn action(
         .assembly
         .anchors
         .get(&common::catalog::AnchorKind::StockContact)
-        .filter(|_| spec.assembly.pivots.contains_key("stock"))
+        .filter(|_| spec.assembly.pivots.contains_key("buffer_tube"))
         .map_or(
             [Vec3::new(-0.30, 0.1, 0.0), Vec3::new(0.30, 0.1, 0.0)],
             |stock| {

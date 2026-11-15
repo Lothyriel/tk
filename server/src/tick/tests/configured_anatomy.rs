@@ -52,7 +52,11 @@ fn change_grip(app: &mut App, player: Entity, x: f32, node: u16) {
     // Controlled server registry, as in assembly_authority_*: no mesh or client
     // contacts participate. Change a real configuration node to resolve revision.
     let mut document: common::catalog::CatalogDocument = ron::from_str(CATALOG_SOURCE).unwrap();
-    document.weapons[0]
+    document
+        .components
+        .iter_mut()
+        .find(|c| c.id.0 == 123)
+        .unwrap()
         .assembly
         .geometry
         .anchors
@@ -60,11 +64,16 @@ fn change_grip(app: &mut App, player: Entity, x: f32, node: u16) {
         .find(|a| a.kind == common::catalog::AnchorKind::SupportGrip)
         .unwrap()
         .pose
-        .translation = [x, 0.02, -0.20];
+        .translation = [x, 0.02, -0.178];
     let catalog = Catalog::validate("configured-anatomy-fixture", document).unwrap();
     let mut arsenal = app.world_mut().get_mut::<Arsenal>(player).unwrap();
     let mut config = arsenal.current().instance().configuration.clone();
-    config.components[0].node = node;
+    config
+        .components
+        .iter_mut()
+        .find(|n| n.definition.0 == 101)
+        .unwrap()
+        .node = node;
     let revision = arsenal.current().instance().revision;
     assert_eq!(
         arsenal

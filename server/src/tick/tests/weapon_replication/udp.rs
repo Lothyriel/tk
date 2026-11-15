@@ -197,7 +197,7 @@ fn replication_udp_solo_dual_loss_and_late_join() {
                 .matches(snapshot.configuration_epoch, local)
         );
         let mut configuration = catalog().configuration(local.weapon_id).unwrap();
-        configuration.components[0].node = 2;
+        configuration.components[0].node = 30;
         let request = ConfigurationCommand {
             epoch: snapshot.configuration_epoch,
             request: 1,
