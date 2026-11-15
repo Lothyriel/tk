@@ -99,9 +99,61 @@ fn corners(bounds: &Bounds) -> [Vec3; 8] {
     })
 }
 
-/// The rest pose comes from the resolved node, while the action delta is relative
-/// to the profile's original magazine. It therefore follows a replaced/rotated
-/// magazine socket instead of resetting the attachment to a model-specific origin.
+/// Explicit camera-space shoulder rig. Its reference pocket comes from baseline
+/// class framing, not the current configuration: a changed stock moves/rejects
+/// the weapon instead of moving its target. Clothing moves the virtual torso
+/// behind the pocket, preserving the sight line in the first-person camera.
+pub(crate) fn brace_view(
+    input: &mut ConfiguredHandling,
+    spec: &ResolvedWeapon,
+    ads: f32,
+    cover: f32,
+) -> Result<(), String> {
+    let contacts = WeaponContacts::from_assembly(&spec.assembly)
+        .map_err(|e| format!("view contacts: {e:?}"))?;
+    let Some(stock) = contacts.stock else {
+        return Ok(());
+    };
+    let reference = spec
+        .class
+        .spec()
+        .assembly
+        .anchors
+        .get(&common::catalog::AnchorKind::StockContact)
+        .ok_or_else(|| "view stock framing reference is missing".to_owned())?;
+    let (turn, brace) = common::humanoid::configured::brace_weights(ads);
+    let rotation = Quat::from_rotation_y(common::humanoid::configured::BLADED_YAW);
+    let pocket = common::humanoid::configured::stock_pocket(cover);
+    let torso = Transform::from_translation(reference.translation - rotation * pocket)
+        .with_rotation(rotation);
+    for (i, side) in [-1.0, 1.0].into_iter().enumerate() {
+        input.shoulders[i] = input.shoulders[i].lerp(
+            torso.transform_point(Vec3::new(side * 0.30, 0.1, 0.0)),
+            turn,
+        );
+        input.poles[i] = input.poles[i].lerp(rotation * input.poles[i], turn);
+    }
+    if brace > 0.0 {
+        let free = handling::fit_weapon(
+            input.preferred_root,
+            contacts,
+            input.shoulders,
+            input.poles,
+            None,
+            input.max_adjustment,
+        )
+        .map_err(|e| format!("view reach: {e:?}"))?;
+        input.stock_target = Some(
+            free.root
+                .transform_point(stock.translation)
+                .lerp(torso.transform_point(pocket), brace),
+        );
+    }
+    Ok(())
+}
+
+/// Rest placement comes from the resolved node; mechanism deltas stay local to
+/// the attachment, including relocated/rotated magazine sockets.
 pub(crate) fn action(
     spec: &ResolvedWeapon,
     action: WeaponAction,
@@ -149,6 +201,7 @@ pub(crate) fn action(
         weight: action.control_grip,
     });
     ConfiguredHandling {
+        preflight_error: None,
         preferred_root: Transform::IDENTITY,
         shoulders: [Vec3::new(-0.30, 0.1, 0.0), Vec3::new(0.30, 0.1, 0.0)],
         poles: [Vec3::new(-0.8, -1.0, 0.0), Vec3::new(0.8, -1.0, 0.0)],

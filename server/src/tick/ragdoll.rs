@@ -30,6 +30,7 @@ pub(super) fn evaluate(
     pose: &PoseState,
     body: &BodyHealth,
     arsenal: Option<&Arsenal>,
+    armor: Option<&ArmorState>,
 ) -> Result<[SegmentPose; SEGMENT_COUNT], handling::HandlingError> {
     let legs = [
         body.anatomy.capacity(Region::LeftLeg),
@@ -42,7 +43,7 @@ pub(super) fn evaluate(
             arsenal.current().spec(),
             &arsenal.current().mechanics().snapshot(),
             None,
-            None,
+            Some(armor.map_or(0.0, common::humanoid::configured::shoulder_cover)),
         )
         .map(|pose| pose.segments),
         None => Ok(evaluate_pose(pose, legs[0], legs[1])),
@@ -90,12 +91,13 @@ pub(super) fn capture(
         &PoseState,
         &BodyHealth,
         Option<&Arsenal>,
+        Option<&ArmorState>,
         &mut Motion,
         &mut Impact,
     )>,
 ) {
     let dt = time.delta_secs().max(0.001);
-    for (root, pose, body, arsenal, mut motion, mut impact) in &mut actors {
+    for (root, pose, body, arsenal, armor, mut motion, mut impact) in &mut actors {
         if !body.alive() {
             continue;
         }
@@ -103,7 +105,7 @@ pub(super) fn capture(
         if impact.age > 0.25 {
             impact.impulse = Vec3::ZERO;
         }
-        let rig = match evaluate(pose, body, arsenal) {
+        let rig = match evaluate(pose, body, arsenal, armor) {
             Ok(rig) => {
                 if pose.mode != PhysicalMode::Recovering {
                     motion.handling_error = None;

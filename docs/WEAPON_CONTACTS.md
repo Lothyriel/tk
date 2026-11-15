@@ -121,8 +121,34 @@ view-arm placement. The previous procedural assembly/placement remains compiled
 only in tests as a migration oracle.
 
 This aligns remote visual tissue with the accepted contacts and preserves all 17
-segment IDs. Native stock/clothing validation and rendered acceptance remain
-before the card can complete.
+segment IDs. Rendered acceptance remains before the card can complete.
+
+## Shoulder pocket and clothing
+
+Primary ADS uses a bladed upper-body stance: first rotate the torso/shoulders,
+then close the stock onto a chest-local pocket. The square-shoulder pose cannot
+reach the baseline long foregrip with the stock braced. The stance preserves
+authored grips and 30/28 cm bones, with a 0.50 m root-adjustment budget while
+aiming (0.35 m unbraced). Hip fire and reload release the pocket.
+
+The pocket is at thorax-local `(0.14, 0.10, -depth)`: 0.145 m for clothing,
+0.1975 m for the light plate and 0.203 m for the heavy plate. These depths match
+the rendered plate placement/dimensions; exhausted armor uses clothing. Authority
+and remote rendering share posture, contact weights, poles and cover selection.
+Remote recoil translates the accepted shoulder/stock assembly together.
+
+The view-model uses the same brace phases and pocket geometry in an explicit
+camera-space torso frame. Baseline class framing fixes the reference pocket;
+clothing moves the virtual torso behind it, retaining the baseline sight line.
+Changing a configured stock does not move that reference. Unreachable requests
+propagate a preflight error through the assembler and keep the accepted pose
+and hierarchy instead of silently dropping the brace.
+
+Native fixtures measure stock contact against actual chest/plate mesh bounds
+with all three cover states, both primaries, ADS entry/release, crouch and pitch.
+Common fixtures cover 121 ADS samples per stance/cover, reachable stock changes
+and an impossible extension. A real server fixture verifies the accepted damage
+rig against the equipped shoulder pocket.
 
 ## Authoritative anatomy and handoff
 
@@ -133,8 +159,8 @@ with resolved anchors, including rotated attachments, and blends the moving
 support contact. Native client fixtures compare this result against baked
 sockets; authority uses zero visual recoil.
 
-`humanoid::configured::evaluate` replaces only the six arm/hand poses, using
-the same preferred root as remote presentation. Physical poses retain ownership
+`humanoid::configured::evaluate` supplies the six arm/hand poses and ADS thorax
+orientation, using the same posture as remote presentation. Physical poses retain ownership
 of all 17 segments. The server captures the configured result from the current
 Arsenal into `ragdoll::Motion`; projectile hit testing and injury resolution
 consume that accepted pose. An unreachable update records a handling error and

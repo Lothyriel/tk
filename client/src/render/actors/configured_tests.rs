@@ -99,6 +99,120 @@ fn weapon_root(app: &App, body: Entity) -> Entity {
     matches[0]
 }
 
+#[test]
+fn configured_remote_stock_contacts_actual_chest_or_plate_with_rigid_arms() {
+    for weapon in [WeaponKind::Rifle, WeaponKind::Smg] {
+        for armor in [ArmorKind::None, ArmorKind::Light, ArmorKind::Heavy] {
+            let (mut app, body) = fixture(weapon);
+            let root = weapon_root(&app, body);
+            {
+                let mut session = app.world_mut().resource_mut::<ClientSession>();
+                let player = &mut session.players[0];
+                player.armor = ArmorState::from_loadout(Loadout { armor, ..default() });
+                player.pose.ads = 1.0;
+                player.pose.crouch = 0.7;
+                player.pose.aim_pitch = -0.6;
+                player.pose.aim_roll = 0.25;
+            }
+            for _ in 0..180 {
+                app.update();
+                assert_arms(&app, body, root);
+            }
+            let children = descendants(app.world(), body);
+            let surface = children
+                .iter()
+                .copied()
+                .find(|&e| {
+                    if armor == ArmorKind::None {
+                        app.world()
+                            .get::<BoneVisual>(e)
+                            .is_some_and(|b| b.segment == Segment::Thorax && b.inner == 0)
+                    } else {
+                        app.world()
+                            .get::<EquipmentVisual>(e)
+                            .is_some_and(|g| !g.helmet)
+                    }
+                })
+                .unwrap();
+            let world = app.world();
+            let stock = weapon.spec().assembly.anchors[&common::catalog::AnchorKind::StockContact];
+            let accepted = world.get::<ConfiguredPose>(root).unwrap();
+            let contact = world
+                .get::<GlobalTransform>(root)
+                .unwrap()
+                .mul_transform(accepted.solution.root)
+                .transform_point(stock.translation);
+            let surface_pose = world.get::<GlobalTransform>(surface).unwrap();
+            let local = surface_pose.to_matrix().inverse().transform_point3(contact);
+            let mesh = world
+                .resource::<Assets<Mesh>>()
+                .get(&world.get::<Mesh3d>(surface).unwrap().0)
+                .unwrap();
+            let bevy::mesh::VertexAttributeValues::Float32x3(vertices) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
+            else {
+                panic!("vertices");
+            };
+            let front = vertices.iter().map(|v| v[2]).fold(f32::INFINITY, f32::min);
+            assert!(
+                (local.z - front).abs() < 0.001,
+                "{weapon:?}/{armor:?}: {local:?}, front={front}"
+            );
+            let scale = surface_pose.scale();
+            assert!((local.x * scale.x - 0.14).abs() < 0.001);
+            assert!((local.y * scale.y - 0.10).abs() < 0.001);
+            // A logical stock beyond the anatomical budget must not silently
+            // fall back to an unbraced pose or replace the accepted hierarchy.
+            let before = *world.get::<Transform>(surface).unwrap();
+            let accepted_root = accepted.solution.root;
+            let entities = descendants(world, root);
+            let source = common::catalog::CATALOG_SOURCE.replace(
+                if weapon == WeaponKind::Rifle {
+                    "(0.0, -0.005, 0.335)"
+                } else {
+                    "(0.0, -0.012, 0.3275)"
+                },
+                "(0.0, 0.0, 4.0)",
+            );
+            let custom = common::catalog::Catalog::parse("unreachable-stock", &source).unwrap();
+            {
+                let mut session = app.world_mut().resource_mut::<ClientSession>();
+                let mut packet = session
+                    .configurations
+                    .cache
+                    .get(1, 1)
+                    .unwrap()
+                    .packet
+                    .clone();
+                packet.handle = 2;
+                packet.revision = 2;
+                session
+                    .configurations
+                    .cache
+                    .apply(&custom, packet.catalog, packet)
+                    .unwrap();
+                session.players[0].configuration = 2;
+            }
+            app.update();
+            assert!(
+                app.world()
+                    .get::<configured::ConfigurationVisualError>(root)
+                    .is_some()
+            );
+            assert_eq!(
+                app.world()
+                    .get::<ConfiguredPose>(root)
+                    .unwrap()
+                    .solution
+                    .root,
+                accepted_root
+            );
+            assert_eq!(*app.world().get::<Transform>(surface).unwrap(), before);
+            assert_eq!(descendants(app.world(), root), entities);
+        }
+    }
+}
+
 fn assert_arms(app: &App, body: Entity, weapon: Entity) {
     assert!(
         app.world()
@@ -270,6 +384,58 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
             Visibility::Hidden
         })
     );
+}
+
+#[test]
+fn configured_stock_recoil_moves_plate_and_pocket_together() {
+    let (mut app, body) = fixture(WeaponKind::Rifle);
+    {
+        let mut session = app.world_mut().resource_mut::<ClientSession>();
+        session.players[0].pose.ads = 1.0;
+        session.players[0].armor = ArmorState::from_loadout(Loadout {
+            armor: ArmorKind::Heavy,
+            ..default()
+        });
+    }
+    for _ in 0..180 {
+        app.update();
+    }
+    app.world_mut()
+        .resource_mut::<feedback::Feedback>()
+        .responses
+        .get_mut(&7)
+        .unwrap()
+        .recoil = 0.04;
+    app.update();
+    let root = weapon_root(&app, body);
+    assert_arms(&app, body, root);
+    let gear = descendants(app.world(), body)
+        .into_iter()
+        .find(|&e| {
+            app.world()
+                .get::<EquipmentVisual>(e)
+                .is_some_and(|g| !g.helmet)
+        })
+        .unwrap();
+    let world = app.world();
+    let stock =
+        WeaponKind::Rifle.spec().assembly.anchors[&common::catalog::AnchorKind::StockContact];
+    let contact = world
+        .get::<GlobalTransform>(root)
+        .unwrap()
+        .mul_transform(world.get::<ConfiguredPose>(root).unwrap().solution.root)
+        .transform_point(stock.translation);
+    let plate_local = world
+        .get::<GlobalTransform>(gear)
+        .unwrap()
+        .to_matrix()
+        .inverse()
+        .transform_point3(contact);
+    assert!(
+        (plate_local.z + 0.0275).abs() < 0.001,
+        "stock slid off recoiling plate: {plate_local:?}"
+    );
+    assert!(world.resource::<feedback::Feedback>().responses[&7].recoil > 0.01);
 }
 
 #[test]

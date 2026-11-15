@@ -5,6 +5,137 @@ use crate::{
 };
 
 #[test]
+fn configured_stock_stance_keeps_both_hands_and_shoulder_contact_through_ads() {
+    for weapon in [WeaponKind::Rifle, WeaponKind::Smg] {
+        let spec = weapon.spec();
+        let stock = spec.assembly.anchors[&AnchorKind::StockContact];
+        for cover in [0.0, 0.025, 0.0525, 0.058] {
+            for (crouch, pitch, lean) in [(0.0, 0.0, 0.0), (1.0, -0.8, -0.3), (0.5, 0.8, 0.3)] {
+                let mut previous: Option<Transform> = None;
+                for step in 0..=120 {
+                    let state = PoseState {
+                        weapon,
+                        crouch,
+                        aim_pitch: pitch,
+                        aim_roll: lean,
+                        ads: step as f32 / 120.0,
+                        ..default()
+                    };
+                    let rig = evaluate(
+                        &state,
+                        [1.0; 2],
+                        spec,
+                        &MechanicalSnapshot::default(),
+                        None,
+                        Some(cover),
+                    )
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "{weapon:?} cover={cover} crouch={crouch} pitch={pitch} ads={} {e:?}",
+                            state.ads
+                        )
+                    });
+                    let solution = rig.weapon.unwrap();
+                    let thorax = rig.segments[Segment::Thorax.index()].transform();
+                    if step == 120 {
+                        let pocket = thorax.transform_point(Vec3::new(0.14, 0.1, -0.145 - cover));
+                        assert!(
+                            solution
+                                .root
+                                .transform_point(stock.translation)
+                                .distance(pocket)
+                                < 2e-6
+                        );
+                    }
+                    for (hand, anchor) in [
+                        (Segment::LeftHand, AnchorKind::SupportGrip),
+                        (Segment::RightHand, AnchorKind::TriggerGrip),
+                    ] {
+                        let expected = solution.root.mul_transform(spec.assembly.anchors[&anchor]);
+                        let actual = rig.segments[hand.index()].transform();
+                        assert!(actual.translation.distance(expected.translation) < 2e-6);
+                    }
+                    if let Some(previous) = previous {
+                        assert!(solution.root.translation.distance(previous.translation) < 0.025);
+                    }
+                    previous = Some(solution.root);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn configured_stock_revision_adjusts_the_weapon_or_rejects_without_stretching() {
+    let state = PoseState {
+        ads: 1.0,
+        ..default()
+    };
+    let mut spec = WeaponKind::Rifle.spec().clone();
+    for extension in [-0.015, 0.015, 4.0] {
+        spec.assembly
+            .anchors
+            .get_mut(&AnchorKind::StockContact)
+            .unwrap()
+            .translation
+            .z = 0.335 + extension;
+        let solved = evaluate(
+            &state,
+            [1.0; 2],
+            &spec,
+            &MechanicalSnapshot::default(),
+            None,
+            Some(0.058),
+        );
+        if extension > 1.0 {
+            assert!(
+                solved.is_err(),
+                "an impossible stock must not discard its shoulder contact"
+            );
+        } else {
+            let rig = solved.unwrap();
+            let root = rig.weapon.unwrap().root;
+            let pocket = rig.segments[Segment::Thorax.index()]
+                .transform()
+                .transform_point(Vec3::new(0.14, 0.1, -0.203));
+            assert!(
+                root.transform_point(spec.assembly.anchors[&AnchorKind::StockContact].translation)
+                    .distance(pocket)
+                    < 2e-6
+            );
+            for (side, upper, forearm, hand) in [
+                (
+                    -1.0,
+                    Segment::LeftUpperArm,
+                    Segment::LeftForearm,
+                    Segment::LeftHand,
+                ),
+                (
+                    1.0,
+                    Segment::RightUpperArm,
+                    Segment::RightForearm,
+                    Segment::RightHand,
+                ),
+            ] {
+                let torso = rig.segments[Segment::Thorax.index()].transform();
+                let shoulder = torso.transform_point(Vec3::new(side * 0.3, 0.1, 0.0));
+                let upper = rig.segments[upper.index()].transform();
+                let forearm = rig.segments[forearm.index()].transform();
+                let hand = Vec3::from(rig.segments[hand.index()].position);
+                assert!(upper.transform_point(Vec3::Y * 0.15).distance(shoulder) < 2e-6);
+                assert!(
+                    upper
+                        .transform_point(Vec3::NEG_Y * 0.15)
+                        .distance(forearm.transform_point(Vec3::Y * 0.14))
+                        < 2e-6
+                );
+                assert!(forearm.transform_point(Vec3::NEG_Y * 0.14).distance(hand) < 2e-6);
+            }
+        }
+    }
+}
+
+#[test]
 fn configured_anatomy_preserves_rigid_contacts_and_all_body_ids_across_stances_and_reload() {
     for weapon in [WeaponKind::Rifle, WeaponKind::Pistol, WeaponKind::Smg] {
         let spec = weapon.spec();
