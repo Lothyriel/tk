@@ -118,7 +118,7 @@ Input bounds: existing validation remains. Partial failures: harness exits nonze
 | ANIM-11 | Evidence | T1, T7 | Baseline/intermediate evidence retained; final gates/performance open |
 | ANIM-12 | Guide | T7 | Guide/Mermaid updated; final review open |
 | ANIM-13 | ADS | T3–T4, T7 | Implemented; unit/native14 ADS entry/release PASS; final artistic acceptance open |
-| ANIM-14 | Motion/reload/FOV | T3–T5, T7 | Native16 dual/loss PASS but right-edge pistol clipping found; receiver-pivot/real-mesh viewport regression implemented; native17 and artistic acceptance open |
+| ANIM-14 | Motion/reload/FOV | T3–T5, T7 | Native17 diagnostic dual/loss PASS; inspected pistol reload/ADS frames no longer show the16right-edge crop; normal-speed artistic acceptance open |
 | ANIM-15 | Point-blank origin | T8, T7 | Implemented; close hip/ADS/body/cover/wood/gap regressions and native14 fatal-shot flow PASS; final feature acceptance open |
 
 ## Success Criteria
