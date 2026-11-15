@@ -10,6 +10,7 @@ use common::{combat::SurfaceKind, map::*, raid::EXTRACTION_RADIUS};
 pub(crate) mod actors;
 mod blood;
 pub(crate) mod feedback;
+pub(crate) mod voxel;
 mod weapons;
 
 pub struct Plugin;
@@ -20,6 +21,7 @@ impl bevy::prelude::Plugin for Plugin {
         app.add_plugins(actors::Plugin);
         app.add_plugins(blood::Plugin);
         app.add_plugins(feedback::Plugin);
+        app.add_plugins(voxel::Plugin);
         let startup_systems = (
             spawn_view_model,
             spawn_world_model,
