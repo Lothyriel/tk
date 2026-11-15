@@ -50,7 +50,7 @@
     ]
   }],
   "sockets": [
-    {"id": "sight.eye", "part": "optic", "pose": {"translation": [0, 0, 0.110], "rotation": [0, 0, 0, 1]}},
+    {"id": "sight.eye", "part": "optic", "pose": {"translation": [0, 0, 0.210], "rotation": [0, 0, 0, 1]}},
     {"id": "sight.axis", "part": "optic", "pose": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]}}
   ]
 }

@@ -21,7 +21,7 @@ impl Default for VisualBindings {
     fn default() -> Self {
         Self {
             weapons: [
-                (WeaponId::M4A1, "m4a1_refined".into()),
+                (WeaponId::M4A1, "m4a1_receiver".into()),
                 (WeaponId::M1911, "m1911_baseline".into()),
                 (WeaponId::MP5, "mp5_baseline".into()),
             ]
@@ -30,6 +30,22 @@ impl Default for VisualBindings {
                 (DefinitionId(101), "m4a1_magazine_30".into()),
                 (DefinitionId(102), "m1911_magazine_baseline".into()),
                 (DefinitionId(103), "mp5_magazine_baseline".into()),
+                (DefinitionId(120), "m4a1_pmag_20".into()),
+                (DefinitionId(121), "m4a1_stock".into()),
+                (DefinitionId(122), "m4a1_ctr".into()),
+                (DefinitionId(123), "m4a1_ras".into()),
+                (DefinitionId(124), "m4a1_moe_sl".into()),
+                (DefinitionId(125), "m4a1_barrel_145".into()),
+                (DefinitionId(126), "m4a1_dd_103".into()),
+                (DefinitionId(127), "m4a1_a2".into()),
+                (DefinitionId(128), "m4a1_sfmb".into()),
+                (DefinitionId(129), "m4a1_rc2".into()),
+                (DefinitionId(130), "m4a1_front_iron".into()),
+                (DefinitionId(131), "m4a1_rear_iron".into()),
+                (DefinitionId(132), "m4a1_qrp2".into()),
+                (DefinitionId(133), "m4a1_pro".into()),
+                (DefinitionId(134), "m4a1_rvg".into()),
+                (DefinitionId(135), "m4a1_afg2".into()),
             ]
             .into(),
         }

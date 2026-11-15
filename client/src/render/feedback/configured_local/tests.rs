@@ -311,8 +311,16 @@ impl Fixture {
             .get::<GlobalTransform>(named(&self.app, self.root, "control.grasp"))
             .unwrap();
         let rest_support = if player.weapon == WeaponKind::Rifle {
+            let grip_root = descendants(world, self.root)
+                .into_iter()
+                .find(|&e| {
+                    world
+                        .get::<ConfiguredPiece>(e)
+                        .is_some_and(|p| matches!(p.definition, 134 | 135))
+                })
+                .unwrap_or(self.root);
             world
-                .get::<GlobalTransform>(named(&self.app, self.root, "grip.support"))
+                .get::<GlobalTransform>(named(&self.app, grip_root, "grip.support"))
                 .unwrap()
                 .translation()
         } else {
@@ -380,6 +388,96 @@ impl Fixture {
             }
         }
         assert!(count > 1000, "actual baked weapon and both palms");
+    }
+}
+
+#[test]
+fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_reload() {
+    use common::catalog::{Attachment, DefinitionId};
+    for (short, suppressed, grip) in [(true, false, 0), (false, true, 134), (false, false, 135)] {
+        let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
+        let mut packet = f
+            .app
+            .world()
+            .resource::<ClientSession>()
+            .configurations
+            .cache
+            .get(1, 1)
+            .unwrap()
+            .packet
+            .clone();
+        packet.handle = 2;
+        packet.revision = 2;
+        for part in &mut packet.weapon.components {
+            match part.node {
+                1 if !suppressed => part.definition = DefinitionId(120),
+                2 => {
+                    part.definition = DefinitionId(122);
+                    part.position = if suppressed { 5 } else { 0 };
+                }
+                3 if short => part.definition = DefinitionId(124),
+                4 if short => part.definition = DefinitionId(126),
+                5 if suppressed => part.definition = DefinitionId(128),
+                _ => {}
+            }
+        }
+        let attachment = |node, definition, parent, socket: &str, position| Attachment {
+            node,
+            definition: DefinitionId(definition),
+            parent,
+            socket: socket.into(),
+            position,
+        };
+        if suppressed {
+            packet.weapon.components.extend([
+                attachment(8, 129, Some(5), "suppressor", 0),
+                attachment(9, 132, None, "top", 3),
+                attachment(10, 133, Some(9), "optic", 0),
+            ]);
+        }
+        if grip != 0 {
+            packet.weapon.components.push(attachment(
+                11,
+                grip,
+                Some(3),
+                "bottom",
+                if grip == 134 { 4 } else { 1 },
+            ));
+        }
+        {
+            let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+            session
+                .configurations
+                .cache
+                .apply(catalog(), packet.catalog, packet)
+                .unwrap();
+            session.players[0].configuration = 2;
+        }
+        for _ in 0..90 {
+            f.step();
+        }
+        f.assert_contacts();
+        for aim in [true, false] {
+            f.app.world_mut().resource_mut::<LocalInput>().aim = aim;
+            for _ in 0..90 {
+                f.step();
+                f.assert_contacts();
+            }
+        }
+        for kind in [
+            ManipulationKind::TacticalReload,
+            ManipulationKind::EmptyReload,
+        ] {
+            for step in 0..=30 {
+                {
+                    let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+                    session.players[0].mechanics.kind = Some(kind);
+                    session.players[0].mechanics.fraction = step as f32 / 30.0;
+                }
+                f.step();
+                f.assert_contacts();
+            }
+        }
     }
 }
 
@@ -502,7 +600,7 @@ fn configured_local_native_revision_and_trauma_preserve_identity_and_visibility(
         .into_iter()
         .filter_map(|e| f.app.world().get::<ConfiguredPiece>(e).map(|p| p.node))
         .collect();
-    assert_eq!(nodes, [0, 9]);
+    assert_eq!(nodes, [0, 2, 3, 4, 5, 6, 7, 9]);
     for part in ["upper", "forearm", "palm"] {
         let e = named(&f.app, f.root, &format!("configured-support-{part}"));
         assert!(!f.app.world().get::<InheritedVisibility>(e).unwrap().get());

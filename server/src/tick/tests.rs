@@ -30,17 +30,21 @@ use std::time::Duration;
 
 #[test]
 fn assembly_authority_rejects_invalid_changes_and_fires_from_cached_properties() {
-    use common::catalog::{CATALOG_SOURCE, Catalog, DefinitionId, WeaponConfiguration};
+    use common::catalog::{
+        CATALOG_SOURCE, Catalog, CatalogDocument, DefinitionId, WeaponConfiguration,
+    };
     let (mut app, player, _) = physical_fixture();
     // Controlled registry fixture: configuration packets contain only node IDs
     // and placements. Capacity/velocity must come from this server's registry.
-    let source = CATALOG_SOURCE
-        .replace("capacity: 30", "capacity: 40")
-        .replace(
-            "occupied_positions: 1, geometry: (",
-            "occupied_positions: 1, modifiers: (velocity: 1.2), geometry: (",
-        );
-    let catalog = Catalog::parse("server-fixture.ron", &source).unwrap();
+    let mut document: CatalogDocument = ron::from_str(CATALOG_SOURCE).unwrap();
+    let magazine = document
+        .components
+        .iter_mut()
+        .find(|c| c.id == DefinitionId(101))
+        .unwrap();
+    magazine.capacity = 40;
+    magazine.assembly.modifiers.velocity = 1.2;
+    let catalog = Catalog::validate("server-fixture.ron", document).unwrap();
     // Physical magazines are created from this registry, never resized by a
     // subsequent configuration request.
     let arsenal = Arsenal::from_slots(
@@ -54,7 +58,7 @@ fn assembly_authority_rejects_invalid_changes_and_fires_from_cached_properties()
     .unwrap();
     app.world_mut().entity_mut(player).insert(arsenal);
     let mut configuration = catalog.configuration(WeaponId::M4A1).unwrap();
-    configuration.components[0].node = 2;
+    configuration.components[0].node = 30;
     let received: WeaponConfiguration = data::decode(&data::encode(&configuration));
     {
         let mut arsenal = app.world_mut().get_mut::<Arsenal>(player).unwrap();

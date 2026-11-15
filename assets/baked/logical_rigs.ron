@@ -30,10 +30,10 @@
     ),
     "m4a1_afg2": (
         pivots: {
-            "grip": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "grip": (translation: (0.0, 0.0, 0.05969), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
         sockets: {
-            "grip.support": (translation: (0.0, -0.032, -0.013), rotation: (-0.2588190487441982, 0.0, 0.0, 0.9659258253132839)),
+            "grip.support": (translation: (0.0, -0.032, 0.04669), rotation: (-0.2588190487441982, 0.0, 0.0, 0.9659258253132839)),
         },
     ),
     "m4a1_barrel_145": (
@@ -127,15 +127,15 @@
         },
         sockets: {
             "sight.axis": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
-            "sight.eye": (translation: (0.0, 0.0, 0.11), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "sight.eye": (translation: (0.0, 0.0, 0.21), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
     ),
     "m4a1_qrp2": (
         pivots: {
-            "optic_mount": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "optic_mount": (translation: (0.0, 0.0, 0.03), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
         sockets: {
-            "optic.mount": (translation: (0.0, 0.039, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "optic.mount": (translation: (0.0, 0.039, 0.03), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
     ),
     "m4a1_ras": (
@@ -161,7 +161,7 @@
             "rear_sight": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
         sockets: {
-            "sight.rear": (translation: (0.0, 0.033, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "sight.rear": (translation: (0.0, 0.033, 0.02), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
     ),
     "m4a1_receiver": (
@@ -213,7 +213,7 @@
             "pistol_grip": (translation: (0.0, -0.046, 0.14), rotation: (-0.2164399834189664, 0.0, 0.0, 0.9762959252079247)),
             "rail": (translation: (0.0, 0.025, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
             "rail_covers": (translation: (0.0, 0.0, -0.022), rotation: (0.0, 0.0, 0.0, 1.0)),
-            "rear_sight": (translation: (0.0, 0.033, 0.142), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "rear_sight": (translation: (0.0, 0.033, 0.122), rotation: (0.0, 0.0, 0.0, 1.0)),
             "receiver": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
             "selector": (translation: (-0.019, -0.036, 0.127), rotation: (0.0, 0.0, 0.0, 1.0)),
             "stock": (translation: (0.0, 0.0, 0.26455), rotation: (0.0, 0.0, 0.0, 1.0)),
@@ -245,10 +245,10 @@
     ),
     "m4a1_rvg": (
         pivots: {
-            "grip": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "grip": (translation: (0.0, 0.0, 0.023), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
         sockets: {
-            "grip.support": (translation: (0.0, -0.05, 0.016), rotation: (-0.7071067811865476, 0.0, 0.0, 0.7071067811865476)),
+            "grip.support": (translation: (0.0, -0.05, 0.039), rotation: (-0.7071067811865476, 0.0, 0.0, 0.7071067811865476)),
         },
     ),
     "m4a1_sfmb": (

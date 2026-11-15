@@ -56,7 +56,25 @@ fn component(id: u32, kind: ComponentKind, interface: Interface) -> ComponentDef
 // Expected values below come from this fixture's measured transforms/masses.
 fn document() -> CatalogDocument {
     let mut doc: CatalogDocument = ron::from_str(CATALOG_SOURCE).unwrap();
+    // Keep the synthetic connector corpus independent of the production kit.
+    doc.components.retain(|c| c.id.0 <= 103);
+    doc.components[0].assembly.geometry.center_of_mass = [0.0; 3];
+    doc.weapons[0].components.retain(|n| n.node == 1);
     let root = &mut doc.weapons[0].assembly;
+    root.geometry = ron::from_str(
+        r#"(
+        authored: Some((asset: "m4a1_refined",
+            anchors: [(Bore, "bore.muzzle"), (DeviceExit, "muzzle_device.exit"),
+                (Ejection, "ejection"), (Sight, "sight.eye"),
+                (FrontIron, "sight.front"), (RearIron, "sight.rear"),
+                (TriggerGrip, "grip.trigger"), (SupportGrip, "grip.support"),
+                (StockContact, "stock.shoulder"), (ControlGrip, "control.grasp")],
+            sockets: [("magazine", "magazine.seat")])),
+        sockets: [(key: "magazine", interface: (kind: Magwell, standard: "stanag", size: 556),
+            accepts: [Magazine], positions: 1, pitch_m: 0.0, required: true)],
+    )"#,
+    )
+    .unwrap();
     // This synthetic connector matrix has its own eye/root frame.
     root.hip_from_root = RigidPose::default();
     root.ads_at_sight = false;

@@ -7,6 +7,8 @@ mod authored;
 mod resolve;
 pub use authored::{authored_rig, AuthoredRig, LOGICAL_RIGS_SOURCE};
 #[cfg(test)]
+mod kit_tests;
+#[cfg(test)]
 mod tests;
 pub(super) mod validate;
 

@@ -1,7 +1,8 @@
 # M4A1 modular kit
 
-Reference selection for TAR-26, reviewed 2026-11-15. Production and acceptance
-are pending. This sheet extends the [F/V/G contract](../WEAPON_REFERENCES.md):
+Reference selection for TAR-26, reviewed 2026-11-15. Sources and runtime bindings
+are implemented; native acceptance remains pending.
+This sheet extends the [F/V/G contract](../WEAPON_REFERENCES.md):
 **F** is a published manufacturer fact, **V** is interpreted exterior geometry,
 and **G** is an authored game value. Images remain linked to their owners.
 
@@ -70,7 +71,7 @@ The baker derives them from the existing parts, resets each
 export root to identity, and retains its children, materials and socket frames.
 No source geometry is copied into independently editable component files.
 The complete `m4a1_refined` bake remains an authoring/reference fixture; the
-modular runtime will bind the component exports. Tests require a disjoint,
+modular runtime binds only the component exports. Tests require a disjoint,
 complete partition and reconstruct every original surface at its source pivot.
 The generated exports carry the master source hash, so source edits invalidate
 the related bakes together. The RAS length oracle follows the current KAC page.
@@ -87,7 +88,7 @@ Its V interpretation uses the manufacturer's [side view][pmag-side] and
 not baked into the empty magazine. The continuous length is 0.14224 m.
 Near/far share 816 vertices / 408 triangles, 3 submissions and 24480 cached
 mesh bytes. Source tests cover its full magwell removal sweep and palm contact.
-Catalog integration and native visual acceptance are pending.
+Definition 120 supplies the 20-round capacity; native visual acceptance is pending.
 
 [pmag-side]: https://magpul.com/media/catalog/product/cache/f8158826193ba5faa8b862a9bd1eb9e9/m/a/mag560-blk_magpul_pmag_20_ar_m4_gen_m3_02.1.jpg
 [pmag-oblique]: https://magpul.com/media/catalog/product/cache/f8158826193ba5faa8b862a9bd1eb9e9/m/a/mag560-blk_magpul_pmag_20_ar_m4_gen_m3_01.1.jpg
@@ -127,6 +128,8 @@ a 39 mm optical axis above the rail. Source checks require an unobstructed
 132 mm length and 72 mm combined width follow the published kit; folded cap
 poses are V and do not claim the closed-cap 81 mm height. Glass/reticle rendering
 and sight zero remain TAR-31 work.
+The G eye frame sits 210 mm behind the optic axis origin so the installed
+housing and retained rear iron stay beyond the view camera's 100 mm near plane.
 
 | Source | Vertices / triangles | Submissions | Cached mesh bytes |
 | --- | --- | --- | --- |
@@ -147,6 +150,21 @@ Picatinny placements use bounded intervals; solids and swept corridors qualify
 placement. Manufacturer compatibility statements establish eligible interfaces,
 not automatic acceptance of every placement or an exemption from geometry.
 
+Indexed rail coordinates refer to the **front of the occupied footprint**.
+QRP2's mesh centre is 30 mm behind that origin; RVG's is 23 mm and AFG-2's
+59.69 mm. The rear iron has the same front-edge convention, preserving its
+original assembled aperture. Top rail positions run from Z=+2 mm in 10 mm
+increments (16 positions); the lower RAS rail starts at local Z=-148 mm
+(14 positions). RVG uses five positions and AFG-2 twelve. Their complete
+position ranges clear both magazines' continuous 240 mm downward sweeps in
+the source geometry and the catalog matrix.
+
+The extension is an indexed `Rail` with the distinct `ar15_milspec_extension`
+standard, not a Picatinny interface. Positions 0–5 span 82.55 mm. The fixed
+buffer tube remains on the receiver; both stocks move their own shoulder contact.
+The view's hip-shoulder framing recognizes the receiver's `buffer_tube` pivot,
+so extracting the stock does not revert to legacy breech-level shoulders.
+
 Semantic anchors inherit down an attachment chain: a foregrip refines its
 handguard's support contact and a suppressor refines its mount's device exit.
 The deepest provider wins regardless of node ID or packet ordering. Competing
@@ -159,6 +177,40 @@ centres of mass and recoil/velocity/signature modifiers G. Keep the existing
 base total as an explicit migration target until a separately sourced mass
 budget replaces it. No device makes ammunition more damaging by name.
 
+| Definition | Component | Mass kg | Basis |
+| --- | --- | --- | --- |
+| weapon 1 root | receiver, controls, extension, delta ring | 1.322689 | G residual of preserved base budget |
+| 101 / 120 | magazine30 / PMAG20 | 0.11 / 0.113398 | G / F |
+| 121 / 122 | base stock / CTR | 0.25 / 0.252311 | G / F |
+| 123 / 124 | RAS with panels / MOE SL | 0.312311 / 0.189942 | F body + G 0.060 panels / F |
+| 125 / 126 | FN14.5 / DD10.3 without tower | 0.72 / 0.522245 | G / F group minus G tower |
+| 127 / 128 / 129 | A2 / SFMB / RC2 | 0.065 / 0.1105 / 0.482 | G / F / F |
+| 130 / 131 | shared front tower/cap / rear iron | 0.14 / 0.07 | G |
+| 132 / 133 | QRP2 / PRO | 0.168 / 0.192 | G split of selected 0.360 kit |
+| 134 / 135 | RVG / AFG-2 | 0.073709 / 0.071724 | F |
+
+The base resolves to 2.990 kg including its empty magazine. The DD barrel +
+tower resolves to the selected 0.662245 kg group. Centres of mass and modifier
+values are G: short-barrel velocity ×0.90, SFMB recoil ×0.90/signature ×1.15,
+RC2 recoil ×0.95/signature ×0.55; all other modifiers are unity. These are
+bounded gameplay proxies, not measured ballistic or acoustic performance.
+
+The mechanical instance owns its magazines. Creating an instance with definition
+120 creates real 20-round magazines; swapping the configuration's definition
+alone cannot create an unowned magazine or truncate existing rounds. The catalog
+matrix and physical-magazine tests cover both capacities. Providing inventory
+items to an existing weapon remains the inventory adapter's responsibility.
+
+Non-contact solids omit deliberate joints: receiver extension/sleeve, barrel
+shoulders/FSB, brake/can mating band and optic/ring. The can's outer skins remain
+solids and reject the SL nose. Magazine clearance covers the downward removal
+path below the magwell; source tests separately cover the exact feed geometry
+and magwell walls. Receiver-fixed handle/finger clearance spans Z=174–270 mm.
+This envelope does not move with an optic. QRP2 at rail position 3 retains the
+rear iron; position 5 collides with that iron despite disjoint rail intervals.
+With the rear iron removed, position 10 fits the rail but obstructs the
+charging-handle/finger corridor and is rejected.
+
 Stock endpoints, magazine seating/grasp, support contact, bore and final outlet
 follow installed parts. The receiver's charging-handle sweep is fixed; moving
 an optic rearward must not move that corridor out of the way. Intentional mating
@@ -166,7 +218,7 @@ regions are excluded from non-contact solids, with the exclusion explained.
 
 ## Acceptance matrix
 
-These are required scenarios, not results. All use the same catalog resolver,
+These scenarios use the same catalog resolver,
 logical rigs and client bindings as gameplay.
 
 | Scenario | Observable outcome |
@@ -193,5 +245,13 @@ valid/invalid catalog configurations, resolved mass/anchors and actual local/
 remote binding/contact fixtures. Native review checks silhouettes, material
 separation, open sight lines and seams on the actual camera. Existing action
 sampling checks static contacts; normal-speed reload/handling and final optical
-acceptance remain explicitly tied to TAR-29/31/32. No production or artistic
-acceptance is asserted by this reference selection.
+acceptance remain explicitly tied to TAR-29/31/32.
+
+`common/src/catalog/assembly/kit_tests.rs` checks 288 crossed configurations:
+184 accepted, 104 rejected by interface or the short-SL/can interference.
+Separate cases cover rail overlap/range, rear-iron/body interference and the
+fixed charging-handle corridor. Base reconstruction checks every part against
+the source assembly and preserves the 2.990 kg budget. Client fixtures exercise
+compact/SL/PMAG/CTR, suppressed/PRO/RVG and AFG-2 variants through local and
+remote ADS/reload paths, checking actual rendered contacts and rigid arms.
+These are engineering checks; native artistic/LOD acceptance remains pending.

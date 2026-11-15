@@ -8,7 +8,7 @@
   ],
   "parts": [{
     "id": "grip", "parent": null, "movable": false,
-    "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+    "pivot": {"translation": [0, 0, 0.05969], "rotation": [0, 0, 0, 1]},
     "boxes": [
       {"min": [-0.016, -0.008, -0.05969], "max": [-0.011, 0, 0.05969], "material": "polymer"},
       {"min": [0.011, -0.008, -0.05969], "max": [0.016, 0, 0.05969], "material": "polymer"},

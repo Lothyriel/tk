@@ -168,13 +168,24 @@ fn configured_remote_stock_contacts_actual_chest_or_plate_with_rigid_arms() {
             let entities = descendants(world, root);
             let mut document: common::catalog::CatalogDocument =
                 ron::from_str(common::catalog::CATALOG_SOURCE).unwrap();
-            document
-                .weapons
-                .iter_mut()
-                .find(|w| w.class == weapon)
-                .unwrap()
-                .assembly
-                .geometry
+            let geometry = if weapon == WeaponKind::Rifle {
+                &mut document
+                    .components
+                    .iter_mut()
+                    .find(|c| c.id.0 == 121)
+                    .unwrap()
+                    .assembly
+                    .geometry
+            } else {
+                &mut document
+                    .weapons
+                    .iter_mut()
+                    .find(|w| w.class == weapon)
+                    .unwrap()
+                    .assembly
+                    .geometry
+            };
+            geometry
                 .anchors
                 .iter_mut()
                 .find(|a| a.kind == common::catalog::AnchorKind::StockContact)
@@ -304,7 +315,19 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
         .unwrap()
         .mul_transform(accepted.solution.root);
     let socket = |name: &str| {
-        let entity = descendants(app.world(), weapon)
+        let socket_root = if name == "grip.support" {
+            descendants(app.world(), weapon)
+                .into_iter()
+                .find(|&e| {
+                    app.world()
+                        .get::<configured::ConfiguredPiece>(e)
+                        .is_some_and(|p| matches!(p.definition, 134 | 135))
+                })
+                .unwrap_or(weapon)
+        } else {
+            weapon
+        };
+        let entity = descendants(app.world(), socket_root)
             .into_iter()
             .find(|&e| {
                 app.world()
@@ -395,6 +418,104 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
             Visibility::Hidden
         })
     );
+}
+
+#[test]
+fn configured_remote_m4a1_kit_extremes_keep_rendered_contacts_and_piece_identity() {
+    use common::catalog::{Attachment, DefinitionId};
+    for (short, suppressed, grip) in [(true, false, 0), (false, true, 134), (false, false, 135)] {
+        let (mut app, body) = fixture(WeaponKind::Rifle);
+        let mut packet = app
+            .world()
+            .resource::<ClientSession>()
+            .configurations
+            .cache
+            .get(1, 1)
+            .unwrap()
+            .packet
+            .clone();
+        packet.handle = 2;
+        packet.revision = 2;
+        for part in &mut packet.weapon.components {
+            match part.node {
+                1 if !suppressed => part.definition = DefinitionId(120),
+                2 => {
+                    part.definition = DefinitionId(122);
+                    part.position = if suppressed { 5 } else { 0 };
+                }
+                3 if short => part.definition = DefinitionId(124),
+                4 if short => part.definition = DefinitionId(126),
+                5 if suppressed => part.definition = DefinitionId(128),
+                _ => {}
+            }
+        }
+        let attachment = |node, definition, parent, socket: &str, position| Attachment {
+            node,
+            definition: DefinitionId(definition),
+            parent,
+            socket: socket.into(),
+            position,
+        };
+        if suppressed {
+            packet.weapon.components.extend([
+                attachment(8, 129, Some(5), "suppressor", 0),
+                attachment(9, 132, None, "top", 3),
+                attachment(10, 133, Some(9), "optic", 0),
+            ]);
+        }
+        if grip != 0 {
+            packet.weapon.components.push(attachment(
+                11,
+                grip,
+                Some(3),
+                "bottom",
+                if grip == 134 { 4 } else { 1 },
+            ));
+        }
+        let expected_nodes = packet.weapon.components.len() + 1;
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session
+                .configurations
+                .cache
+                .apply(catalog(), packet.catalog, packet)
+                .unwrap();
+            session.players[0].configuration = 2;
+        }
+        app.update();
+        let root = descendants(app.world(), body)
+            .into_iter()
+            .find(|&e| app.world().get::<ConfiguredWeapon>(e).is_some())
+            .unwrap();
+        let pieces = descendants(app.world(), root)
+            .into_iter()
+            .filter(|&e| app.world().get::<configured::ConfiguredPiece>(e).is_some())
+            .count();
+        assert_eq!(pieces, expected_nodes);
+        for aim in [false, true] {
+            app.world_mut().resource_mut::<ClientSession>().players[0]
+                .pose
+                .ads = if aim { 1.0 } else { 0.0 };
+            for _ in 0..30 {
+                app.update();
+                assert_arms(&app, body, root);
+            }
+        }
+        for kind in [
+            common::catalog::ManipulationKind::TacticalReload,
+            common::catalog::ManipulationKind::EmptyReload,
+        ] {
+            for step in 0..=30 {
+                {
+                    let mut session = app.world_mut().resource_mut::<ClientSession>();
+                    session.players[0].mechanics.kind = Some(kind);
+                    session.players[0].mechanics.fraction = step as f32 / 30.0;
+                }
+                app.update();
+                assert_arms(&app, body, root);
+            }
+        }
+    }
 }
 
 #[test]
@@ -594,7 +715,7 @@ fn configured_remote_native_revision_rebinds_magazine_identity_without_leaks() {
                 .map(|p| p.node)
         })
         .collect();
-    assert_eq!(nodes, [0, 9]);
+    assert_eq!(nodes, [0, 2, 3, 4, 5, 6, 7, 9]);
     assert_eq!(app.world().resource::<Assets<Mesh>>().len(), meshes);
     for _ in 0..30 {
         app.update();
