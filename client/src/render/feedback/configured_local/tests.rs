@@ -178,14 +178,16 @@ impl Fixture {
                     instance: WeaponInstanceId(42),
                     revision: 1,
                     weapon: catalog().configuration(weapon.definition()).unwrap(),
-                    magazines: vec![
-                        catalog()
-                            .configuration(weapon.definition())
-                            .unwrap()
-                            .components[0]
-                            .definition;
-                        4
-                    ],
+                    magazines: (1..=4)
+                        .map(|id| common::replication::MagazineDefinition {
+                            id: common::catalog::MagazineInstanceId(id),
+                            definition: catalog()
+                                .configuration(weapon.definition())
+                                .unwrap()
+                                .components[0]
+                                .definition,
+                        })
+                        .collect(),
                 },
             )
             .unwrap();
@@ -436,7 +438,9 @@ fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_rel
             }
         }
         if !suppressed {
-            packet.magazines = vec![DefinitionId(120); 4];
+            for magazine in &mut packet.magazines {
+                magazine.definition = DefinitionId(120);
+            }
         }
         let attachment = |node, definition, parent, socket: &str, position| Attachment {
             node,

@@ -2682,5 +2682,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
         common::map::destroyed_ids(&snapshot.destroyed_cells),
         vec![cell.id]
     );
-    assert_eq!(PROTOCOL_ID, 13);
+    assert_eq!(PROTOCOL_ID, 14);
 }

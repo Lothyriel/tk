@@ -132,12 +132,17 @@ fn lobby_panel_clicks_submit_compact_kit_and_wait_for_confirmed_preview() {
         .unwrap();
     assert_eq!(accepted.resolved.magazine_size, 20);
     assert_eq!(
-        accepted.packet.magazines,
+        accepted
+            .packet
+            .magazines
+            .iter()
+            .map(|m| m.definition)
+            .collect::<Vec<_>>(),
         [
-            DefinitionId(101),
-            DefinitionId(101),
             DefinitionId(120),
-            DefinitionId(120)
+            DefinitionId(120),
+            DefinitionId(101),
+            DefinitionId(101)
         ]
     );
 }

@@ -181,7 +181,7 @@ pub(super) fn refresh(
                 .packet
                 .magazines
                 .iter()
-                .map(|id| catalog().component(*id).unwrap().capacity)
+                .map(|m| catalog().component(m.definition).unwrap().capacity)
                 .collect::<Vec<_>>(),
             entry.packet.instance.0,
             entry.packet.revision,
