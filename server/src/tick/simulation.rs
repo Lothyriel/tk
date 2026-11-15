@@ -168,6 +168,10 @@ pub(super) fn weapons_tick(
             continue;
         }
         let handling = 0.45 + body.anatomy.handling() * 0.55;
+        if world_state.next_projectile_id == u64::MAX {
+            error!("Projectile identity exhausted; refusing fire before consuming ammunition");
+            continue;
+        }
         let Some(weapon) = arsenal.step(input, time.delta_secs() * handling, time.elapsed_secs())
         else {
             continue;
@@ -193,7 +197,7 @@ pub(super) fn weapons_tick(
         // movement capsule must neither redirect a clear offset ray to the eye
         // nor let a muzzle spawn beyond real anatomy/concrete at point blank.
         let id = world_state.next_projectile_id;
-        world_state.next_projectile_id = id.wrapping_add(1);
+        world_state.next_projectile_id = id + 1;
         commands.spawn((
             Projectile {
                 id,

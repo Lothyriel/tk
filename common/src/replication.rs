@@ -1,6 +1,7 @@
 //! Weapon configuration is immutable per (epoch, handle). Snapshots reference
 //! it; reliable messages carry the bounded tree only when it changes.
 use std::collections::BTreeMap;
+pub mod shots;
 
 use rkyv::{Archive, Deserialize, Serialize};
 

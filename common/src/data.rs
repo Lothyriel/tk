@@ -22,6 +22,13 @@ pub fn renet_config() -> ConnectionConfig {
     };
     config.server_channels_config.push(channel.clone());
     config.client_channels_config.push(channel);
+    config.server_channels_config.push(ChannelConfig {
+        channel_id: crate::replication::shots::SHOT_CHANNEL,
+        max_memory_usage_bytes: 2 * 1024 * 1024,
+        send_type: SendType::ReliableOrdered {
+            resend_time: std::time::Duration::from_millis(100),
+        },
+    });
     config
 }
 
@@ -198,6 +205,42 @@ mod tests {
             packed.len() < 60_000,
             "physical rig state must retain the existing network budget"
         );
+        // Project the same physical stress at higher rates, up to the 128 Hz
+        // simulation ceiling (one shot per actor/tick). No mandatory fields
+        // disappear: the explicit overflow plus snapshot retain every shot ID.
+        use crate::replication::shots::*;
+        for rpm in [900_u32, 1200, 2400, 7680] {
+            let mut projected: WorldSnapshot = decode(&packed);
+            let count = (32 * rpm).div_ceil(120); // half a second
+            projected.fired_projectiles = (0..u64::from(count))
+                .map(|id| FiredProjectileData {
+                    id,
+                    ..worst.fired_projectiles[0].clone()
+                })
+                .collect();
+            let raw = encode(&projected).len();
+            let result = pack_snapshot(projected).unwrap();
+            let received: WorldSnapshot = decode(&result.bytes);
+            assert!(result.bytes.len() < MAX_SNAPSHOT_BYTES);
+            assert_eq!(received.players.len(), 32);
+            assert_eq!(received.physics_pieces.len(), 320);
+            assert_eq!(received.impact_marks.len(), 256);
+            let ids: std::collections::BTreeSet<_> = received
+                .fired_projectiles
+                .iter()
+                .chain(&result.overflow)
+                .map(|shot| shot.id)
+                .collect();
+            assert_eq!(ids, (0..u64::from(count)).collect());
+            println!(
+                "TK SHOT PROJECTION rpm={rpm} shots={count} raw={raw} snapshot={} reliable_only={}",
+                result.bytes.len(),
+                result.overflow.len()
+            );
+        }
+        let mut impossible: WorldSnapshot = decode(&packed);
+        impossible.physics_pieces = vec![impossible.physics_pieces[0].clone(); 2000];
+        assert!(pack_snapshot(impossible).unwrap_err().mandatory_bytes >= MAX_SNAPSHOT_BYTES);
         let decoded = try_decode::<WorldSnapshot>(&packed).unwrap();
         assert!(decoded.players.iter().all(|p| p.pose.physical.is_some()));
     }
