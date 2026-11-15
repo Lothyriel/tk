@@ -139,6 +139,7 @@ mod tests {
                 instance: WeaponInstanceId(41),
                 revision: 0,
                 weapon: catalog().configuration(WeaponId::M4A1).unwrap(),
+                magazines: vec![common::catalog::DefinitionId(101); 4],
             })),
         );
         app.update();

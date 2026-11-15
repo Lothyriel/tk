@@ -30,6 +30,54 @@ fn packet() -> Configuration {
     publisher.entries()[0].clone()
 }
 
+#[test]
+fn replication_owned_pool_is_bounded_versioned_and_reconstructs_mixed_kit() {
+    let mut arsenal = Arsenal::new(Loadout::default());
+    let mut kit = arsenal.current().kit();
+    kit.reserves = vec![DefinitionId(120), DefinitionId(101)];
+    arsenal
+        .select_kit(catalog(), EquipmentSlot::Primary, 0, kit)
+        .unwrap();
+    let mut publisher = publisher();
+    let handle = publisher
+        .register(7, EquipmentSlot::Primary, arsenal.current().instance())
+        .unwrap();
+    let packet = publisher.entries()[0].clone();
+    assert_eq!(
+        packet.magazines,
+        [DefinitionId(101), DefinitionId(101), DefinitionId(120)]
+    );
+    assert_eq!(
+        packet.kit(catalog()).unwrap().reserves,
+        [DefinitionId(101), DefinitionId(120)]
+    );
+    let mut cache = ConfigurationCache::default();
+    cache.begin_epoch(1).unwrap();
+    cache
+        .apply(catalog(), fingerprint(), packet.clone())
+        .unwrap();
+    let mut conflict = packet.clone();
+    conflict.handle += 1;
+    conflict.magazines.pop();
+    assert_eq!(
+        cache.apply(catalog(), fingerprint(), conflict),
+        Err(ConfigurationError::Conflict)
+    );
+    let mut forged = packet;
+    forged.handle += 1;
+    forged.revision += 1;
+    forged.magazines = vec![DefinitionId(102)];
+    assert!(cache.apply(catalog(), fingerprint(), forged).is_err());
+    assert_eq!(
+        cache
+            .latest(7, EquipmentSlot::Primary)
+            .unwrap()
+            .packet
+            .handle,
+        handle
+    );
+}
+
 fn snapshot(packet: &Configuration, sequence: u64) -> crate::WorldSnapshot {
     crate::WorldSnapshot {
         configuration_epoch: packet.epoch,

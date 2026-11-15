@@ -56,7 +56,7 @@ fn keyboard(
     time: Res<Time<Real>>,
     window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
-    mut tilt_target: Local<f32>,
+    (mut tilt_target, editor): (Local<f32>, Option<Res<crate::loadout::Editor>>),
 ) {
     let active = session.playing(id.0)
         && window.0.focused
@@ -100,11 +100,13 @@ fn keyboard(
     let max_tilt_change = 0.6 * time.delta_secs();
     input.camera.roll +=
         (*tilt_target - input.camera.roll).clamp(-max_tilt_change, max_tilt_change);
-    if keys.just_pressed(KeyCode::Enter) {
+    let editing = editor.is_some_and(|editor| editor.visible || editor.pending.is_some());
+    if keys.just_pressed(KeyCode::Enter) && !editing {
         input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
     }
     if let Some(local) = session.local(id.0) {
         if keys.just_pressed(KeyCode::Enter)
+            && !editing
             && session.raid.phase == RaidPhase::Lobby
             && !local.participant.ready
         {
@@ -116,7 +118,7 @@ fn keyboard(
         if active && keys.just_pressed(KeyCode::Digit2) {
             input.weapon = EquipmentSlot::Sidearm;
         }
-        if session.raid.phase == RaidPhase::Lobby && !local.participant.ready {
+        if session.raid.phase == RaidPhase::Lobby && !local.participant.ready && !editing {
             if keys.just_pressed(KeyCode::KeyG) {
                 let primaries: Vec<_> = common::catalog::catalog()
                     .weapons()
@@ -189,6 +191,43 @@ mod tests {
             },
         ));
         app
+    }
+
+    #[test]
+    fn lobby_editor_blocks_ready_and_gear_keys_until_closed_and_confirmed() {
+        let mut app = input_app();
+        app.init_resource::<crate::loadout::Editor>();
+        for (visible, pending) in [(true, None), (false, Some(1))] {
+            {
+                let mut editor = app.world_mut().resource_mut::<crate::loadout::Editor>();
+                editor.visible = visible;
+                editor.pending = pending;
+            }
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            for key in [
+                KeyCode::Enter,
+                KeyCode::KeyG,
+                KeyCode::KeyB,
+                KeyCode::KeyH,
+                KeyCode::KeyJ,
+            ] {
+                keys.press(key);
+            }
+            app.update();
+            let input = app.world().resource::<LocalInput>();
+            assert_eq!(input.lobby_sequence, 0);
+            assert_eq!(input.loadout, Loadout::default());
+        }
+        app.world_mut()
+            .resource_mut::<crate::loadout::Editor>()
+            .pending = None;
+        app.update();
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 1);
+        assert_eq!(
+            app.world().resource::<LocalInput>().loadout.primary,
+            WeaponId::MP5
+        );
     }
 
     #[test]

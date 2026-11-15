@@ -5,6 +5,7 @@ use common::{combat::*, map::*, raid::*, *};
 use crate::{ClientSystems, input::InputCapture, sync::ClientSession};
 mod animation;
 mod asset_review;
+mod lobby;
 mod mechanics;
 mod physical;
 mod video;
@@ -14,6 +15,13 @@ pub struct Plugin;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Driver>()
+            .add_systems(
+                Update,
+                lobby::drive
+                    .before(drive)
+                    .after(crate::loadout::EditorInput)
+                    .in_set(ClientSystems::Input),
+            )
             .add_systems(
                 Update,
                 drive.in_set(ClientSystems::Input).after(InputCapture),
@@ -87,6 +95,7 @@ struct Driver {
     recovery_recorded: bool,
     next_fight_report: f64,
     asset_captures: u8,
+    panel_configured: bool,
 }
 
 impl Driver {
@@ -163,6 +172,12 @@ struct PlaytestState<'w> {
     driver: ResMut<'w, Driver>,
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+struct PlaytestLenses<'w, 's> {
+    world: Single<'w, 's, &'static Projection, With<crate::render::WorldModelCamera>>,
+    view: Single<'w, 's, &'static Projection, With<crate::render::ViewModelCamera>>,
+}
+
 fn drive(
     mut commands: Commands,
     state: PlaytestState,
@@ -170,7 +185,7 @@ fn drive(
     audio: Query<(), With<AudioPlayer>>,
     mut view_camera: Single<&mut Camera, With<crate::render::ViewModelCamera>>,
     flashes: Query<&Visibility, With<crate::render::feedback::Flash>>,
-    projections: Query<(&Projection, Has<crate::render::ViewModelCamera>), With<Camera3d>>,
+    projections: PlaytestLenses,
 ) {
     let PlaytestState {
         time,
@@ -181,19 +196,15 @@ fn drive(
     } = state;
     let now = time.elapsed_secs_f64();
     let lens = |view: bool| {
-        projections
-            .iter()
-            .find_map(|(projection, is_view)| {
-                if view != is_view {
-                    return None;
-                }
-                if let Projection::Perspective(p) = projection {
-                    Some(p.fov.to_degrees())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0.0)
+        let projection = if view {
+            &*projections.view
+        } else {
+            &*projections.world
+        };
+        match projection {
+            Projection::Perspective(p) => p.fov.to_degrees(),
+            _ => 0.0,
+        }
     };
     let world_fov = lens(false);
     assert!(now < 240.0, "PLAYTEST timed out at {:?}", driver.step);
@@ -273,7 +284,11 @@ fn drive(
         );
     }
     let desired = Loadout {
-        primary: if peer { WeaponId::MP5 } else { WeaponId::M4A1 },
+        primary: if peer && !lobby::enabled() {
+            WeaponId::MP5
+        } else {
+            WeaponId::M4A1
+        },
         ammo: AmmoKind::Ap,
         armor: ArmorKind::Heavy,
         helmet: true,
@@ -295,7 +310,11 @@ fn drive(
             input.loadout = desired;
             driver.advance(Step::Equip, now);
         }
-        Step::Equip if now - driver.since > 0.6 && p.loadout == desired => {
+        Step::Equip
+            if now - driver.since > 0.6
+                && p.loadout == desired
+                && (!lobby::enabled() || driver.panel_configured) =>
+        {
             input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
             driver.advance(Step::Deploy, now);
         }
@@ -707,6 +726,29 @@ fn drive(
             assert_eq!(p.carried, 0);
             assert_eq!(session.raid.loot_available, [true; 3]);
             assert_eq!(local.ammo_in_mag, spec.magazine_size);
+            if lobby::enabled() {
+                let definitions: Vec<_> = spec
+                    .assembly
+                    .parts
+                    .iter()
+                    .map(|part| part.definition.0)
+                    .collect();
+                for expected in if peer {
+                    &[122, 128, 129, 132, 133, 134][..]
+                } else {
+                    &[120, 122, 124, 126][..]
+                } {
+                    assert!(
+                        definitions.contains(expected),
+                        "redeploy lost configured part {expected}"
+                    );
+                }
+                assert_eq!(spec.magazine_size, if peer { 30 } else { 20 });
+                info!(
+                    "REDEPLOY CONFIGURATOR PASS capacity={} definitions={definitions:?}",
+                    spec.magazine_size
+                );
+            }
             assert_eq!(local.body.anatomy.missing, 0);
             assert_eq!(local.body.anatomy.organs, [100.0; 4]);
             assert_eq!(local.body.anatomy.blood, 100.0);

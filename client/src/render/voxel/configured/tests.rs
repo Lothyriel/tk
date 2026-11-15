@@ -108,6 +108,7 @@ fn fixture() -> (App, Configuration) {
         instance: common::WeaponInstanceId(42),
         revision: 1,
         weapon: catalog.configuration(WeaponId::M4A1).unwrap(),
+        magazines: vec![common::catalog::DefinitionId(101); 4],
     };
     let mut session = ClientSession::default();
     session.configurations.cache.begin_epoch(1).unwrap();
@@ -619,6 +620,10 @@ fn configured_visual_baseline_bindings_preserve_native_geometry_and_contacts() {
             instance: common::WeaponInstanceId(index as u64 + 1),
             revision: 1,
             weapon: catalog().configuration(definition).unwrap(),
+            magazines: vec![
+                catalog().configuration(definition).unwrap().components[0].definition;
+                4
+            ],
         };
         app.world_mut()
             .resource_mut::<ClientSession>()

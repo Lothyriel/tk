@@ -45,6 +45,11 @@ fn fixture(weapon: WeaponKind) -> (App, Entity) {
                 instance: WeaponInstanceId(42),
                 revision: 1,
                 weapon: catalog().configuration(definition).unwrap(),
+                magazines: vec![
+                    catalog().configuration(definition).unwrap().components[0]
+                        .definition;
+                    4
+                ],
             },
         )
         .unwrap();
@@ -454,6 +459,9 @@ fn configured_remote_m4a1_kit_extremes_keep_rendered_contacts_and_piece_identity
                 5 if suppressed => part.definition = DefinitionId(128),
                 _ => {}
             }
+        }
+        if !suppressed {
+            packet.magazines = vec![DefinitionId(120); 4];
         }
         let attachment = |node, definition, parent, socket: &str, position| Attachment {
             node,

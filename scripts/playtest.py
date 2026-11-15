@@ -26,6 +26,8 @@ def main():
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
     parser.add_argument("--weapon-kit", choices=("compact", "suppressed", "afg"),
                         help="Seed server-owned M4A1 kit and physical magazines for native acceptance")
+    parser.add_argument("--configure-weapons", action="store_true",
+                        help="Choose compact/suppressed kits through real lobby panel actions")
     parser.add_argument("--weapon-debug", action="store_true",
                         help="Show live socket/pivot overlays and use a close side observer during animation review")
     parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
@@ -33,6 +35,7 @@ def main():
     args = parser.parse_args()
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
     assert args.weapon_debug or args.weapon_lod == "auto", "--weapon-lod requires --weapon-debug"
+    assert not (args.configure_weapons and args.weapon_kit), "Panel acceptance must not seed server fixtures"
     root = Path(__file__).resolve().parents[1]
     output = (args.output or root / "target" / "playtest").resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -53,7 +56,7 @@ def main():
     if args.weapon_kit:
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
     for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY",
-                 "TK_WEAPON_DEBUG", "TK_WEAPON_LOD"):
+                 "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR"):
         env.pop(flag, None)
     env.update(SERVER_ADDR="127.0.0.1", TK_PORT="19080", TK_PLAYTEST_DIR=str(output), TK_PLAYTEST_CLIENTS=str(args.clients), NO_COLOR="1")
     if args.video:
@@ -64,6 +67,8 @@ def main():
     if args.weapon_debug:
         env["TK_WEAPON_DEBUG"] = "1"
         env["TK_WEAPON_LOD"] = args.weapon_lod
+    if args.configure_weapons:
+        env["TK_PLAYTEST_CONFIGURATOR"] = "1"
     server_path = output / f"server{suffix}"
     client_path = output / f"client{suffix}"
     if args.no_build:
@@ -83,9 +88,11 @@ def main():
         "video": args.video, "animation_review": args.animation_review,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "initial_weapon_kit_fixture": args.weapon_kit,
+        "lobby_configurator": args.configure_weapons,
         "capture_target_hz": 30 if args.video else 0,
         "shot_diagnostics": env.get("TK_SHOT_DIAGNOSTICS") is not None,
-        "loadouts": "leader Rifle / peer SMG; AP; heavy vest; helmet; both carry pistol",
+        "loadouts": ("leader compact M4A1 / peer suppressed M4A1" if args.configure_weapons
+                     else "leader Rifle / peer SMG") + "; AP; heavy vest; helmet; both carry pistol",
         "route": "optional reciprocal continuous weapon actions -> full-body route -> weapon exercise -> loot -> sentry combat -> extraction -> debrief -> lobby -> deploy -> limb injury/fall/recovery/death",
         "timestamps": "client.log PLAYTEST stage clocks and ANIMATION CONTACT local clocks; frame-times.csv real frame timestamps",
     }, indent=2), encoding="utf-8")
@@ -137,6 +144,10 @@ def main():
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
     assert "PLAYTEST PASS" in client_text, f"Missing completion proof: {output / 'client.log'}"
+    if args.configure_weapons:
+        assert "INITIAL EQUIPMENT FIXTURE" not in server_text
+        assert "LOBBY CONFIGURATOR PASS peer=false capacity=20" in client_text
+        assert "REDEPLOY CONFIGURATOR PASS capacity=20" in client_text
     if args.weapon_kit:
         assert f"INITIAL EQUIPMENT FIXTURE {args.weapon_kit}" in server_text
         capacity, definitions = {
@@ -148,6 +159,9 @@ def main():
     if args.clients == 2:
         peer_text = (output / "peer" / "client.log").read_text(encoding="utf-8", errors="replace")
         assert "PLAYTEST PASS" in peer_text, "Peer did not finish the normal raid cycle"
+        if args.configure_weapons:
+            assert "LOBBY CONFIGURATOR PASS peer=true capacity=30" in peer_text
+            assert "REDEPLOY CONFIGURATOR PASS capacity=30" in peer_text
         assert "panicked at" not in peer_text, "Peer panic"
         assert "SNAPSHOT LOSS" in peer_text, "Missing deliberate peer snapshot loss"
         for text in (client_text, peer_text):
@@ -198,7 +212,12 @@ def main():
                 path = directory / f"{name}.png"
                 data = path.read_bytes()
                 assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing native evidence: {path}"
-            primary = "m4a1" if directory == output else "mp5"
+            if args.configure_weapons:
+                kit = "compact" if directory == output else "suppressed"
+                path = directory / f"configurator-{kit}.png"
+                data = path.read_bytes()
+                assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing confirmed panel preview: {path}"
+            primary = "m4a1" if directory == output or args.configure_weapons else "mp5"
             for weapon in (primary, "m1911"):
                 path = directory / f"confirmed-{weapon}-flash.png"
                 data = path.read_bytes()
