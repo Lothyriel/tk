@@ -10,6 +10,7 @@
                     (kind: TriggerGrip, pose: (translation: (0.025, -0.09, 0.035), rotation: (0.0, 0.0, 0.0, 1.0))),
                     (kind: SupportGrip, pose: (translation: (-0.025, 0.005, -0.35), rotation: (0.0, 0.0, 0.0, 1.0))),
                     (kind: StockContact, pose: (translation: (0.0, -0.005, 0.335), rotation: (0.0, 0.0, 0.0, 1.0))),
+                    (kind: ControlGrip, pose: (translation: (-0.067, 0.055, -0.085), rotation: (-0.025693232, -0.34193385, 0.070386924, 0.93673193))),
                 ],
                 sockets: [(key: "magazine", interface: (kind: Magwell, standard: "stanag", size: 556),
                     pose: (translation: (0.0, -0.13, -0.105), rotation: (0.0, 0.0, 0.0, 1.0)),
@@ -21,6 +22,7 @@
                 anchors: [
                     (kind: TriggerGrip, pose: (translation: (0.025, -0.085, 0.015), rotation: (0.0, 0.0, 0.0, 1.0))),
                     (kind: SupportGrip, pose: (translation: (-0.045, -0.085, -0.015), rotation: (0.0, 0.0, 0.0, 1.0))),
+                    (kind: ControlGrip, pose: (translation: (-0.045, 0.118, -0.07), rotation: (0.123113036, -0.6963068, -0.123113036, 0.6963068))),
                 ],
                 sockets: [(key: "magazine", interface: (kind: Magwell, standard: "m1911", size: 45),
                     pose: (translation: (0.0, -0.11, 0.025), rotation: (0.0, 0.0, 0.0, 1.0)),
@@ -33,6 +35,7 @@
                     (kind: TriggerGrip, pose: (translation: (0.025, -0.09, 0.035), rotation: (0.0, 0.0, 0.0, 1.0))),
                     (kind: SupportGrip, pose: (translation: (-0.025, 0.0, -0.255), rotation: (0.0, 0.0, 0.0, 1.0))),
                     (kind: StockContact, pose: (translation: (0.0, -0.012, 0.3275), rotation: (0.0, 0.0, 0.0, 1.0))),
+                    (kind: ControlGrip, pose: (translation: (-0.07, 0.08, -0.215), rotation: (0.0, 0.0, -0.17410813, 0.98472655))),
                 ],
                 sockets: [(key: "magazine", interface: (kind: Magwell, standard: "mp5", size: 9),
                     pose: (translation: (0.0, -0.14, -0.095), rotation: (0.0, 0.0, 0.0, 1.0)),
@@ -42,13 +45,19 @@
     components: [
         (id: 101, key: "m4a1_magazine_baseline", kind: Magazine, ammo: 201, capacity: 30, mass_kg: 0.11,
             assembly: (interface: (kind: Magwell, standard: "stanag", size: 556),
-                platform: Some("m4a1"), caliber: Some("556x45"), occupied_positions: 1, geometry: ())),
+                platform: Some("m4a1"), caliber: Some("556x45"), occupied_positions: 1, geometry: (
+                    anchors: [(kind: MagazineGrip, pose: (translation: (-0.045, -0.025, 0.025), rotation: (0.0, 0.0, -0.14943814, 0.98877108)))],
+                ))),
         (id: 102, key: "m1911_magazine_baseline", kind: Magazine, ammo: 202, capacity: 17, mass_kg: 0.07,
             assembly: (interface: (kind: Magwell, standard: "m1911", size: 45),
-                platform: Some("m1911"), caliber: Some("45acp"), occupied_positions: 1, geometry: ())),
+                platform: Some("m1911"), caliber: Some("45acp"), occupied_positions: 1, geometry: (
+                    anchors: [(kind: MagazineGrip, pose: (translation: (-0.045, -0.025, 0.025), rotation: (0.0, 0.0, -0.14943814, 0.98877108)))],
+                ))),
         (id: 103, key: "mp5_magazine_baseline", kind: Magazine, ammo: 203, capacity: 25, mass_kg: 0.12,
             assembly: (interface: (kind: Magwell, standard: "mp5", size: 9),
-                platform: Some("mp5"), caliber: Some("9x19"), occupied_positions: 1, geometry: ())),
+                platform: Some("mp5"), caliber: Some("9x19"), occupied_positions: 1, geometry: (
+                    anchors: [(kind: MagazineGrip, pose: (translation: (-0.045, -0.025, 0.025), rotation: (0.0, 0.0, -0.14943814, 0.98877108)))],
+                ))),
     ],
     ammo: [
         (id: 201, key: "rifle_ball_baseline", damage: 34.0, penetration: 36.0, muzzle_speed: 715.0),

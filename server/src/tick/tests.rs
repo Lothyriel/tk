@@ -1,4 +1,5 @@
 use super::*;
+mod configured_anatomy;
 mod weapon_replication;
 
 #[test]
@@ -35,8 +36,8 @@ fn assembly_authority_rejects_invalid_changes_and_fires_from_cached_properties()
     let source = CATALOG_SOURCE
         .replace("capacity: 30", "capacity: 40")
         .replace(
-            "occupied_positions: 1, geometry: ()",
-            "occupied_positions: 1, geometry: (), modifiers: (velocity: 1.2)",
+            "occupied_positions: 1, geometry: (",
+            "occupied_positions: 1, modifiers: (velocity: 1.2), geometry: (",
         );
     let catalog = Catalog::parse("server-fixture.ron", &source).unwrap();
     // Physical magazines are created from this registry, never resized by a
@@ -1414,6 +1415,38 @@ fn ragdoll_running_and_resting_contact_matrix_settles_without_floor_escape_or_jo
                 "RAGDOLL MATRIX running={running} obstacle={obstacle} start={start:?} rest={centre:?} max_speed={max_speed:.4} max_gap={max_gap:.4}"
             );
             final_positions.push((running, obstacle, start, centre));
+            // A single quiet frame can be a turning point in an oscillation.
+            // Keep the same limits throughout a further two seconds at 128 Hz.
+            for _ in 0..256 {
+                steps(&mut app, 1);
+                let mut count = 0;
+                for (piece, transform, velocity) in app
+                    .world_mut()
+                    .query::<(&physical::PhysicsPiece, &Transform, &Velocity)>()
+                    .iter(app.world())
+                {
+                    if piece.owner != 8 || piece.detached {
+                        continue;
+                    }
+                    assert!(
+                        velocity.linear.length() < 0.15 && velocity.angular.length() < 1.0,
+                        "late oscillation {running}/{obstacle}/{:?}: {velocity:?}",
+                        piece.segment
+                    );
+                    let rest = pieces
+                        .iter()
+                        .find(|(s, _, _)| *s == piece.segment)
+                        .unwrap()
+                        .1;
+                    assert!(
+                        transform.translation.distance(rest.translation) < 0.05,
+                        "late drift {running}/{obstacle}/{:?}",
+                        piece.segment
+                    );
+                    count += 1;
+                }
+                assert_eq!(count, SEGMENT_COUNT);
+            }
         }
     }
     let rest = &final_positions[0];

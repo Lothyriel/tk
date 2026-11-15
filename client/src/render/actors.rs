@@ -924,6 +924,14 @@ fn animate(
             *visible = Visibility::Hidden;
             continue;
         };
+        if let Ok(contacts) = handling::WeaponContacts::from_assembly(&entry.resolved.assembly) {
+            preferred = common::humanoid::configured::preferred_root(
+                &cache.poses[&p.id],
+                pose[Segment::Thorax.index()].position.into(),
+                contacts.trigger,
+                action,
+            );
+        }
         let recoil = feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
         preferred.translation.z += recoil;
         let mut input = configured::native::action(&entry.resolved, action, recoil, &p.mechanics);

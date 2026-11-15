@@ -188,7 +188,8 @@ view-models and stable cache allocations. Bake tests reject ±3 mm changes,
 accept ±1 mm, and reject simplified mechanisms or lost material groups.
 
 Both native weapon perspectives now use the data-driven assembler. Configured
-authority-side anatomy and final handling acceptance continue in TAR-23.
+authority-side anatomy shares logical contacts and mechanism deltas; native
+stock/clothing and rendered handling acceptance continue in TAR-23.
 
 ## Baseline weapon migration
 

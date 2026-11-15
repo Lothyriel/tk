@@ -9,6 +9,44 @@ pub(super) struct Motion {
     pub linear: [Vec3; SEGMENT_COUNT],
     pub angular: [Vec3; SEGMENT_COUNT],
     pub valid: bool,
+    pub handling_error: Option<handling::HandlingError>,
+}
+
+impl Motion {
+    /// The exact accepted anatomical pose used for damage and later handoff.
+    pub fn local_rig(&self, root: &Transform) -> Option<[SegmentPose; SEGMENT_COUNT]> {
+        self.valid.then(|| {
+            std::array::from_fn(|i| SegmentPose {
+                position: (root.rotation.inverse()
+                    * (self.world[i].translation - root.translation))
+                    .to_array(),
+                rotation: (root.rotation.inverse() * self.world[i].rotation).to_array(),
+            })
+        })
+    }
+}
+
+pub(super) fn evaluate(
+    pose: &PoseState,
+    body: &BodyHealth,
+    arsenal: Option<&Arsenal>,
+) -> Result<[SegmentPose; SEGMENT_COUNT], handling::HandlingError> {
+    let legs = [
+        body.anatomy.capacity(Region::LeftLeg),
+        body.anatomy.capacity(Region::RightLeg),
+    ];
+    match arsenal {
+        Some(arsenal) => common::humanoid::configured::evaluate(
+            pose,
+            legs,
+            arsenal.current().spec(),
+            &arsenal.current().mechanics().snapshot(),
+            None,
+            None,
+        )
+        .map(|pose| pose.segments),
+        None => Ok(evaluate_pose(pose, legs[0], legs[1])),
+    }
 }
 
 #[derive(Component, Default)]
@@ -51,12 +89,13 @@ pub(super) fn capture(
         &Transform,
         &PoseState,
         &BodyHealth,
+        Option<&Arsenal>,
         &mut Motion,
         &mut Impact,
     )>,
 ) {
     let dt = time.delta_secs().max(0.001);
-    for (root, pose, body, mut motion, mut impact) in &mut actors {
+    for (root, pose, body, arsenal, mut motion, mut impact) in &mut actors {
         if !body.alive() {
             continue;
         }
@@ -64,11 +103,27 @@ pub(super) fn capture(
         if impact.age > 0.25 {
             impact.impulse = Vec3::ZERO;
         }
-        let rig = evaluate_pose(
-            pose,
-            body.anatomy.capacity(Region::LeftLeg),
-            body.anatomy.capacity(Region::RightLeg),
-        );
+        let rig = match evaluate(pose, body, arsenal) {
+            Ok(rig) => {
+                if pose.mode != PhysicalMode::Recovering {
+                    motion.handling_error = None;
+                }
+                rig
+            }
+            Err(error) => {
+                if motion.handling_error != Some(error) {
+                    warn!("Authoritative configured anatomy rejected: {error:?}");
+                }
+                motion.handling_error = Some(error);
+                // Preserve the accepted actor-local anatomy while allowing the
+                // authoritative root to move. Never leave tissue behind in the
+                // world as the movement collider walks away.
+                let Some(previous) = motion.local_rig(&motion.root) else {
+                    continue;
+                };
+                previous
+            }
+        };
         let reset = !motion.valid
             || motion.world[Segment::Pelvis.index()]
                 .translation

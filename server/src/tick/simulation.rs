@@ -265,6 +265,7 @@ pub(super) fn projectiles_tick(
             Has<super::Bot>,
             Option<&mut super::ragdoll::Impact>,
             Option<&mut super::live_body::Body>,
+            Option<&super::ragdoll::Motion>,
         ),
         Without<Projectile>,
     >,
@@ -319,7 +320,7 @@ pub(super) fn projectiles_tick(
                     context.cast_ray_and_get_normal(start, direction, remaining, true, filter);
                 let max = wall.as_ref().map_or(remaining, |(_, h)| h.time_of_impact);
                 let mut nearest = None;
-                for (target, body, _, movement, t, p, pose, _, _, _, _) in &players {
+                for (target, body, _, movement, t, p, pose, _, _, _, _, motion) in &players {
                     if target == projectile.owner_entity
                         || !body.alive()
                         || p.status != RaidStatus::Active
@@ -330,11 +331,13 @@ pub(super) fn projectiles_tick(
                         crouch: if movement.crouched { 1.0 } else { 0.0 },
                         ..default()
                     };
-                    let pose = evaluate_pose(
-                        pose.unwrap_or(&fallback),
-                        body.anatomy.capacity(Region::LeftLeg),
-                        body.anatomy.capacity(Region::RightLeg),
-                    );
+                    let pose = motion.and_then(|m| m.local_rig(t)).unwrap_or_else(|| {
+                        evaluate_pose(
+                            pose.unwrap_or(&fallback),
+                            body.anatomy.capacity(Region::LeftLeg),
+                            body.anatomy.capacity(Region::RightLeg),
+                        )
+                    });
                     let inv = t.rotation.inverse();
                     let local = inv * (start - t.translation);
                     if let Some((segment, distance, _)) =
@@ -368,16 +371,19 @@ pub(super) fn projectiles_tick(
                         bot,
                         mut impact,
                         mut articulated,
+                        motion,
                     ) = players.get_mut(target).unwrap();
                     let fallback = PoseState {
                         crouch: if movement.crouched { 1.0 } else { 0.0 },
                         ..default()
                     };
-                    let rig = evaluate_pose(
-                        pose.as_deref().unwrap_or(&fallback),
-                        body.anatomy.capacity(Region::LeftLeg),
-                        body.anatomy.capacity(Region::RightLeg),
-                    );
+                    let rig = motion.and_then(|m| m.local_rig(t)).unwrap_or_else(|| {
+                        evaluate_pose(
+                            pose.as_deref().unwrap_or(&fallback),
+                            body.anatomy.capacity(Region::LeftLeg),
+                            body.anatomy.capacity(Region::RightLeg),
+                        )
+                    });
                     let inv = t.rotation.inverse();
                     let mask = body.hit_anatomy(
                         AnatomyHit {

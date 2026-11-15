@@ -115,6 +115,7 @@ pub enum AnchorKind {
     RearIron,
     StockContact,
     MagazineGrip,
+    ControlGrip,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -201,6 +202,7 @@ pub struct Attachment {
 pub struct ResolvedPart {
     pub node: u16,
     pub definition: DefinitionId,
+    pub kind: super::ComponentKind,
     pub pose: Transform,
 }
 

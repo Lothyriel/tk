@@ -195,6 +195,36 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
     };
     let magazine = socket("magazine.grasp");
     let control = socket("control.grasp");
+    let request = app.world().get::<ConfiguredWeapon>(weapon).unwrap();
+    let session = app.world().resource::<ClientSession>();
+    let spec = &session
+        .configurations
+        .cache
+        .get(request.epoch, request.handle)
+        .unwrap()
+        .resolved;
+    let recoil = app.world().resource::<feedback::Feedback>().responses[&7].recoil;
+    let logical = handling::configured_contacts(spec, action, recoil, &player.mechanics).unwrap();
+    let logical_support = world_root.mul_transform(logical.support);
+    let actual_support = world_root.mul_transform(Transform::from_translation(rig.support));
+    let expected_rotation = actual_support
+        .rotation()
+        .slerp(magazine.rotation(), action.magazine_grip)
+        .slerp(control.rotation(), action.control_grip);
+    assert!(
+        logical_support.translation().distance(
+            world_root
+                .transform_point(rig.support)
+                .lerp(magazine.translation(), action.magazine_grip)
+                .lerp(control.translation(), action.control_grip)
+        ) < 2e-6
+    );
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+        assert!(
+            (logical_support.rotation() * axis - expected_rotation * axis).length() < 2e-6,
+            "logical authority contact must match baked mechanism socket"
+        );
+    }
     let expected = world_root
         .transform_point(rig.support)
         .lerp(magazine.translation(), action.magazine_grip)

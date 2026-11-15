@@ -5,6 +5,9 @@ use bevy::prelude::*;
 
 use crate::catalog::{AnchorKind, ResolvedAssembly};
 
+mod configured;
+pub use configured::{configured_contacts, mechanisms, Mechanisms};
+
 pub const UPPER_ARM_METRES: f32 = 0.30;
 pub const FOREARM_METRES: f32 = 0.28;
 // Keep the established rig's bend limits, away from folded/straight singularities.
