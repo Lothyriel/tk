@@ -31,8 +31,12 @@ and **G** is an authored game value. Images remain linked to their owners.
 - The KAC current page and 2016/2017 catalogs give 6.25 inches / 8.9 oz;
   its 2014 catalog gives 6.625 inches / 11.6 oz for the same part number.
   Use the current page's handguard body reference. Rail panels and retaining
-  hardware need explicit accounting. TAR-24 currently has a 174 mm interpreted
-  handguard shell: that is not evidence for either published KAC length.
+  hardware need explicit accounting. TAR-24's 174 mm interpreted handguard shell
+  was replaced with a 158.75 mm body, open upper/lower rails, side vents and
+  shortened side panels. The receiver now carries the delta ring; the handguard
+  mounts at Z=-22 mm. Its support contact remains at the accepted Z=-110 mm.
+  Width, vent stations, panel contours and the mounting station remain V, not
+  manufacturer dimensions. The named RAS still needs native seam/silhouette review.
 - Aimpoint's international page lists 192 g sight-only and 360 g with mount in
   the highlights, but 357 g in its specification table. The US page lists
   220 g sight-only / 366 g kit. Select the international 12841 geometry and
@@ -57,16 +61,19 @@ its accepted geometry when extracting stock, handguard, barrel/device and rear
 sight into components. Preserve continuous socket transforms and moving control
 names; a new component must not leave a second copy inside the receiver.
 
-The source assembly declares six component exports: `m4a1_receiver`,
+The source assembly declares seven component exports: `m4a1_receiver`,
 `m4a1_barrel_145`, `m4a1_a2`, `m4a1_ras`, `m4a1_stock` and
-`m4a1_rear_iron`. The baker derives them from the existing parts, resets each
+`m4a1_rear_iron`, plus `m4a1_front_iron`. The shared front tower is a required
+barrel child for both carbine-gas groups; the DD group mass includes it.
+Its V retaining cap joins the front of the RAS and fits inside the SL shell.
+The baker derives them from the existing parts, resets each
 export root to identity, and retains its children, materials and socket frames.
 No source geometry is copied into independently editable component files.
 The complete `m4a1_refined` bake remains an authoring/reference fixture; the
 modular runtime will bind the component exports. Tests require a disjoint,
 complete partition and reconstruct every original surface at its source pivot.
 The generated exports carry the master source hash, so source edits invalidate
-the related bakes together. RAS dimensional qualification is still pending.
+the related bakes together. The RAS length oracle follows the current KAC page.
 
 The shared magazine source remains `m4a1_magazine_30`, definition 101. TAR-59 and
 TAR-87 consume this same origin; no alternate inventory mesh or magazine-ammo
@@ -99,6 +106,40 @@ checked independently of the mesher; native silhouette review is still pending.
 | `m4a1_moe_sl` | 852 / 426 | 1 | 25560 |
 | `m4a1_rvg` | 376 / 188 | 2 | 11280 |
 | `m4a1_afg2` | 512 / 256 | 2 | 15360 |
+
+The muzzle sources use SureFire's product photographs (SFMB-556-1-2-28-BK-isoL
+and SOCOM556-RC2-BK-isoL). Both retain open outlets; the brake has two open lateral
+ports. The RC2 surrounds its separate SFMB with no intersecting source surfaces.
+The selected V mating depth gives 96.52 mm added length relative to the SFMB,
+rather than adding the can's entire length beyond the brake. This exterior
+model contains no internal suppressor structure.
+
+The DD source uses the manufacturer's published variant specifications. Its
+external stepped profile is interpreted from [the product photo hosted by
+Bauer Precision][dd-photo]; the stripped photograph qualifies the profile only,
+not the selected FSB variant's mass. The front tower reuses the F2-interpreted
+source and carbine station. No hidden manufacturer's geometry is asserted.
+
+The PRO and QRP2 sources use [Aimpoint's oblique product image][pro-photo].
+They have separate meshes, a hollow 30 mm ring interface, spacer openings and
+a 39 mm optical axis above the rail. Source checks require an unobstructed
+20 mm square sight corridor and nonintersecting mount/optic surfaces. The
+132 mm length and 72 mm combined width follow the published kit; folded cap
+poses are V and do not claim the closed-cap 81 mm height. Glass/reticle rendering
+and sight zero remain TAR-31 work.
+
+| Source | Vertices / triangles | Submissions | Cached mesh bytes |
+| --- | --- | --- | --- |
+| `m4a1_dd_103` (without shared tower) | 584 / 292 | 1 | 17520 |
+| `m4a1_sfmb` | 752 / 376 | 1 | 22560 |
+| `m4a1_rc2` | 588 / 294 | 2 | 17640 |
+| `m4a1_pro` | 992 / 496 | 2 | 29760 |
+| `m4a1_qrp2` | 608 / 304 | 2 | 18240 |
+| `m4a1_ras` (with side panels) | 1740 / 870 | 2 | 53640 |
+| `m4a1_front_iron` (shared tower/cap) | 372 / 186 | 1 | 11160 |
+
+[dd-photo]: https://cdn11.bigcommerce.com/s-50c7cl/images/stencil/960w/products/1447/5106/DD07-077-16176-018_2_HR__25050.1794261413.jpg?c=2
+[pro-photo]: https://ms.aimpoint.com/products/s--gkExpjWt--/ipbacsoa75yyp5ridbey.png?width=960&height=960
 
 Use typed extension, barrel, handguard, muzzle, optic-mount and magazine
 interfaces. Required sockets enforce the barrel/device/furniture chain.
@@ -139,6 +180,13 @@ logical rigs and client bindings as gameplay.
 | Interface rejection | RVG/AFG-2 directly on SL's M-LOK, PRO directly on receiver rail, RC2 on A2 or bare muzzle all fail through interface/socket rules. |
 | Clearance rejection | An otherwise rail-compatible optic placement occupying the charging-handle sweep fails geometrically, independently of rail occupancy. |
 | Combined extremes | Cross-check both barrels, handguards, magazines, stock endpoints and valid muzzle chains. Record any measured interference as a rejected configuration, never a silent clipping allowance. |
+
+Source geometry already identifies one rejected extreme: DD 10.3 + MOE SL +
+SFMB/RC2. The SL's extended lower nose reaches Z=-248.06 mm while the can's
+rear begins at -243.97 mm; their outer surfaces intersect over 4.09 mm
+longitudinally. RAS clears the same short suppressed chain. Both handguards
+clear the shared front tower/cap. The runtime matrix must reject the SL/can
+interference through transformed bounds, not through a named combination rule.
 
 Headless evidence must include dimension/shape and magazine-sweep oracles,
 valid/invalid catalog configurations, resolved mass/anchors and actual local/

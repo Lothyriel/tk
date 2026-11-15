@@ -6,6 +6,11 @@
 dimensioned source assets used by the active game bindings. The TAR-24 static
 shape/LOD review is recorded below.
 
+TAR-26 adds component exports and qualifies the handguard as KAC RAS 98064,
+including exposed upper/lower rails, vents and a receiver-side delta ring.
+See [the kit sheet](m4a1-kit.md) for sources and component costs. The historical
+TAR-24 review below does not certify these newer surfaces or modular combinations.
+
 Provenance follows F1/F2 in [the reference contract](../WEAPON_REFERENCES.md):
 published longitudinal dimensions are **F**, other external dimensions and
 recesses below are **V** interpretations. PBR values and simplification are
@@ -44,7 +49,7 @@ than globally rounding the whole assembly to a 4 mm lattice.
 
 | Asset | Near vertices / triangles | Far vertices / triangles | Draw submissions | Cached mesh bytes |
 | --- | --- | --- | --- | --- |
-| M4A1 | 3768 / 1884 | 3320 / 1660 | 22 | 115920 |
+| M4A1 reference assembly | 5080 / 2540 | 4604 / 2302 | 23 | 153840 |
 | 30-round magazine | 272 / 136 | same | 2 | 8160 |
 
 Counts come from the committed manifests, excluding engine/GPU allocation

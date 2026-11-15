@@ -1,0 +1,42 @@
+{
+  "version": 1, "id": "m4a1_qrp2", "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK Aimpoint QRP2 with standard spacer and 30 mm ring, PRO 12841 kit. F: optical axis 39 mm above mounting surface, https://www.aimpoint.com/products/pro-patrol-rifle-optic-2-moa-red-dot-reflex-sight-with-standard-spacer-and-qrp2-mount . V: clamping foot, hollow ring, spacer slots and left torque knob from manufacturer ipbacsoa75yyp5ridbey.png. G: stepped dimensions, contact exclusions and palette. Root is Picatinny bearing plane; optic is a separate child.",
+  "materials": [
+    {"id": "anodized", "surface": "metal", "color": [0.13, 0.14, 0.15, 1], "roughness": 0.59, "metallic": 0.55},
+    {"id": "hardware", "surface": "metal", "color": [0.07, 0.08, 0.09, 1], "roughness": 0.54, "metallic": 0.70}
+  ],
+  "parts": [{
+    "id": "optic_mount", "parent": null, "movable": false,
+    "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+    "boxes": [
+      {"min": [-0.016, 0, -0.030], "max": [0.016, 0.008, 0.030], "material": "anodized"},
+      {"min": [-0.016, -0.004, -0.030], "max": [-0.011, 0, 0.030], "material": "anodized"},
+      {"min": [0.011, -0.004, -0.030], "max": [0.016, 0, 0.030], "material": "anodized"},
+      {"min": [-0.014, 0.008, -0.028], "max": [0.014, 0.010, 0.028], "material": "anodized"},
+      {"min": [-0.014, 0.016, -0.028], "max": [0.014, 0.020, 0.028], "material": "anodized"},
+      {"min": [-0.014, 0.010, -0.028], "max": [0.014, 0.016, -0.023], "material": "anodized"},
+      {"min": [-0.014, 0.010, -0.017], "max": [0.014, 0.016, -0.012], "material": "anodized"},
+      {"min": [-0.014, 0.010, -0.006], "max": [0.014, 0.016, -0.001], "material": "anodized"},
+      {"min": [-0.014, 0.010, 0.005], "max": [0.014, 0.016, 0.010], "material": "anodized"},
+      {"min": [-0.014, 0.010, 0.016], "max": [0.014, 0.016, 0.021], "material": "anodized"},
+      {"min": [-0.014, 0.010, 0.026], "max": [0.014, 0.016, 0.028], "material": "anodized"},
+      {"min": [-0.015, 0.020, -0.012], "max": [0.015, 0.024, 0.012], "material": "anodized"},
+      {"min": [-0.019, 0.024, -0.012], "max": [-0.015, 0.054, 0.012], "material": "anodized"},
+      {"min": [0.015, 0.024, -0.012], "max": [0.019, 0.054, 0.012], "material": "anodized"},
+      {"min": [-0.015, 0.054, -0.012], "max": [0.015, 0.058, 0.012], "material": "anodized"},
+      {"min": [-0.023, 0.037, -0.012], "max": [-0.019, 0.041, 0.012], "material": "anodized"},
+      {"min": [0.019, 0.037, -0.012], "max": [0.023, 0.041, 0.012], "material": "anodized"},
+      {"min": [-0.022, 0.041, -0.009], "max": [-0.020, 0.043, -0.006], "material": "hardware"},
+      {"min": [0.020, 0.041, -0.009], "max": [0.022, 0.043, -0.006], "material": "hardware"},
+      {"min": [-0.022, 0.041, 0.006], "max": [-0.020, 0.043, 0.009], "material": "hardware"},
+      {"min": [0.020, 0.041, 0.006], "max": [0.022, 0.043, 0.009], "material": "hardware"},
+      {"min": [-0.029, 0.001, -0.004], "max": [-0.016, 0.007, 0.004], "material": "hardware"},
+      {"min": [-0.040, -0.004, -0.008], "max": [-0.029, 0.012, 0.008], "material": "hardware"},
+      {"min": [-0.040, -0.002, -0.010], "max": [-0.029, 0.010, 0.010], "material": "hardware"}
+    ]
+  }],
+  "sockets": [
+    {"id": "optic.mount", "part": "optic_mount", "pose": {"translation": [0, 0.039, 0], "rotation": [0, 0, 0, 1]}}
+  ]
+}
