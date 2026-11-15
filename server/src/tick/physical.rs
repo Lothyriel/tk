@@ -269,17 +269,17 @@ pub(super) fn physical_tick(
         let local = t.rotation.inverse() * effective;
         pose.aim_pitch = input.camera.pitch;
         pose.aim_roll = input.camera.roll;
-        pose.weapon = arsenal.active;
+        pose.weapon = arsenal.current().spec().class;
         pose.arm_weakness = [
             1.0 - body.anatomy.capacity(Region::LeftArm),
             1.0 - body.anatomy.capacity(Region::RightArm),
         ];
         pose.reload_fraction = if arsenal.reload_remaining > 0.0 {
-            1.0 - arsenal.reload_remaining / arsenal.active.spec().reload_seconds
+            1.0 - arsenal.reload_remaining / arsenal.current().spec().reload_seconds
         } else {
             0.0
         };
-        pose.reload_empty = arsenal.magazines[arsenal.active.index()] == 0;
+        pose.reload_empty = arsenal.current().rounds() == 0;
         pose.velocity = local.into();
         pose.grounded = movement.grounded;
         pose.crouch = if movement.crouched { 1.0 } else { 0.0 };

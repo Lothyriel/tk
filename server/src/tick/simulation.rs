@@ -5,7 +5,7 @@ use common::{combat::*, raid::*, *};
 
 use super::{Projectile, WorldState, can_stand_up, set_crouched_state};
 
-pub(super) fn impact_mark_size_mm(weapon: WeaponKind) -> u8 {
+pub(super) fn impact_mark_size_mm(weapon: WeaponId) -> u8 {
     weapon.spec().impact_size_mm
 }
 
@@ -176,7 +176,12 @@ pub(super) fn weapons_tick(
                     } else {
                         0.0
                     });
-        let muzzle = eye + rotation * common::weapon_animation::barrel_offset(weapon, pose.ads);
+        let muzzle = eye
+            + rotation
+                * common::weapon_animation::resolved_barrel_offset(
+                    arsenal.current().spec(),
+                    pose.ads,
+                );
         // Resolve actual eye-to-muzzle contacts in projectiles_tick. A broad
         // movement capsule must neither redirect a clear offset ray to the eye
         // nor let a muzzle spawn beyond real anatomy/concrete at point blank.
@@ -186,9 +191,9 @@ pub(super) fn weapons_tick(
             Projectile {
                 id,
                 weapon,
-                velocity: direction * weapon.spec().muzzle_speed,
-                damage: arsenal.loadout.ammo.damage(weapon),
-                penetration: arsenal.loadout.ammo.penetration(weapon),
+                velocity: direction * arsenal.current().spec().muzzle_speed,
+                damage: arsenal.loadout.ammo.damage(arsenal.current().spec()),
+                penetration: arsenal.loadout.ammo.penetration(arsenal.current().spec()),
                 lifetime: PROJECTILE_LIFETIME,
                 owner_entity: entity,
                 penetrated: Vec::new(),

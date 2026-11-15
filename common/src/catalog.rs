@@ -12,7 +12,7 @@ pub const CATALOG_FILE: &str = "common/data/catalog.ron";
 pub const CATALOG_SOURCE: &str = include_str!("../data/catalog.ron");
 
 macro_rules! id {
-    ($name:ident, $storage:ty) => {
+    ($name:ident, $storage:ty $(, $derive:ident)*) => {
         #[derive(
             Debug,
             Clone,
@@ -27,6 +27,7 @@ macro_rules! id {
             Deserialize,
             serde::Deserialize,
             serde::Serialize,
+            $($derive,)*
         )]
         #[serde(transparent)]
         pub struct $name(pub $storage);
@@ -35,7 +36,7 @@ macro_rules! id {
 
 id!(WeaponId, u32);
 id!(DefinitionId, u32);
-id!(WeaponInstanceId, u64);
+id!(WeaponInstanceId, u64, Default);
 
 impl Default for WeaponId {
     fn default() -> Self {

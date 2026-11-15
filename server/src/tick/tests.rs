@@ -1,4 +1,27 @@
 use super::*;
+
+#[test]
+fn catalog_input_rejects_unknown_definition_without_substituting_a_weapon() {
+    let input = ClientInput {
+        loadout: Loadout {
+            primary: WeaponId(99999),
+            ..default()
+        },
+        ..default()
+    };
+    assert!(super::validated_input(&data::encode(&input)).is_none());
+    let input = ClientInput {
+        loadout: Loadout {
+            primary: WeaponId::MP5,
+            ..default()
+        },
+        weapon: EquipmentSlot::Sidearm,
+        ..default()
+    };
+    let decoded = super::validated_input(&data::encode(&input)).unwrap();
+    assert_eq!(decoded.loadout.primary, WeaponId::MP5);
+    assert_eq!(decoded.weapon, EquipmentSlot::Sidearm);
+}
 use bevy::{time::TimeUpdateStrategy, transform::TransformPlugin};
 use std::time::Duration;
 
@@ -18,9 +41,9 @@ fn app() -> App {
 
 #[test]
 fn impact_mark_size_scales_with_authoritative_projectile_weapon() {
-    assert_eq!(simulation::impact_mark_size_mm(WeaponKind::Pistol), 25);
-    assert_eq!(simulation::impact_mark_size_mm(WeaponKind::Smg), 35);
-    assert_eq!(simulation::impact_mark_size_mm(WeaponKind::Rifle), 50);
+    assert_eq!(simulation::impact_mark_size_mm(WeaponId::M1911), 25);
+    assert_eq!(simulation::impact_mark_size_mm(WeaponId::MP5), 35);
+    assert_eq!(simulation::impact_mark_size_mm(WeaponId::M4A1), 50);
 
     let mut world = WorldState {
         next_mark_id: u32::MAX - 1,
@@ -116,7 +139,7 @@ fn lobby_blocks_movement_and_fire_then_starts_players_at_distinct_spawns() {
 fn server_locks_equipment_and_late_joiners_wait() {
     let mut app = app();
     let loadout = Loadout {
-        primary: WeaponKind::Smg,
+        primary: WeaponId::MP5,
         armor: ArmorKind::Heavy,
         ammo: AmmoKind::Ap,
         helmet: true,
@@ -128,11 +151,18 @@ fn server_locks_equipment_and_late_joiners_wait() {
         app.world().get::<Participant>(player).unwrap().loadout,
         loadout
     );
-    assert_eq!(app.world().get::<Arsenal>(player).unwrap().magazines[2], 25);
+    assert_eq!(
+        app.world()
+            .get::<Arsenal>(player)
+            .unwrap()
+            .current()
+            .rounds(),
+        25
+    );
     {
         let mut input = app.world_mut().get_mut::<ClientInput>(player).unwrap();
         input.loadout = Loadout::default();
-        input.weapon = WeaponKind::Rifle;
+        input.weapon = EquipmentSlot::Primary;
     }
     steps(&mut app, 2);
     assert_eq!(
@@ -140,8 +170,13 @@ fn server_locks_equipment_and_late_joiners_wait() {
         loadout
     );
     assert_eq!(
-        app.world().get::<Arsenal>(player).unwrap().active,
-        WeaponKind::Smg
+        app.world()
+            .get::<Arsenal>(player)
+            .unwrap()
+            .current()
+            .spec()
+            .definition,
+        WeaponId::MP5
     );
     let late = add_player(&mut app, 8, Loadout::default());
     ready(&mut app, late);
@@ -301,7 +336,7 @@ fn cover_hit(surface: SurfaceKind, half_thickness: f32) -> (f32, usize) {
     app.world_mut().spawn((
         Projectile {
             id: 1,
-            weapon: WeaponKind::Rifle,
+            weapon: WeaponId::M4A1,
             velocity: Vec3::Z * 100.0,
             damage: 50.0,
             penetration: 30.0,
@@ -524,7 +559,13 @@ fn support_controller_corrects_small_impulse_and_recovers_from_large_impulse() {
 #[test]
 fn normal_reload_blocked_triggers_do_not_emit_confirmed_shots() {
     let (mut app, a, _) = physical_fixture();
-    app.world_mut().get_mut::<Arsenal>(a).unwrap().magazines[0] = 0;
+    app.world_mut()
+        .get_mut::<Arsenal>(a)
+        .unwrap()
+        .equipped_mut(EquipmentSlot::Primary)
+        .unwrap()
+        .set_ammunition(0, 90)
+        .unwrap();
     app.world_mut().get_mut::<ClientInput>(a).unwrap().fire = true;
     held_steps(&mut app, a, 20);
     assert!(
@@ -545,10 +586,18 @@ fn normal_reload_blocked_triggers_do_not_emit_confirmed_shots() {
             .fired_projectiles
             .is_empty()
     );
-    app.world_mut().get_mut::<ClientInput>(a).unwrap().weapon = WeaponKind::Pistol;
+    app.world_mut().get_mut::<ClientInput>(a).unwrap().weapon = EquipmentSlot::Sidearm;
     held_steps(&mut app, a, 2);
     assert_eq!(app.world().get::<Arsenal>(a).unwrap().reload_remaining, 0.0);
-    assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 0);
+    assert_eq!(
+        app.world()
+            .get::<Arsenal>(a)
+            .unwrap()
+            .equipped(EquipmentSlot::Primary)
+            .unwrap()
+            .rounds(),
+        0
+    );
 }
 
 #[test]
@@ -796,7 +845,10 @@ fn destroyed_trigger_arm_disables_firing_and_reload_while_actor_remains_alive() 
     app.world_mut().get_mut::<ClientInput>(b).unwrap().fire = true;
     held_steps(&mut app, b, 1);
     app.world_mut().get_mut::<ClientInput>(b).unwrap().fire = false;
-    assert_eq!(app.world().get::<Arsenal>(b).unwrap().magazines[0], 29);
+    assert_eq!(
+        app.world().get::<Arsenal>(b).unwrap().current().rounds(),
+        29
+    );
     for _ in 0..2 {
         let t = *app.world().get::<Transform>(b).unwrap();
         let pose = app.world().get::<PoseState>(b).unwrap();
@@ -813,7 +865,10 @@ fn destroyed_trigger_arm_disables_firing_and_reload_while_actor_remains_alive() 
     assert_eq!(body.anatomy.capacity(Region::RightArm), 0.0);
     app.world_mut().get_mut::<ClientInput>(b).unwrap().fire = true;
     held_steps(&mut app, b, 20);
-    assert_eq!(app.world().get::<Arsenal>(b).unwrap().magazines[0], 29);
+    assert_eq!(
+        app.world().get::<Arsenal>(b).unwrap().current().rounds(),
+        29
+    );
     assert!(
         !app.world()
             .resource::<WorldState>()
@@ -843,7 +898,7 @@ fn last_participant_death_still_transfers_a_ragdoll_after_entering_debrief() {
     app.world_mut().spawn((
         Projectile {
             id: 9999,
-            weapon: WeaponKind::Rifle,
+            weapon: WeaponId::M4A1,
             velocity: -Vec3::X * 200.0,
             damage: 34.0,
             penetration: 100.0,
@@ -1138,7 +1193,7 @@ fn fatal_hit_materializes_the_body_before_the_same_tick_snapshot() {
     app.world_mut().spawn((
         Projectile {
             id: 991,
-            weapon: WeaponKind::Rifle,
+            weapon: WeaponId::M4A1,
             velocity: -Vec3::X * 200.0,
             damage: 100.0,
             penetration: 100.0,
@@ -1577,7 +1632,10 @@ fn authoritative_ads_preserves_ammo_and_cadence_centres_barrel_and_cancels_for_r
     app.world_mut().get_mut::<ClientInput>(a).unwrap().aim = true;
     held_steps(&mut app, a, 64);
     assert!(app.world().get::<PoseState>(a).unwrap().ads > 0.99);
-    assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 30);
+    assert_eq!(
+        app.world().get::<Arsenal>(a).unwrap().current().rounds(),
+        30
+    );
     app.world_mut().get_mut::<ClientInput>(a).unwrap().fire = true;
     held_steps(&mut app, a, 1);
     app.world_mut().get_mut::<ClientInput>(a).unwrap().fire = false;
@@ -1594,7 +1652,10 @@ fn authoritative_ads_preserves_ammo_and_cadence_centres_barrel_and_cancels_for_r
         .last()
         .unwrap();
     assert!(Vec3::from(shot.muzzle).distance(expected) < 0.001);
-    assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 29);
+    assert_eq!(
+        app.world().get::<Arsenal>(a).unwrap().current().rounds(),
+        29
+    );
     app.world_mut()
         .get_mut::<ClientInput>(a)
         .unwrap()
@@ -1602,7 +1663,10 @@ fn authoritative_ads_preserves_ammo_and_cadence_centres_barrel_and_cancels_for_r
     held_steps(&mut app, a, 64);
     assert!(app.world().get::<PoseState>(a).unwrap().ads < 0.01);
     assert!(app.world().get::<Arsenal>(a).unwrap().reload_remaining > 0.0);
-    assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 29);
+    assert_eq!(
+        app.world().get::<Arsenal>(a).unwrap().current().rounds(),
+        29
+    );
     held_steps(&mut app, a, 330);
     assert!(app.world().get::<PoseState>(a).unwrap().ads > 0.99);
     {
@@ -1701,7 +1765,10 @@ fn ads_barrel_beyond_a_concrete_panel_cannot_fire_through_the_panel() {
             .iter()
             .any(|m| m.pos[2] > root.z - 0.8)
     );
-    assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 29);
+    assert_eq!(
+        app.world().get::<Arsenal>(a).unwrap().current().rounds(),
+        29
+    );
 }
 
 // ANIM-15: solve the specified muzzle ray, not an eye-origin approximation.
@@ -1729,7 +1796,7 @@ fn close_hip_and_ads_muzzle_rays_hit_actual_heads_without_capsule_redirection() 
                 let (mut app, a, b) = physical_fixture();
                 if weapon == WeaponKind::Smg {
                     let loadout = Loadout {
-                        primary: weapon,
+                        primary: weapon.definition(),
                         armor: ArmorKind::None,
                         helmet: false,
                         ..default()
@@ -1741,7 +1808,11 @@ fn close_hip_and_ads_muzzle_rays_hit_actual_heads_without_capsule_redirection() 
                     origin - Vec3::Z * distance;
                 {
                     let mut input = app.world_mut().get_mut::<ClientInput>(a).unwrap();
-                    input.weapon = weapon;
+                    input.weapon = if weapon == WeaponKind::Pistol {
+                        EquipmentSlot::Sidearm
+                    } else {
+                        EquipmentSlot::Primary
+                    };
                     input.aim = aiming;
                 }
                 held_steps(&mut app, a, 64);
@@ -1777,7 +1848,7 @@ fn close_hip_and_ads_muzzle_rays_hit_actual_heads_without_capsule_redirection() 
                     "one close shot must retain the specified damage: {weapon:?} ADS={aiming} distance={distance}"
                 );
                 assert_eq!(
-                    app.world().get::<Arsenal>(a).unwrap().magazines[weapon.index()],
+                    app.world().get::<Arsenal>(a).unwrap().current().rounds(),
                     weapon.spec().magazine_size - 1
                 );
                 let shot = app
@@ -1833,7 +1904,10 @@ fn muzzle_beyond_a_close_actor_cannot_skip_its_actual_anatomy_in_hip_or_ads() {
             REGION_MAX,
             "shot spawned beyond the close body: ADS={aiming}"
         );
-        assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 29);
+        assert_eq!(
+            app.world().get::<Arsenal>(a).unwrap().current().rounds(),
+            29
+        );
     }
 }
 
@@ -1881,7 +1955,10 @@ fn narrow_concrete_on_eye_to_muzzle_path_stops_hip_and_ads_without_parallel_eye_
                 .any(|mark| Vec3::from(mark.pos).distance(centre) < 0.10),
             "missing actual clearance impact"
         );
-        assert_eq!(app.world().get::<Arsenal>(a).unwrap().magazines[0], 29);
+        assert_eq!(
+            app.world().get::<Arsenal>(a).unwrap().current().rounds(),
+            29
+        );
     }
 }
 
@@ -1926,7 +2003,7 @@ fn pre_muzzle_wood_attenuates_once_across_clearance_and_normal_flight() {
     app.world_mut().spawn((
         Projectile {
             id: 991,
-            weapon: WeaponKind::Rifle,
+            weapon: WeaponId::M4A1,
             velocity: Vec3::Z * 100.0,
             damage: 50.0,
             penetration: 30.0,
@@ -1977,7 +2054,7 @@ fn pre_muzzle_ray_through_a_posed_leg_gap_does_not_hit_the_movement_capsule() {
         .spawn((
             Projectile {
                 id: 992,
-                weapon: WeaponKind::Rifle,
+                weapon: WeaponId::M4A1,
                 velocity: Vec3::Z * 100.0,
                 damage: 50.0,
                 penetration: 30.0,
@@ -2022,7 +2099,7 @@ fn muzzle_inside_the_same_wood_keeps_penetration_ids_across_both_paths() {
     app.world_mut().spawn((
         Projectile {
             id: 993,
-            weapon: WeaponKind::Rifle,
+            weapon: WeaponId::M4A1,
             velocity: Vec3::Z * 100.0,
             damage: 50.0,
             penetration: 30.0,
@@ -2062,7 +2139,7 @@ fn voxel_shot(app: &mut App, owner: Entity, cell: &common::map::BarrierCell, dam
     app.world_mut().spawn((
         Projectile {
             id: 9000,
-            weapon: WeaponKind::Rifle,
+            weapon: WeaponId::M4A1,
             velocity: -Vec3::Z * 100.0,
             damage,
             penetration: 30.0,
@@ -2238,10 +2315,19 @@ fn voxel_barriers_normal_weapon_input_breaks_wood_with_one_round() {
         .unwrap()
         .translation = Vec3::new(-7.0, 1.05, -3.0);
     steps(&mut app, 3);
-    let before = app.world().get::<Arsenal>(owner).unwrap().magazines[WeaponKind::Rifle.index()];
+    let before = app
+        .world()
+        .get::<Arsenal>(owner)
+        .unwrap()
+        .current()
+        .rounds();
     normal_shot(&mut app, owner, Vec3::new(-7.25, 1.35, -5.0));
     assert_eq!(
-        app.world().get::<Arsenal>(owner).unwrap().magazines[WeaponKind::Rifle.index()],
+        app.world()
+            .get::<Arsenal>(owner)
+            .unwrap()
+            .current()
+            .rounds(),
         before - 1
     );
     let removed = &app.world().resource::<WorldState>().destroyed_cells;
@@ -2288,5 +2374,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
         common::map::destroyed_ids(&snapshot.destroyed_cells),
         vec![cell.id]
     );
-    assert_eq!(PROTOCOL_ID, 8);
+    assert_eq!(PROTOCOL_ID, 9);
 }

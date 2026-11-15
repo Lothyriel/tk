@@ -102,22 +102,25 @@ fn keyboard(
             && session.raid.phase == RaidPhase::Lobby
             && !local.participant.ready
         {
-            input.weapon = input.loadout.primary;
+            input.weapon = EquipmentSlot::Primary;
         }
         if active && keys.just_pressed(KeyCode::Digit1) {
-            input.weapon = local.participant.loadout.primary;
+            input.weapon = EquipmentSlot::Primary;
         }
         if active && keys.just_pressed(KeyCode::Digit2) {
-            input.weapon = WeaponKind::Pistol;
+            input.weapon = EquipmentSlot::Sidearm;
         }
         if session.raid.phase == RaidPhase::Lobby && !local.participant.ready {
             if keys.just_pressed(KeyCode::KeyG) {
-                input.loadout.primary = if input.loadout.primary == WeaponKind::Rifle {
-                    WeaponKind::Smg
-                } else {
-                    WeaponKind::Rifle
-                };
-                input.weapon = input.loadout.primary;
+                let primaries: Vec<_> = common::catalog::catalog()
+                    .weapons()
+                    .filter(|weapon| weapon.class != WeaponKind::Pistol)
+                    .map(|weapon| weapon.definition)
+                    .collect();
+                if let Some(index) = primaries.iter().position(|id| *id == input.loadout.primary) {
+                    input.loadout.primary = primaries[(index + 1) % primaries.len()];
+                }
+                input.weapon = EquipmentSlot::Primary;
             }
             if keys.just_pressed(KeyCode::KeyB) {
                 input.loadout.ammo = if input.loadout.ammo == AmmoKind::Ball {
@@ -272,11 +275,11 @@ mod tests {
             .press(MouseButton::Left);
         app.update();
         let input = app.world().resource::<LocalInput>();
-        assert_eq!(input.loadout.primary, WeaponKind::Smg);
+        assert_eq!(input.loadout.primary, WeaponId::MP5);
         assert_eq!(input.loadout.ammo, AmmoKind::Ap);
         assert_eq!(input.loadout.armor, ArmorKind::Heavy);
         assert!(!input.loadout.helmet);
-        assert_eq!(input.weapon, WeaponKind::Smg);
+        assert_eq!(input.weapon, EquipmentSlot::Primary);
         assert_eq!(input.lobby_sequence, 1);
         assert!(!input.forward);
         assert!(!input.fire);
@@ -315,7 +318,7 @@ mod tests {
         app.update();
         let input = app.world().resource::<LocalInput>();
         assert!(input.forward && input.fire && input.interact && input.jump);
-        assert_eq!(input.weapon, WeaponKind::Pistol);
+        assert_eq!(input.weapon, EquipmentSlot::Sidearm);
         assert_eq!(input.fire_pressed_sequence, 1);
         assert_eq!(input.reload_sequence, 1);
         let entity = app

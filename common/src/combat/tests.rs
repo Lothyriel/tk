@@ -4,20 +4,21 @@ use super::*;
 #[test]
 fn loadout_only_allows_primary_and_sidearm() {
     let loadout = Loadout {
-        primary: WeaponKind::Smg,
+        primary: WeaponId::MP5,
         ..Default::default()
     };
-    assert!(loadout.allows(WeaponKind::Smg));
-    assert!(loadout.allows(WeaponKind::Pistol));
-    assert!(!loadout.allows(WeaponKind::Rifle));
+    assert!(loadout.allows(WeaponId::MP5));
+    assert!(loadout.allows(WeaponId::M1911));
+    assert!(!loadout.allows(WeaponId::M4A1));
     assert_eq!(
         Loadout {
-            primary: WeaponKind::Pistol,
+            primary: WeaponId::M1911,
             ..loadout
         }
         .validated()
+        .unwrap()
         .primary,
-        WeaponKind::Rifle
+        WeaponId::M4A1
     );
 }
 
@@ -33,9 +34,12 @@ fn three_weapons_have_specified_magazines_and_fire_modes() {
         WeaponKind::Smg.spec().seconds_per_shot() < WeaponKind::Rifle.spec().seconds_per_shot()
     );
     assert!(
-        AmmoKind::Ap.penetration(WeaponKind::Rifle) > AmmoKind::Ball.penetration(WeaponKind::Rifle)
+        AmmoKind::Ap.penetration(WeaponId::M4A1.spec())
+            > AmmoKind::Ball.penetration(WeaponId::M4A1.spec())
     );
-    assert!(AmmoKind::Ap.damage(WeaponKind::Rifle) < AmmoKind::Ball.damage(WeaponKind::Rifle));
+    assert!(
+        AmmoKind::Ap.damage(WeaponId::M4A1.spec()) < AmmoKind::Ball.damage(WeaponId::M4A1.spec())
+    );
 }
 
 // ALPHA-06: energy loss is based on actual distance through the material.
@@ -146,41 +150,44 @@ fn arsenal_enforces_cadence_and_semi_automatic_trigger() {
         fire_pressed_sequence: 1,
         ..Default::default()
     };
-    assert_eq!(arsenal.step(&input, 0.0, 0.0), Some(WeaponKind::Rifle));
-    assert_eq!(arsenal.magazines[0], 29);
-    assert_eq!(arsenal.reserves[0], 90);
+    assert_eq!(arsenal.step(&input, 0.0, 0.0), Some(WeaponId::M4A1));
+    assert_eq!(arsenal.current().rounds(), 29);
+    assert_eq!(arsenal.current().reserve(), 90);
     assert_eq!(arsenal.step(&input, 0.01, 0.01), None);
-    assert_eq!(arsenal.step(&input, 0.1, 0.11), Some(WeaponKind::Rifle));
-    input.weapon = WeaponKind::Pistol;
+    assert_eq!(arsenal.step(&input, 0.1, 0.11), Some(WeaponId::M4A1));
+    input.weapon = EquipmentSlot::Sidearm;
     input.fire_pressed_sequence = 2;
-    assert_eq!(arsenal.step(&input, 0.5, 0.61), Some(WeaponKind::Pistol));
+    assert_eq!(arsenal.step(&input, 0.5, 0.61), Some(WeaponId::M1911));
     assert_eq!(arsenal.step(&input, 0.5, 1.11), None);
-    assert_eq!(arsenal.magazines[1], 16);
+    assert_eq!(arsenal.current().rounds(), 16);
     input.fire_pressed_sequence = 3;
-    assert_eq!(arsenal.step(&input, 0.5, 1.61), Some(WeaponKind::Pistol));
-    assert_eq!(arsenal.magazines[1], 15);
+    assert_eq!(arsenal.step(&input, 0.5, 1.61), Some(WeaponId::M1911));
+    assert_eq!(arsenal.current().rounds(), 15);
 }
 
 #[test]
 fn reload_is_manual_timed_and_cannot_create_ammo() {
     let mut arsenal = Arsenal::new(Loadout::default());
-    arsenal.magazines[0] = 0;
-    arsenal.reserves[0] = 2;
+    arsenal
+        .equipped_mut(EquipmentSlot::Primary)
+        .unwrap()
+        .set_ammunition(0, 2)
+        .unwrap();
     let mut input = crate::ClientInput {
         fire: true,
         ..Default::default()
     };
     assert_eq!(arsenal.step(&input, 3.0, 3.0), None);
-    assert_eq!(arsenal.magazines[0], 0);
+    assert_eq!(arsenal.current().rounds(), 0);
     input.fire = false;
     input.reload_sequence = 1;
     arsenal.step(&input, 0.0, 3.0);
     assert_eq!(arsenal.reload_remaining, 2.4);
     arsenal.step(&input, 1.0, 4.0);
-    assert_eq!(arsenal.magazines[0], 0);
+    assert_eq!(arsenal.current().rounds(), 0);
     arsenal.step(&input, 2.0, 6.0);
-    assert_eq!(arsenal.magazines[0], 2);
-    assert_eq!(arsenal.reserves[0], 0);
+    assert_eq!(arsenal.current().rounds(), 2);
+    assert_eq!(arsenal.current().reserve(), 0);
     input.reload_sequence = 2;
     arsenal.step(&input, 0.0, 6.0);
     assert_eq!(arsenal.reload_remaining, 0.0);
@@ -189,24 +196,85 @@ fn reload_is_manual_timed_and_cannot_create_ammo() {
 #[test]
 fn switching_cancels_reload_and_cannot_equip_unselected_primary() {
     let mut arsenal = Arsenal::new(Loadout {
-        primary: WeaponKind::Smg,
+        primary: WeaponId::MP5,
         ..Default::default()
     });
-    assert_eq!(arsenal.magazines[2], 25);
-    assert_eq!(arsenal.reserves[2], 75);
+    assert_eq!(arsenal.current().rounds(), 25);
+    assert_eq!(arsenal.current().reserve(), 75);
     let mut input = crate::ClientInput {
-        weapon: WeaponKind::Smg,
+        weapon: EquipmentSlot::Primary,
         reload_sequence: 1,
         ..Default::default()
     };
-    arsenal.magazines[2] = 2;
+    arsenal
+        .equipped_mut(EquipmentSlot::Primary)
+        .unwrap()
+        .set_ammunition(2, 75)
+        .unwrap();
     arsenal.step(&input, 0.0, 0.0);
     assert!(arsenal.reload_remaining > 0.0);
-    input.weapon = WeaponKind::Pistol;
+    input.weapon = EquipmentSlot::Sidearm;
     arsenal.step(&input, 0.1, 0.1);
     assert_eq!(arsenal.reload_remaining, 0.0);
-    assert_eq!(arsenal.magazines[2], 2);
-    input.weapon = WeaponKind::Rifle;
+    assert_eq!(
+        arsenal.equipped(EquipmentSlot::Primary).unwrap().rounds(),
+        2
+    );
+    // The input selects a slot: changing its lobby proposal cannot replace the
+    // authoritative equipped primary during the raid.
+    input.loadout.primary = WeaponId::M4A1;
+    input.weapon = EquipmentSlot::Primary;
     arsenal.step(&input, 0.1, 0.2);
-    assert_eq!(arsenal.active, WeaponKind::Pistol);
+    assert_eq!(arsenal.current().spec().definition, WeaponId::MP5);
+}
+
+#[test]
+fn catalog_variant_and_two_equipped_instances_use_slots_and_resolved_capacity() {
+    use crate::catalog::{CatalogDocument, CATALOG_SOURCE};
+    let mut document: CatalogDocument = ron::from_str(CATALOG_SOURCE).unwrap();
+    let mut variant = document.weapons[0].clone();
+    variant.id = WeaponId(4);
+    variant.key = "m4a1_test_variant".into();
+    document.components[0].capacity = 12;
+    document.weapons.push(variant);
+    let catalog = Catalog::validate("test.ron", document).unwrap();
+    let mut arsenal = Arsenal::from_slots(
+        &catalog,
+        Loadout::default(),
+        &[
+            (EquipmentSlot::Primary, WeaponId(4)),
+            (EquipmentSlot::Sidearm, WeaponId(4)),
+        ],
+    )
+    .unwrap();
+    let primary_id = arsenal.current().instance().id;
+    let other = arsenal.equipped(EquipmentSlot::Sidearm).unwrap();
+    assert_ne!(primary_id, other.instance().id);
+    assert_eq!(other.rounds(), 12);
+    assert_eq!(arsenal.current().spec().class, WeaponKind::Rifle);
+    let mut input = ClientInput {
+        fire: true,
+        ..Default::default()
+    };
+    assert_eq!(arsenal.step(&input, 0.0, 0.0), Some(WeaponId(4)));
+    assert_eq!(arsenal.current().rounds(), 11);
+    input.fire = false;
+    input.reload_sequence = 1;
+    arsenal.step(&input, 0.0, 0.1);
+    assert!(arsenal.reload_remaining > 0.0);
+    input.weapon = EquipmentSlot::Sidearm;
+    input.fire = true;
+    assert_eq!(arsenal.step(&input, 0.2, 0.3), Some(WeaponId(4)));
+    assert_eq!(arsenal.reload_remaining, 0.0);
+    assert_eq!(arsenal.current().rounds(), 11);
+    assert_eq!(arsenal.current().reserve(), 36);
+    let primary = arsenal.equipped(EquipmentSlot::Primary).unwrap();
+    assert_eq!(primary.rounds(), 11);
+    assert_eq!(primary.reserve(), 36);
+    assert_eq!(primary.instance().id, primary_id);
+    assert!(arsenal
+        .equipped_mut(EquipmentSlot::Primary)
+        .unwrap()
+        .set_ammunition(13, 36)
+        .is_err());
 }

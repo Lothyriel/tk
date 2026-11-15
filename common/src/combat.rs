@@ -2,7 +2,10 @@
 use bevy::prelude::*;
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::{ClientInput, WeaponKind};
+use crate::{
+    catalog::{catalog, Catalog, CatalogError, EquippedWeapon, ResolvedWeapon},
+    ClientInput, EquipmentSlot, WeaponId, WeaponInstanceId, WeaponKind,
+};
 
 mod anatomy;
 pub use anatomy::*;
@@ -15,13 +18,13 @@ pub enum AmmoKind {
 }
 
 impl AmmoKind {
-    pub fn penetration(self, weapon: WeaponKind) -> f32 {
-        let base = weapon.spec().penetration;
+    pub fn penetration(self, weapon: &ResolvedWeapon) -> f32 {
+        let base = weapon.penetration;
         base * if self == Self::Ap { 1.8 } else { 1.0 }
     }
 
-    pub fn damage(self, weapon: WeaponKind) -> f32 {
-        weapon.spec().damage * if self == Self::Ap { 0.85 } else { 1.0 }
+    pub fn damage(self, weapon: &ResolvedWeapon) -> f32 {
+        weapon.damage * if self == Self::Ap { 0.85 } else { 1.0 }
     }
 }
 
@@ -53,7 +56,7 @@ impl ArmorKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub struct Loadout {
-    pub primary: WeaponKind,
+    pub primary: WeaponId,
     pub ammo: AmmoKind,
     pub armor: ArmorKind,
     pub helmet: bool,
@@ -62,7 +65,7 @@ pub struct Loadout {
 impl Default for Loadout {
     fn default() -> Self {
         Self {
-            primary: WeaponKind::Rifle,
+            primary: WeaponId::M4A1,
             ammo: AmmoKind::Ball,
             armor: ArmorKind::Light,
             helmet: true,
@@ -71,15 +74,22 @@ impl Default for Loadout {
 }
 
 impl Loadout {
-    pub fn validated(mut self) -> Self {
-        if self.primary == WeaponKind::Pistol {
-            self.primary = WeaponKind::Rifle;
+    pub fn validated(mut self) -> Option<Self> {
+        if catalog().weapon(self.primary)?.class == WeaponKind::Pistol {
+            self.primary = WeaponId::M4A1;
         }
-        self
+        Some(self)
     }
 
-    pub fn allows(self, weapon: WeaponKind) -> bool {
-        weapon == self.primary || weapon == WeaponKind::Pistol
+    pub fn allows(self, weapon: WeaponId) -> bool {
+        weapon == self.primary || weapon == WeaponId::M1911
+    }
+
+    pub fn weapon(self, slot: EquipmentSlot) -> WeaponId {
+        match slot {
+            EquipmentSlot::Primary => self.primary,
+            EquipmentSlot::Sidearm => WeaponId::M1911,
+        }
     }
 }
 
@@ -206,12 +216,11 @@ impl SurfaceKind {
 
 #[derive(Debug, Component)]
 pub struct Arsenal {
-    pub magazines: [u32; 3],
-    pub reserves: [u32; 3],
-    pub active: WeaponKind,
+    equipment: Vec<(EquipmentSlot, EquippedWeapon)>,
+    pub active: EquipmentSlot,
     pub reload_remaining: f32,
     pub loadout: Loadout,
-    reload_weapon: Option<WeaponKind>,
+    reload_weapon: Option<WeaponInstanceId>,
     last_reload: u32,
     last_trigger: u32,
     last_shot_at: f32,
@@ -219,30 +228,87 @@ pub struct Arsenal {
 
 impl Arsenal {
     pub fn new(loadout: Loadout) -> Self {
-        let loadout = loadout.validated();
-        let magazines = [
-            WeaponKind::Rifle.spec().magazine_size,
-            WeaponKind::Pistol.spec().magazine_size,
-            WeaponKind::Smg.spec().magazine_size,
-        ];
-        Self {
-            magazines,
-            reserves: magazines.map(|count| count * 3),
-            active: loadout.primary,
+        let loadout = loadout.validated().expect("validated loadout");
+        Self::from_slots(
+            catalog(),
+            loadout,
+            &[
+                (EquipmentSlot::Primary, loadout.primary),
+                (EquipmentSlot::Sidearm, WeaponId::M1911),
+            ],
+        )
+        .expect("valid equipment")
+    }
+
+    /// Slots own instances, never an array indexed by the number of definitions.
+    pub fn from_slots(
+        catalog: &Catalog,
+        mut loadout: Loadout,
+        slots: &[(EquipmentSlot, WeaponId)],
+    ) -> Result<Self, CatalogError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
+        let mut equipment = Vec::new();
+        for &(slot, definition) in slots {
+            if equipment.iter().any(|(existing, _)| *existing == slot) {
+                return Err(CatalogError {
+                    file: crate::catalog::CATALOG_FILE.into(),
+                    field: "equipment.slot".into(),
+                    message: "duplicate equipment slot".into(),
+                });
+            }
+            let id = WeaponInstanceId(NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed));
+            equipment.push((
+                slot,
+                EquippedWeapon::new(catalog, id, catalog.configuration(definition)?)?,
+            ));
+        }
+        let Some((_, primary)) = equipment
+            .iter()
+            .find(|(slot, _)| *slot == EquipmentSlot::Primary)
+        else {
+            return Err(CatalogError {
+                file: crate::catalog::CATALOG_FILE.into(),
+                field: "equipment.primary".into(),
+                message: "missing primary slot".into(),
+            });
+        };
+        loadout.primary = primary.spec().definition;
+        Ok(Self {
+            equipment,
+            active: EquipmentSlot::Primary,
             reload_remaining: 0.0,
             loadout,
             reload_weapon: None,
             last_reload: 0,
             last_trigger: 0,
             last_shot_at: f32::NEG_INFINITY,
-        }
+        })
+    }
+
+    pub fn equipped(&self, slot: EquipmentSlot) -> Option<&EquippedWeapon> {
+        self.equipment
+            .iter()
+            .find(|(s, _)| *s == slot)
+            .map(|(_, weapon)| weapon)
+    }
+
+    pub fn equipped_mut(&mut self, slot: EquipmentSlot) -> Option<&mut EquippedWeapon> {
+        self.equipment
+            .iter_mut()
+            .find(|(s, _)| *s == slot)
+            .map(|(_, weapon)| weapon)
+    }
+
+    pub fn current(&self) -> &EquippedWeapon {
+        self.equipped(self.active).expect("equipped active slot")
     }
 
     /// Returns an authorized shot, never a client-authoritative projectile.
-    pub fn step(&mut self, input: &ClientInput, delta: f32, now: f32) -> Option<WeaponKind> {
+    pub fn step(&mut self, input: &ClientInput, delta: f32, now: f32) -> Option<WeaponId> {
         let pressed = input.fire_pressed_sequence != self.last_trigger;
         self.last_trigger = input.fire_pressed_sequence;
-        if self.loadout.allows(input.weapon) && self.active != input.weapon {
+        if self.equipped(input.weapon).is_some() && self.active != input.weapon {
             self.active = input.weapon;
             self.reload_remaining = 0.0;
             self.reload_weapon = None;
@@ -250,38 +316,42 @@ impl Arsenal {
         if self.reload_remaining > 0.0 {
             self.reload_remaining = (self.reload_remaining - delta).max(0.0);
             if self.reload_remaining == 0.0 {
-                if let Some(weapon) = self.reload_weapon.take() {
-                    let i = weapon.index();
-                    let rounds =
-                        (weapon.spec().magazine_size - self.magazines[i]).min(self.reserves[i]);
-                    self.magazines[i] += rounds;
-                    self.reserves[i] -= rounds;
+                if let Some(id) = self.reload_weapon.take() {
+                    if let Some((_, weapon)) = self
+                        .equipment
+                        .iter_mut()
+                        .find(|(_, w)| w.instance().id == id)
+                    {
+                        weapon.reload();
+                    }
                 }
             }
         }
-        let i = self.active.index();
-        let spec = self.active.spec();
         if input.reload_sequence != self.last_reload {
             self.last_reload = input.reload_sequence;
+            let weapon = self.current();
             if self.reload_remaining == 0.0
-                && self.magazines[i] < spec.magazine_size
-                && self.reserves[i] > 0
+                && weapon.rounds() < weapon.spec().magazine_size
+                && weapon.reserve() > 0
             {
-                self.reload_remaining = spec.reload_seconds;
-                self.reload_weapon = Some(self.active);
+                let (duration, id) = (weapon.spec().reload_seconds, weapon.instance().id);
+                self.reload_remaining = duration;
+                self.reload_weapon = Some(id);
             }
         }
+        let spec = self.current().spec();
         let wants_fire = if spec.automatic { input.fire } else { pressed };
         if !wants_fire
             || self.reload_remaining > 0.0
-            || self.magazines[i] == 0
+            || self.current().rounds() == 0
             || now - self.last_shot_at < spec.seconds_per_shot()
         {
             return None;
         }
-        self.magazines[i] -= 1;
+        let definition = spec.definition;
+        self.equipped_mut(self.active).unwrap().fire();
         self.last_shot_at = now;
-        Some(self.active)
+        Some(definition)
     }
 
     pub fn synchronize_sequences(&mut self, input: &ClientInput) {

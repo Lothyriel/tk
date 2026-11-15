@@ -67,6 +67,20 @@ impl EquippedWeapon {
         self.instance.reserve
     }
 
+    /// Loading/restoring state validates capacity before exposing mutable ammo.
+    pub fn set_ammunition(&mut self, magazine: u32, reserve: u32) -> Result<(), CatalogError> {
+        if magazine > self.resolved.magazine_size {
+            return Err(error(
+                CATALOG_FILE,
+                "instance.magazine",
+                "exceeds resolved capacity",
+            ));
+        }
+        self.instance.magazine = magazine;
+        self.instance.reserve = reserve;
+        Ok(())
+    }
+
     pub fn fire(&mut self) -> bool {
         if let Some(rounds) = self.instance.magazine.checked_sub(1) {
             self.instance.magazine = rounds;

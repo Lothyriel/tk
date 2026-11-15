@@ -65,7 +65,7 @@ cargo run --bin client
 
 The client defaults to `127.0.0.1`, UDP port `9080`. No `.env` file is needed, and assets are resolved from the client manifest directory rather than the shell's working directory. For LAN play, set `$env:SERVER_ADDR = "192.168.1.10"` to your server's IP before starting the client (POSIX: `SERVER_ADDR=192.168.1.10 cargo run --bin client`). Allow the server's UDP port through the firewall. Optional `TK_PORT` changes the port on both binaries.
 
-Rebuild both binaries for protocol 8. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
+Rebuild both binaries for protocol 9 (catalog IDs and equipment slots). Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
 
 Start additional clients in separate terminals to test multiplayer. All connected players must ready up; solo play also starts normally. The server supports up to 32 clients and assigns distinct spawn positions. A client arriving during an active raid waits for the next lobby.
 

@@ -13,10 +13,11 @@ asset and in-game acceptance belong in TAR-24/35 and TAR-32/36.
 | `m1911` | M1911 target / Pistol | Colt 1911 Classic Government O1911C, Series 70, blued carbon steel, .45 ACP, 5-inch barrel |
 | `mp5` | MP5 target / Smg | Existing presentation; platform qualification is separate |
 
-`WeaponSpec::catalog_key` identifies the current base model; `WeaponKind` remains
-the legacy class until the registry migration. Display text is never a network
-key. The rifle has one identity, with no alternate public alias. The initial
-registry migration must preserve current gameplay before changing fidelity.
+`ResolvedWeapon::catalog_key` identifies the current base model; `WeaponId` is
+its stable network identity and `WeaponKind` its procedural presentation class.
+Display text is never a network key. The rifle has one identity, with no alternate
+public alias. The [shared registry](CONTENT_CATALOG.md) preserves current gameplay
+before the fidelity changes.
 
 Every authored property must identify its evidence class:
 

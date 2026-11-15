@@ -232,7 +232,7 @@ fn update_casings(
             continue;
         }
         let up = right.cross(direction).normalize_or_zero();
-        let spec = casing_spec(shot.weapon);
+        let spec = casing_spec(shot.weapon.class());
         let jitter = pattern_jitter(shot.id as u32);
         let position =
             muzzle - direction * spec.ejection_back + right * spec.ejection_side + up * 0.035;
@@ -240,7 +240,7 @@ fn update_casings(
             right * (1.35 + jitter * 0.35) + up * (1.65 + jitter.abs() * 0.25) + direction * 0.25;
         let entity = commands
             .spawn((
-                Mesh3d(assets.mesh(shot.weapon)),
+                Mesh3d(assets.mesh(shot.weapon.class())),
                 MeshMaterial3d(assets.material.clone()),
                 Transform::from_translation(position)
                     .with_rotation(Quat::from_rotation_arc(Vec3::Y, right)),
@@ -301,12 +301,13 @@ impl Response {
         }
         self.last = Some(shot.id);
         self.flash = 0.055;
-        let (lateral, vertical) = if shot.weapon == WeaponKind::Rifle {
+        let weapon = shot.weapon.class();
+        let (lateral, vertical) = if weapon == WeaponKind::Rifle {
             rifle_recoil_pattern(self.rifle_shot_count, shot.id)
         } else {
             (0.0, 1.0)
         };
-        let (pitch_impulse, yaw_impulse) = match shot.weapon {
+        let (pitch_impulse, yaw_impulse) = match weapon {
             WeaponKind::Rifle => (
                 RIFLE_RECOIL_PITCH_IMPULSE * vertical,
                 RIFLE_RECOIL_YAW_IMPULSE * lateral,
@@ -316,18 +317,18 @@ impl Response {
         };
         self.recoil_pitch_velocity += pitch_impulse;
         self.recoil_yaw_velocity += yaw_impulse;
-        if shot.weapon == WeaponKind::Rifle {
+        if weapon == WeaponKind::Rifle {
             self.rifle_shot_count = self.rifle_shot_count.wrapping_add(1);
         }
         self.velocity = (self.velocity
-            + match shot.weapon {
+            + match weapon {
                 WeaponKind::Rifle => 1.35,
                 WeaponKind::Smg => 0.9,
                 WeaponKind::Pistol => 1.9,
             })
         .min(2.5);
         self.recoil = (self.recoil
-            + if shot.weapon == WeaponKind::Rifle {
+            + if weapon == WeaponKind::Rifle {
                 0.010
             } else {
                 0.012
@@ -424,7 +425,7 @@ pub(super) fn advance(
         }
         let w = response.displayed.unwrap_or(player.weapon);
         let fraction = if player.reload_remaining > 0.0 && w == player.weapon {
-            1.0 - player.reload_remaining / player.weapon.spec().reload_seconds
+            1.0 - player.reload_remaining / player.weapon_id.spec().reload_seconds
         } else {
             0.0
         };
@@ -495,7 +496,7 @@ pub(super) fn advance(
         let requested = if local {
             if local_input
                 .as_ref()
-                .is_some_and(|i| i.aim && i.weapon == player.weapon)
+                .is_some_and(|i| i.aim && i.weapon == player.weapon_slot)
             {
                 1.0
             } else {
@@ -525,7 +526,7 @@ pub(super) fn advance(
         let response = feedback.responses.entry(shot.shooter).or_default();
         if session
             .local(shot.shooter)
-            .is_some_and(|p| p.alive && p.weapon == shot.weapon)
+            .is_some_and(|p| p.alive && p.weapon_id == shot.weapon)
         {
             response.shot(shot);
         } else if response.last.is_none_or(|id| shot.id > id) {
@@ -1071,7 +1072,7 @@ mod tests {
         let mut response = Response::default();
         response.shot(&FiredProjectileData {
             id: 1,
-            weapon: WeaponKind::Rifle,
+            weapon: WeaponId::M4A1,
             shooter: 7,
             time: 0.0,
             muzzle: [0.0; 3],
@@ -1131,6 +1132,8 @@ mod tests {
                     id: 7,
                     alive: true,
                     weapon,
+                    weapon_id: weapon.definition(),
+                    weapon_slot: EquipmentSlot::Sidearm,
                     ..default()
                 });
                 app.insert_resource(session)
@@ -1217,7 +1220,12 @@ mod tests {
                         };
                     }
                     app.world_mut().resource_mut::<LocalInput>().aim = i > 180;
-                    app.world_mut().resource_mut::<LocalInput>().weapon = weapon;
+                    app.world_mut().resource_mut::<LocalInput>().weapon =
+                        if weapon == WeaponKind::Pistol {
+                            EquipmentSlot::Sidearm
+                        } else {
+                            EquipmentSlot::Primary
+                        };
                     app.world_mut().entity_mut(camera).insert(base);
                     app.world_mut().entity_mut(world_camera).insert(base);
                     app.world_mut().entity_mut(view).insert(base);
@@ -1325,6 +1333,12 @@ mod tests {
                         id: 7,
                         alive: true,
                         weapon,
+                        weapon_id: weapon.definition(),
+                        weapon_slot: if weapon == WeaponKind::Pistol {
+                            EquipmentSlot::Sidearm
+                        } else {
+                            EquipmentSlot::Primary
+                        },
                         reload_remaining: if fraction > 0.0 {
                             weapon.spec().reload_seconds * (1.0 - fraction)
                         } else {
@@ -1637,6 +1651,8 @@ mod tests {
             id: 7,
             alive: true,
             weapon: WeaponKind::Pistol,
+            weapon_id: WeaponId::M1911,
+            weapon_slot: EquipmentSlot::Sidearm,
             ammo_in_mag: 12,
             reload_remaining: 0.75,
             ..default()
@@ -1670,6 +1686,7 @@ mod tests {
             "interruption must not snap straight to idle"
         );
         app.world_mut().resource_mut::<ClientSession>().players[0].weapon = WeaponKind::Rifle;
+        app.world_mut().resource_mut::<ClientSession>().players[0].weapon_id = WeaponId::M4A1;
         app.update();
         assert_eq!(
             app.world().resource::<Feedback>().responses[&7].displayed,
@@ -1693,7 +1710,7 @@ mod tests {
         let mut r = Response::default();
         let shot = FiredProjectileData {
             id: 1,
-            weapon: WeaponKind::Rifle,
+            weapon: WeaponId::M4A1,
             shooter: 7,
             time: 0.0,
             muzzle: [0.0; 3],
@@ -1749,12 +1766,14 @@ mod tests {
             id: 7,
             alive: true,
             weapon: WeaponKind::Pistol,
+            weapon_id: WeaponId::M1911,
+            weapon_slot: EquipmentSlot::Sidearm,
             ..default()
         });
         session.shots.push(FiredProjectileData {
             id: 1,
             shooter: 7,
-            weapon: WeaponKind::Pistol,
+            weapon: WeaponId::M1911,
             time: 0.0,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
@@ -1766,9 +1785,11 @@ mod tests {
         app.update();
         assert!(app.world().resource::<Feedback>().responses[&7].flash > 0.0);
         app.world_mut().resource_mut::<ClientSession>().players[0].weapon = WeaponKind::Rifle;
+        app.world_mut().resource_mut::<ClientSession>().players[0].weapon_id = WeaponId::M4A1;
         app.update();
         assert_eq!(app.world().resource::<Feedback>().responses[&7].flash, 0.0);
         app.world_mut().resource_mut::<ClientSession>().players[0].weapon = WeaponKind::Pistol;
+        app.world_mut().resource_mut::<ClientSession>().players[0].weapon_id = WeaponId::M1911;
         app.update();
         assert_eq!(app.world().resource::<Feedback>().responses[&7].flash, 0.0);
     }
