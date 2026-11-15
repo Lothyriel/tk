@@ -44,12 +44,16 @@ fn replication_owned_pool_is_bounded_versioned_and_reconstructs_mixed_kit() {
         .unwrap();
     let packet = publisher.entries()[0].clone();
     assert_eq!(
-        packet.magazines,
-        [DefinitionId(101), DefinitionId(101), DefinitionId(120)]
+        packet
+            .magazines
+            .iter()
+            .map(|m| m.definition)
+            .collect::<Vec<_>>(),
+        [DefinitionId(101), DefinitionId(120), DefinitionId(101)]
     );
     assert_eq!(
         packet.kit(catalog()).unwrap().reserves,
-        [DefinitionId(101), DefinitionId(120)]
+        [DefinitionId(120), DefinitionId(101)]
     );
     let mut cache = ConfigurationCache::default();
     cache.begin_epoch(1).unwrap();
@@ -66,7 +70,8 @@ fn replication_owned_pool_is_bounded_versioned_and_reconstructs_mixed_kit() {
     let mut forged = packet;
     forged.handle += 1;
     forged.revision += 1;
-    forged.magazines = vec![DefinitionId(102)];
+    forged.magazines.truncate(1);
+    forged.magazines[0].definition = DefinitionId(102);
     assert!(cache.apply(catalog(), fingerprint(), forged).is_err());
     assert_eq!(
         cache

@@ -54,6 +54,12 @@ fn content_fingerprint(source: &str, rigs: &str) -> u64 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]
+pub struct MagazineDefinition {
+    pub id: crate::catalog::MagazineInstanceId,
+    pub definition: crate::catalog::DefinitionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub struct Configuration {
     pub epoch: u64,
     pub handle: u32,
@@ -63,9 +69,9 @@ pub struct Configuration {
     pub instance: WeaponInstanceId,
     pub revision: u64,
     pub weapon: WeaponConfiguration,
-    /// Definitions of the owned physical pool, not ammunition counts or a
-    /// second inventory. Stable through reloads; bounded by retained magazines.
-    pub magazines: Vec<crate::catalog::DefinitionId>,
+    /// Ordered identity/definition roster. Snapshot indices refer to this
+    /// immutable pool; never sort it or put ammunition counts here.
+    pub magazines: Vec<MagazineDefinition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,7 +97,7 @@ fn configuration_bounds(weapon: &WeaponConfiguration) -> bool {
 
 impl Configuration {
     pub fn kit(&self, catalog: &Catalog) -> Result<crate::catalog::WeaponKit, ConfigurationError> {
-        let mut reserves = self.magazines.clone();
+        let mut reserves: Vec<_> = self.magazines.iter().map(|m| m.definition).collect();
         let inserted = self
             .weapon
             .components
@@ -114,6 +120,10 @@ impl Configuration {
         })
     }
 
+    pub fn magazine(&self, value: crate::catalog::MagazineSnapshot) -> Option<&MagazineDefinition> {
+        self.magazines.get(value.pool_index()?)
+    }
+
     /// Size is checked before aligned allocation/checked archive decoding.
     /// Semantic limits are checked before invoking the assembly resolver.
     pub fn decode(bytes: &[u8]) -> Result<Self, ConfigurationError> {
@@ -132,6 +142,9 @@ impl Configuration {
             || !configuration_bounds(&self.weapon)
             || self.magazines.is_empty()
             || self.magazines.len() > crate::catalog::MAX_RETAINED_MAGAZINES
+            || self.magazines.iter().enumerate().any(|(index, m)| {
+                m.id.0 == 0 || self.magazines[..index].iter().any(|other| other.id == m.id)
+            })
         {
             return Err(ConfigurationError::Bounds);
         }
@@ -311,7 +324,6 @@ impl ConfigurationCache {
             return Err(ConfigurationError::Catalog);
         }
         packet.weapon.components.sort_by_key(|node| node.node);
-        packet.magazines.sort();
         if let Some(existing) = self.entries.get(&packet.handle) {
             return if existing.packet == packet {
                 Ok(false)
@@ -407,19 +419,12 @@ impl ConfigurationPublisher {
                     .iter()
                     .all(|node| weapon.components.contains(node))
                 && existing.magazines.len() == instance.mechanics.magazines().len()
-                && existing.magazines.iter().all(|definition| {
-                    existing
-                        .magazines
-                        .iter()
-                        .filter(|other| *other == definition)
-                        .count()
-                        == instance
-                            .mechanics
-                            .magazines()
-                            .iter()
-                            .filter(|m| m.definition == *definition)
-                            .count()
-                }) {
+                && existing
+                    .magazines
+                    .iter()
+                    .zip(instance.mechanics.magazines())
+                    .all(|(a, b)| a.id == b.id && a.definition == b.definition)
+            {
                 Ok(existing.handle)
             } else {
                 Err(ConfigurationError::Conflict)
@@ -430,13 +435,15 @@ impl ConfigurationPublisher {
         }
         let mut weapon = instance.configuration.clone();
         weapon.components.sort_by_key(|node| node.node);
-        let mut magazines: Vec<_> = instance
+        let magazines: Vec<_> = instance
             .mechanics
             .magazines()
             .iter()
-            .map(|m| m.definition)
+            .map(|m| MagazineDefinition {
+                id: m.id,
+                definition: m.definition,
+            })
             .collect();
-        magazines.sort();
         let packet = Configuration {
             epoch: self.epoch,
             handle: self.entries.len() as u32 + 1,

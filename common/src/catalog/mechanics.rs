@@ -49,6 +49,9 @@ pub struct Manipulation {
     /// Mechanical time, advanced by authoritative delta * handling rate.
     pub elapsed: f32,
     pub duration: f32,
+    /// Retained throughout the reload, including after removal/insertion.
+    /// A late observer must not infer the outgoing geometry from the new kit.
+    pub source_magazine: Option<MagazineInstanceId>,
     pub target_magazine: Option<MagazineInstanceId>,
 }
 
@@ -100,10 +103,42 @@ pub struct MechanicalState {
     action_sequence: u64,
 }
 
+/// Index into the configuration's immutable physical pool, plus current rounds.
+/// Bits 0..2 are index+1 (zero is absent); 3..12 hold 0..1000 rounds.
+/// Identity/definition travel once on the reliable channel, not every snapshot.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+pub struct MagazineSnapshot(pub u16);
+
+impl MagazineSnapshot {
+    pub fn present(self) -> bool {
+        self.pool_index().is_some()
+    }
+
+    pub fn pool_index(self) -> Option<usize> {
+        let index = (self.0 & 7) as usize;
+        (1..=MAX_RETAINED_MAGAZINES)
+            .contains(&index)
+            .then(|| index - 1)
+    }
+
+    pub fn rounds(self) -> u32 {
+        u32::from(self.0 >> 3)
+    }
+
+    pub fn new(index: usize, rounds: u32) -> Self {
+        assert!(index < MAX_RETAINED_MAGAZINES && rounds <= 1000);
+        Self(((rounds as u16) << 3) | (index as u16 + 1))
+    }
+}
+
 /// Compact dynamic state; no magazine pool or attachment tree per snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Archive, Serialize, Deserialize)]
 pub struct MechanicalSnapshot {
     pub action_id: u64,
+    /// Outgoing magazine while reloading; otherwise the inserted magazine.
+    pub magazine: MagazineSnapshot,
+    /// Incoming magazine while reloading, absent for other actions/idle.
+    pub reload_target: MagazineSnapshot,
     pub fraction: f32,
     pub remaining: f32,
     pub kind: Option<ManipulationKind>,
@@ -119,6 +154,8 @@ impl Default for MechanicalSnapshot {
     fn default() -> Self {
         Self {
             action_id: 0,
+            magazine: Default::default(),
+            reload_target: Default::default(),
             fraction: 0.0,
             remaining: 0.0,
             kind: None,
@@ -133,6 +170,22 @@ impl Default for MechanicalSnapshot {
 }
 
 impl MechanicalSnapshot {
+    pub fn inserted_magazine(self) -> Option<MagazineSnapshot> {
+        if !self.magazine_inserted {
+            return None;
+        }
+        let magazine = if self.reloading()
+            && matches!(
+                self.phase,
+                Some(ManipulationPhase::Feed | ManipulationPhase::Finish)
+            ) {
+            self.reload_target
+        } else {
+            self.magazine
+        };
+        magazine.present().then_some(magazine)
+    }
+
     pub fn reloading(self) -> bool {
         matches!(
             self.kind,
@@ -143,8 +196,25 @@ impl MechanicalSnapshot {
 
 impl MechanicalState {
     pub fn snapshot(&self) -> MechanicalSnapshot {
+        let reload = self.action.as_ref().filter(|a| {
+            matches!(
+                a.kind,
+                ManipulationKind::TacticalReload | ManipulationKind::EmptyReload
+            )
+        });
+        let describe = |id| {
+            self.magazines
+                .iter()
+                .enumerate()
+                .find(|(_, m)| Some(m.id) == id)
+                .map_or_else(MagazineSnapshot::default, |(index, m)| {
+                    MagazineSnapshot::new(index, m.rounds)
+                })
+        };
         MechanicalSnapshot {
             action_id: self.action_sequence,
+            magazine: describe(reload.map_or(self.inserted, |a| a.source_magazine)),
+            reload_target: describe(reload.and_then(|a| a.target_magazine)),
             fraction: self.action.as_ref().map_or(0.0, Manipulation::fraction),
             remaining: self.action.as_ref().map_or(0.0, Manipulation::remaining),
             kind: self.action.as_ref().map(|a| a.kind),
@@ -368,7 +438,10 @@ impl MechanicalState {
                 ManipulationKind::Unequip => action.phase == ManipulationPhase::Unequip,
                 ManipulationKind::Inspect => action.phase == ManipulationPhase::Inspect,
             };
-            if !phase_matches || action.target_magazine.is_some_and(|id| !ids.contains(&id)) {
+            if !phase_matches
+                || action.target_magazine.is_some_and(|id| !ids.contains(&id))
+                || action.source_magazine.is_some_and(|id| !ids.contains(&id))
+            {
                 return Err(fail("invalid manipulation phase/target"));
             }
             if (action.kind == ManipulationKind::Equip) == self.equipped {
@@ -381,6 +454,12 @@ impl MechanicalState {
                 let Some(target) = action.target_magazine else {
                     return Err(fail("reload without target"));
                 };
+                if action.source_magazine == Some(target)
+                    || (action.phase == ManipulationPhase::Remove
+                        && action.source_magazine != self.inserted)
+                {
+                    return Err(fail("reload source disagrees with outgoing magazine"));
+                }
                 if (action.phase == ManipulationPhase::Remove
                     && (self.inserted.is_none() || self.inserted == Some(target)))
                     || (action.phase == ManipulationPhase::Insert && self.inserted.is_some())
@@ -407,7 +486,7 @@ impl MechanicalState {
                 {
                     return Err(fail("reload target is empty"));
                 }
-            } else if action.target_magazine.is_some() {
+            } else if action.target_magazine.is_some() || action.source_magazine.is_some() {
                 return Err(fail("non-reload action has magazine target"));
             }
         }
@@ -480,6 +559,11 @@ impl MechanicalState {
             phase,
             elapsed: 0.0,
             duration,
+            source_magazine: if phase == ManipulationPhase::Remove {
+                self.inserted
+            } else {
+                None
+            },
             target_magazine,
         });
         true
@@ -671,5 +755,7 @@ impl MechanicalState {
     }
 }
 
+#[cfg(test)]
+mod presentation_tests;
 #[cfg(test)]
 mod tests;
