@@ -4,7 +4,7 @@
 
 Scoped behavioral checks pass. The required full gate stops at an existing Clippy failure; visible smoothness and real UDP performance remain unverified. The user explicitly requested a local trial and committing pending changes after being informed of these limitations.
 
-Scope: changes against camera commit `6a4a99b`. This is a standalone review and isolated sensor under TLC's no-subagent fallback: the side conversation prohibits subagents, so this report does not claim independent agent verification. No destruction work is included.
+Scope: the 60 Hz timing changes against camera commit `6a4a99b`. This is a standalone review and isolated sensor under TLC's no-subagent fallback: the side conversation prohibits subagents, so this report does not claim independent agent verification. No destruction implementation was authored by this trial; the concurrent commit overlap is recorded below.
 
 ## Acceptance evidence and test adequacy
 
@@ -42,3 +42,7 @@ Both unmodified scratch baselines passed first (one server test and four client 
 Only copied server/client source was mutated. Scratch package names `tk-60hz-server-sensor` and `tk-60hz-client-sensor` isolate final package artifacts while sharing unchanged dependency artifacts in the existing target directory. Common source was copied unchanged and never mutated. No stash or real-source restoration was used. The scratch was removed. HEAD, complete porcelain and all six scoped file hashes matched before/after; evidence captures are `/tmp/tk-60hz-sensor-85tp1ito/before.json` and `after.json`. Subsequent spec/status/report edits were outside that completed isolation interval.
 
 No surviving mutant, uncovered numerical criterion or new test failure remains. Existing lint debt and lack of visual/UDP acceptance keep formal completion open. No new lesson is recorded for the already documented baseline lint blocker.
+
+## Concurrent commit overlap
+
+The 143-test run and isolated sensors above completed before concurrent destruction edits. While sandbox permission to commit was pending, the parent conversation changed three shared files. Commit `9403702` therefore also captured its impact-cell bookkeeping methods in `server/src/tick/mod.rs`, destruction-test module registration in `server/src/tick/tests.rs`, and one destruction-guide sentence. This was an unintended staging overlap, not additional destruction validation by this trial. The parent then committed the remaining fix as `a521863`, so no shared history was rewritten. The test evidence above applies to the isolated timing changes; the parent owns validation of its destruction changes. The original camera fix was committed separately as `6a4a99b`.
