@@ -5,6 +5,14 @@ use common::{combat::*, raid::*, *};
 
 use super::{Projectile, WorldState, can_stand_up, set_crouched_state};
 
+pub(super) fn impact_mark_size_mm(weapon: WeaponKind) -> u8 {
+    match weapon {
+        WeaponKind::Pistol => 25,
+        WeaponKind::Smg => 35,
+        WeaponKind::Rifle => 50,
+    }
+}
+
 pub(super) fn physx_tick(
     context: ReadRapierContext,
     raid: Res<RaidState>,
@@ -180,6 +188,7 @@ pub(super) fn weapons_tick(
         commands.spawn((
             Projectile {
                 id,
+                weapon,
                 velocity: direction * weapon.spec().muzzle_speed,
                 damage: arsenal.loadout.ammo.damage(weapon),
                 penetration: arsenal.loadout.ammo.penetration(weapon),
@@ -401,7 +410,11 @@ pub(super) fn projectiles_tick(
                         projectile.id, hit.time_of_impact, hit.point
                     );
                 }
-                world_state.impact(hit.point, hit.normal);
+                world_state.impact(
+                    hit.point,
+                    hit.normal,
+                    impact_mark_size_mm(projectile.weapon),
+                );
                 let Ok((surface, collider, surface_transform)) = surfaces.get(hit_entity) else {
                     stopped = true;
                     break;
@@ -430,7 +443,11 @@ pub(super) fn projectiles_tick(
                 projectile.damage *= energy / projectile.penetration;
                 projectile.penetration = energy;
                 projectile.penetrated.push(hit_entity);
-                world_state.impact(exit.point, exit.normal);
+                world_state.impact(
+                    exit.point,
+                    exit.normal,
+                    impact_mark_size_mm(projectile.weapon),
+                );
                 let traveled = hit.time_of_impact + 0.002;
                 start = hit.point + direction * 0.002;
                 remaining -= traveled;

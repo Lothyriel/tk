@@ -68,7 +68,7 @@ pub struct ProjectileVisual {
 
 #[derive(Debug, Component)]
 pub struct ImpactMarkVisual {
-    pub id: u64,
+    pub id: u32,
 }
 
 #[derive(Debug, Component)]

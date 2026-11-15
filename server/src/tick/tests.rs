@@ -16,6 +16,25 @@ fn app() -> App {
     app
 }
 
+#[test]
+fn impact_mark_size_scales_with_authoritative_projectile_weapon() {
+    assert_eq!(simulation::impact_mark_size_mm(WeaponKind::Pistol), 25);
+    assert_eq!(simulation::impact_mark_size_mm(WeaponKind::Smg), 35);
+    assert_eq!(simulation::impact_mark_size_mm(WeaponKind::Rifle), 50);
+
+    let mut world = WorldState {
+        next_mark_id: u32::MAX - 1,
+        ..default()
+    };
+    for _ in 0..258 {
+        world.impact(Vec3::ZERO, Vec3::Y, 25);
+    }
+    let mut retained_ids: Vec<_> = world.impact_marks.iter().map(|mark| mark.id).collect();
+    retained_ids.sort_unstable();
+    retained_ids.dedup();
+    assert_eq!(retained_ids.len(), 256);
+}
+
 fn add_player(app: &mut App, id: u64, loadout: Loadout) -> Entity {
     let player = app
         .world_mut()
@@ -282,6 +301,7 @@ fn cover_hit(surface: SurfaceKind, half_thickness: f32) -> (f32, usize) {
     app.world_mut().spawn((
         Projectile {
             id: 1,
+            weapon: WeaponKind::Rifle,
             velocity: Vec3::Z * 100.0,
             damage: 50.0,
             penetration: 30.0,
@@ -823,6 +843,7 @@ fn last_participant_death_still_transfers_a_ragdoll_after_entering_debrief() {
     app.world_mut().spawn((
         Projectile {
             id: 9999,
+            weapon: WeaponKind::Rifle,
             velocity: -Vec3::X * 200.0,
             damage: 34.0,
             penetration: 100.0,
@@ -1116,6 +1137,7 @@ fn fatal_hit_materializes_the_body_before_the_same_tick_snapshot() {
     app.world_mut().spawn((
         Projectile {
             id: 991,
+            weapon: WeaponKind::Rifle,
             velocity: -Vec3::X * 200.0,
             damage: 100.0,
             penetration: 100.0,
@@ -1866,6 +1888,7 @@ fn pre_muzzle_wood_attenuates_once_across_clearance_and_normal_flight() {
     app.world_mut().spawn((
         Projectile {
             id: 991,
+            weapon: WeaponKind::Rifle,
             velocity: Vec3::Z * 100.0,
             damage: 50.0,
             penetration: 30.0,
@@ -1916,6 +1939,7 @@ fn pre_muzzle_ray_through_a_posed_leg_gap_does_not_hit_the_movement_capsule() {
         .spawn((
             Projectile {
                 id: 992,
+                weapon: WeaponKind::Rifle,
                 velocity: Vec3::Z * 100.0,
                 damage: 50.0,
                 penetration: 30.0,
@@ -1960,6 +1984,7 @@ fn muzzle_inside_the_same_wood_keeps_penetration_ids_across_both_paths() {
     app.world_mut().spawn((
         Projectile {
             id: 993,
+            weapon: WeaponKind::Rifle,
             velocity: Vec3::Z * 100.0,
             damage: 50.0,
             penetration: 30.0,

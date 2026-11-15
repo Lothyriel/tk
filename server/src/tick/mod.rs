@@ -68,7 +68,8 @@ impl bevy::prelude::Plugin for Plugin {
 #[derive(Debug, Default, Resource)]
 struct WorldState {
     next_projectile_id: u64,
-    next_mark_id: u64,
+    // Only 256 marks are retained, so wrapping 32-bit IDs stay unique in a snapshot.
+    next_mark_id: u32,
     impact_marks: Vec<ImpactMarkData>,
     fired_projectiles: Vec<FiredProjectileData>,
     snapshot_elapsed: f32,
@@ -77,7 +78,7 @@ struct WorldState {
 }
 
 impl WorldState {
-    fn impact(&mut self, position: Vec3, normal: Vec3) {
+    fn impact(&mut self, position: Vec3, normal: Vec3, size_mm: u8) {
         if self.impact_marks.len() == 256 {
             self.impact_marks.remove(0);
         }
@@ -85,6 +86,7 @@ impl WorldState {
             id: self.next_mark_id,
             pos: position.into(),
             normal: normal.into(),
+            size_mm,
         });
         self.next_mark_id = self.next_mark_id.wrapping_add(1);
     }
@@ -98,6 +100,7 @@ struct LastInput {
 #[derive(Debug, Component)]
 struct Projectile {
     id: u64,
+    weapon: WeaponKind,
     velocity: Vec3,
     damage: f32,
     penetration: f32,

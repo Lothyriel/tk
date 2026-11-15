@@ -18,6 +18,7 @@ pub(crate) struct ClientSession {
     pub physics_pieces: Vec<common::PhysicsPieceData>,
     pub simulation_time: f32,
     pub shots: Vec<common::FiredProjectileData>,
+    pub casing_shots: Vec<common::FiredProjectileData>,
     pub last_shot: Option<u64>,
 }
 
@@ -143,6 +144,7 @@ fn recv_players_pos(
         || session.raid.phase != snapshot.raid.phase && snapshot.raid.phase == RaidPhase::Lobby;
     if new_raid {
         session.shots.clear();
+        session.casing_shots.clear();
     }
 
     let removed: Vec<_> = lobby
@@ -198,11 +200,13 @@ fn recv_players_pos(
         }
     }
 
-    session.shots = fresh_shots(
+    let (shots, casing_shots) = fresh_shot_streams(
         &snapshot.fired_projectiles,
         &mut session.last_shot,
         snapshot.simulation_time,
     );
+    session.shots = shots;
+    session.casing_shots = casing_shots;
 
     sync_projectile_visuals(
         &mut commands,
@@ -227,33 +231,46 @@ fn recv_players_pos(
 }
 
 /// Consume IDs even when too old to present. Recovery never stacks delayed recoil in one frame.
-fn fresh_shots(
+fn fresh_shot_streams(
     shots: &[common::FiredProjectileData],
     last: &mut Option<u64>,
     now: f32,
-) -> Vec<common::FiredProjectileData> {
-    let mut fresh = Vec::new();
+) -> (
+    Vec<common::FiredProjectileData>,
+    Vec<common::FiredProjectileData>,
+) {
+    let mut coalesced = Vec::new();
+    let mut casing_shots = Vec::new();
     for shot in shots {
         if last.is_none_or(|id| shot.id > id) {
             *last = Some(shot.id);
             if now - shot.time < 0.15 {
-                if let Some(index) = fresh
+                casing_shots.push(shot.clone());
+                if let Some(index) = coalesced
                     .iter()
                     .position(|s: &common::FiredProjectileData| s.shooter == shot.shooter)
                 {
-                    fresh[index] = shot.clone();
+                    coalesced[index] = shot.clone();
                 } else {
-                    fresh.push(shot.clone());
+                    coalesced.push(shot.clone());
                 }
             }
         }
     }
-    fresh
+    (coalesced, casing_shots)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn impact_mark_scale_applies_serialized_diameter() {
+        assert_eq!(impact_mark_scale(25), Vec3::new(0.025, 0.025, 0.002));
+        assert_eq!(impact_mark_scale(35), Vec3::new(0.035, 0.035, 0.002));
+        assert_eq!(impact_mark_scale(50), Vec3::new(0.05, 0.05, 0.002));
+    }
+
     #[test]
     fn snapshot_repetition_and_loss_never_stack_delayed_shots() {
         let shots: Vec<_> = (0..10)
@@ -267,14 +284,36 @@ mod tests {
             })
             .collect();
         let mut last = None;
-        let fresh = fresh_shots(&shots, &mut last, 1.0);
+        let (fresh, _) = fresh_shot_streams(&shots, &mut last, 1.0);
         assert_eq!(fresh.len(), 1);
         assert_eq!(fresh[0].id, 9);
         assert_eq!(last, Some(9));
-        assert!(fresh_shots(&shots, &mut last, 1.1).is_empty());
+        assert!(fresh_shot_streams(&shots, &mut last, 1.1).0.is_empty());
         let mut last = None;
-        assert!(fresh_shots(&shots, &mut last, 2.0).is_empty());
+        assert!(fresh_shot_streams(&shots, &mut last, 2.0).0.is_empty());
         assert_eq!(last, Some(9));
+    }
+
+    #[test]
+    fn casing_stream_preserves_each_fresh_shot_while_recoil_stays_coalesced() {
+        let shots: Vec<_> = (1..=3)
+            .map(|id| common::FiredProjectileData {
+                id,
+                weapon: common::WeaponKind::Rifle,
+                shooter: 7,
+                time: 1.0 - id as f32 * 0.01,
+                muzzle: [0.0; 3],
+                direction: [0.0, 0.0, -1.0],
+            })
+            .collect();
+        let mut last = None;
+        let (recoil, casings) = fresh_shot_streams(&shots, &mut last, 1.0);
+        assert_eq!(recoil.len(), 1);
+        assert_eq!(recoil[0].id, 3);
+        assert_eq!(
+            casings.iter().map(|shot| shot.id).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
     }
 }
 
@@ -355,9 +394,9 @@ fn sync_impact_visuals(
         }
 
         let normal: Vec3 = impact.normal.into();
-        let mut transform = Transform::from_translation(Vec3::from(impact.pos) + normal * 0.01);
+        let mut transform = Transform::from_translation(Vec3::from(impact.pos) + normal * 0.001);
         transform.look_to(normal, Vec3::Y);
-        transform.scale = Vec3::new(0.18, 0.18, 0.01);
+        transform.scale = impact_mark_scale(impact.size_mm);
 
         commands.spawn((
             ImpactMarkVisual { id: impact.id },
@@ -366,4 +405,9 @@ fn sync_impact_visuals(
             transform,
         ));
     }
+}
+
+fn impact_mark_scale(size_mm: u8) -> Vec3 {
+    let diameter = size_mm as f32 / 1000.0;
+    Vec3::new(diameter, diameter, 0.002)
 }

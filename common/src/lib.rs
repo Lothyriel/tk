@@ -11,7 +11,7 @@ use bevy_renet2::{netcode::NetcodeTransportError, prelude::ClientId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 5;
+pub const PROTOCOL_ID: u64 = 6;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
 pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;
@@ -260,9 +260,10 @@ pub struct PhysicsPieceData {
 
 #[derive(Debug, Archive, Serialize, Deserialize, Clone)]
 pub struct ImpactMarkData {
-    pub id: u64,
+    pub id: u32,
     pub pos: [f32; 3],
     pub normal: [f32; 3],
+    pub size_mm: u8,
 }
 
 #[derive(Debug, Archive, Serialize, Deserialize)]

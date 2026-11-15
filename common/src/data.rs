@@ -87,7 +87,12 @@ mod tests {
             raid: default(),
             players: vec![player.clone()],
             projectiles: vec![],
-            impact_marks: vec![],
+            impact_marks: vec![ImpactMarkData {
+                id: 9,
+                pos: [1.0, 2.0, 3.0],
+                normal: [0.0, 0.0, 1.0],
+                size_mm: 25,
+            }],
             fired_projectiles: vec![shot],
             physics_pieces: vec![piece],
             simulation_time: 4.0,
@@ -102,6 +107,8 @@ mod tests {
         assert_eq!(decoded.physics_pieces[0].pose.position, [1.0, 0.2, 3.0]);
         assert_eq!(decoded.fired_projectiles[0].shooter, 7);
         assert_eq!(decoded.fired_projectiles[0].id, 44);
+        assert_eq!(decoded.impact_marks[0].id, 9);
+        assert_eq!(decoded.impact_marks[0].size_mm, 25);
         let mut worst = snapshot;
         worst.players = (0..32)
             .map(|id| ClientData {
@@ -120,6 +127,7 @@ mod tests {
                 id,
                 pos: [0.0; 3],
                 normal: [0.0, 1.0, 0.0],
+                size_mm: 50,
             })
             .collect();
         worst.fired_projectiles = (0..224)

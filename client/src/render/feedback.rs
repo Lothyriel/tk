@@ -21,6 +21,39 @@ const RIFLE_RECOIL_PITCH_IMPULSE: f32 = 1.25;
 const RIFLE_RECOIL_YAW_IMPULSE: f32 = 0.28;
 const RIFLE_RECOIL_LATERAL_JITTER: f32 = 0.035;
 const RIFLE_RECOIL_VERTICAL_JITTER: f32 = 0.025;
+const CASING_LIFETIME: f32 = 60.0;
+const CASING_GROUND_HEIGHT: f32 = 0.105;
+
+#[derive(Debug, Clone, Copy)]
+struct CasingSpec {
+    radius: f32,
+    length: f32,
+    ejection_back: f32,
+    ejection_side: f32,
+}
+
+fn casing_spec(weapon: WeaponKind) -> CasingSpec {
+    match weapon {
+        WeaponKind::Pistol => CasingSpec {
+            radius: 0.0038,
+            length: 0.018,
+            ejection_back: 0.12,
+            ejection_side: 0.045,
+        },
+        WeaponKind::Smg => CasingSpec {
+            radius: 0.0045,
+            length: 0.025,
+            ejection_back: 0.27,
+            ejection_side: 0.055,
+        },
+        WeaponKind::Rifle => CasingSpec {
+            radius: 0.0052,
+            length: 0.045,
+            ejection_back: 0.40,
+            ejection_side: 0.065,
+        },
+    }
+}
 
 fn pattern_jitter(seed: u32) -> f32 {
     let mut bits = seed;
@@ -46,17 +79,179 @@ fn rifle_recoil_pattern(shot_index: u32, shot_id: u64) -> (f32, f32) {
 pub struct Plugin;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Feedback>().add_systems(
-            Update,
-            (
-                (advance, apply_local_camera_recoil)
-                    .chain()
-                    .before(super::sync_local_view),
-                animate_local.after(super::sync_local_view),
-                frame_local_pistol.after(animate_local),
+        app.init_resource::<Feedback>()
+            .add_systems(
+                Update,
+                (
+                    (advance, apply_local_camera_recoil)
+                        .chain()
+                        .before(super::sync_local_view),
+                    animate_local.after(super::sync_local_view),
+                    frame_local_pistol.after(animate_local),
+                )
+                    .in_set(ClientSystems::Present),
             )
-                .in_set(ClientSystems::Present),
-        );
+            .init_resource::<CasingState>()
+            .add_systems(Startup, setup_casing_assets)
+            .add_systems(Update, update_casings.in_set(ClientSystems::Present));
+    }
+}
+
+#[derive(Resource)]
+struct CasingAssets {
+    meshes: [Handle<Mesh>; 3],
+    material: Handle<StandardMaterial>,
+}
+
+impl CasingAssets {
+    fn mesh(&self, weapon: WeaponKind) -> Handle<Mesh> {
+        self.meshes[weapon.index()].clone()
+    }
+}
+
+fn setup_casing_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let mut casing_mesh = |weapon| {
+        let spec = casing_spec(weapon);
+        meshes.add(Cylinder::new(spec.radius, spec.length))
+    };
+    commands.insert_resource(CasingAssets {
+        meshes: [
+            casing_mesh(WeaponKind::Rifle),
+            casing_mesh(WeaponKind::Pistol),
+            casing_mesh(WeaponKind::Smg),
+        ],
+        material: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.68, 0.43, 0.13),
+            metallic: 0.72,
+            perceptual_roughness: 0.34,
+            ..default()
+        }),
+    });
+}
+
+#[derive(Component)]
+struct EjectedCasing {
+    velocity: Vec3,
+    spin: Vec3,
+    lifetime: f32,
+}
+
+#[derive(Default, Resource)]
+struct CasingState {
+    raid: Option<u32>,
+    last_shot_by_shooter: HashMap<u64, u64>,
+    active: Vec<Entity>,
+}
+
+impl CasingState {
+    fn should_eject(&mut self, shooter: u64, shot_id: u64) -> bool {
+        if self
+            .last_shot_by_shooter
+            .get(&shooter)
+            .is_some_and(|last| shot_id <= *last)
+        {
+            return false;
+        }
+        self.last_shot_by_shooter.insert(shooter, shot_id);
+        true
+    }
+
+    fn track(&mut self, entity: Entity) {
+        self.active.push(entity);
+    }
+}
+
+fn step_casing(casing: &mut EjectedCasing, transform: &mut Transform, delta: f32) -> bool {
+    casing.lifetime -= delta;
+    if casing.lifetime <= 0.0 {
+        return true;
+    }
+    casing.velocity.y -= 9.81 * delta;
+    transform.translation += casing.velocity * delta;
+    transform.rotation = Quat::from_euler(
+        EulerRot::XYZ,
+        casing.spin.x * delta,
+        casing.spin.y * delta,
+        casing.spin.z * delta,
+    ) * transform.rotation;
+    if transform.translation.y < CASING_GROUND_HEIGHT {
+        transform.translation.y = CASING_GROUND_HEIGHT;
+        if casing.velocity.y < -0.25 {
+            casing.velocity.y *= -0.24;
+        } else {
+            casing.velocity.y = 0.0;
+        }
+        casing.velocity.x *= 0.72;
+        casing.velocity.z *= 0.72;
+        casing.spin *= 0.82;
+    }
+    false
+}
+
+fn update_casings(
+    mut commands: Commands,
+    time: Res<Time>,
+    session: Res<ClientSession>,
+    assets: Res<CasingAssets>,
+    mut state: ResMut<CasingState>,
+    mut casings: Query<(Entity, &mut EjectedCasing, &mut Transform)>,
+) {
+    if state.raid != Some(session.raid.raid_id) {
+        for entity in state.active.drain(..) {
+            commands.entity(entity).despawn();
+        }
+        state.last_shot_by_shooter.clear();
+        state.raid = Some(session.raid.raid_id);
+    }
+
+    let delta = time.delta_secs().min(0.05);
+    let mut expired = Vec::new();
+    for (entity, mut casing, mut transform) in &mut casings {
+        if step_casing(&mut casing, &mut transform, delta) {
+            expired.push(entity);
+            commands.entity(entity).despawn();
+        }
+    }
+    state.active.retain(|entity| !expired.contains(entity));
+
+    for shot in &session.casing_shots {
+        if !state.should_eject(shot.shooter, shot.id) {
+            continue;
+        }
+        let muzzle = Vec3::from(shot.muzzle);
+        let direction = Vec3::from(shot.direction).normalize_or_zero();
+        if !muzzle.is_finite() || !direction.is_finite() || direction == Vec3::ZERO {
+            continue;
+        }
+        let right = direction.cross(Vec3::Y).normalize_or_zero();
+        if right == Vec3::ZERO {
+            continue;
+        }
+        let up = right.cross(direction).normalize_or_zero();
+        let spec = casing_spec(shot.weapon);
+        let jitter = pattern_jitter(shot.id as u32);
+        let position =
+            muzzle - direction * spec.ejection_back + right * spec.ejection_side + up * 0.035;
+        let velocity =
+            right * (1.35 + jitter * 0.35) + up * (1.65 + jitter.abs() * 0.25) + direction * 0.25;
+        let entity = commands
+            .spawn((
+                Mesh3d(assets.mesh(shot.weapon)),
+                MeshMaterial3d(assets.material.clone()),
+                Transform::from_translation(position)
+                    .with_rotation(Quat::from_rotation_arc(Vec3::Y, right)),
+                EjectedCasing {
+                    velocity,
+                    spin: Vec3::new(11.0 + jitter * 5.0, 15.0, 8.0 - jitter * 4.0),
+                    lifetime: CASING_LIFETIME,
+                },
+            ))
+            .id();
+        state.track(entity);
     }
 }
 #[derive(Default)]
@@ -792,6 +987,48 @@ fn pistol_frame_correction(points: &[Vec3], projection: &PerspectiveProjection, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_casing_dimensions_increase_from_pistol_to_smg_to_rifle() {
+        let pistol = casing_spec(WeaponKind::Pistol);
+        let smg = casing_spec(WeaponKind::Smg);
+        let rifle = casing_spec(WeaponKind::Rifle);
+        assert!(pistol.radius < smg.radius && smg.radius < rifle.radius);
+        assert!(pistol.length < smg.length && smg.length < rifle.length);
+    }
+
+    #[test]
+    fn shell_casing_tracking_has_no_cap_and_lifetime_expires() {
+        let mut world = World::new();
+        let mut state = CasingState::default();
+        let entities: Vec<_> = (0..96).map(|_| world.spawn_empty().id()).collect();
+        for entity in &entities {
+            state.track(*entity);
+        }
+        assert_eq!(state.active.len(), entities.len());
+        assert_eq!(state.active.first(), entities.first());
+        assert_eq!(state.active.last(), entities.last());
+        assert_eq!(CASING_LIFETIME, 60.0);
+
+        let mut casing = EjectedCasing {
+            velocity: Vec3::ZERO,
+            spin: Vec3::ZERO,
+            lifetime: CASING_LIFETIME,
+        };
+        let mut transform = Transform::from_xyz(0.0, 1.0, 0.0);
+        assert!(!step_casing(&mut casing, &mut transform, 59.9));
+        assert!((casing.lifetime - 0.1).abs() < 0.001);
+        assert!(step_casing(&mut casing, &mut transform, 0.2));
+    }
+
+    #[test]
+    fn shell_casing_dedup_tracks_each_shooter_independently() {
+        let mut state = CasingState::default();
+        assert!(state.should_eject(7, 10));
+        assert!(state.should_eject(8, 9));
+        assert!(!state.should_eject(7, 10));
+        assert!(!state.should_eject(8, 8));
+    }
 
     #[test]
     fn rifle_recoil_pattern_has_bounded_seeded_variation_and_reduced_impulse() {
