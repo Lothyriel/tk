@@ -246,6 +246,7 @@ pub(super) fn projectiles_tick(
     >,
     surfaces: Query<(&SurfaceKind, &Collider, &Transform), Without<Projectile>>,
     mut physics_pieces: Query<(Entity, &mut super::physical::PhysicsPiece)>,
+    mut voxels: Query<&mut super::BarrierVoxel>,
 ) {
     let Ok(context) = context.single() else {
         return;
@@ -279,6 +280,7 @@ pub(super) fn projectiles_tick(
                 }
                 let predicate = |hit_entity, _: &_| {
                     !projectile.penetrated.contains(&hit_entity)
+                        && !voxels.get(hit_entity).is_ok_and(|cell| cell.health <= 0.0)
                         && players.get(hit_entity).is_err()
                         && physics_pieces.get(hit_entity).is_err()
                 };
@@ -420,6 +422,13 @@ pub(super) fn projectiles_tick(
                     stopped = true;
                     break;
                 };
+                if let Ok(mut voxel) = voxels.get_mut(hit_entity) {
+                    voxel.health = (voxel.health - projectile.damage).max(0.0);
+                    if voxel.health == 0.0 {
+                        world_state.destroyed_cells.push(voxel.id);
+                        commands.entity(hit_entity).insert(ColliderDisabled);
+                    }
+                }
                 if matches!(surface, SurfaceKind::Concrete) {
                     stopped = true;
                     break;

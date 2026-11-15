@@ -67,6 +67,7 @@ impl bevy::prelude::Plugin for Plugin {
 
 #[derive(Debug, Default, Resource)]
 struct WorldState {
+    destroyed_cells: Vec<u16>,
     next_projectile_id: u64,
     // Only 256 marks are retained, so wrapping 32-bit IDs stay unique in a snapshot.
     next_mark_id: u32,
@@ -114,8 +115,30 @@ struct Projectile {
 #[derive(Component)]
 struct MuzzleClearance(Vec3);
 
+#[derive(Component)]
+struct BarrierVoxel {
+    id: u16,
+    health: f32,
+    max_health: f32,
+}
+
 fn spawn_world_colliders(mut commands: Commands) {
-    for block in common::map::BLOCKS {
+    for cell in common::map::barrier_cells() {
+        commands.spawn((
+            BarrierVoxel {
+                id: cell.id,
+                health: cell.health(),
+                max_health: cell.health(),
+            },
+            cell.surface,
+            Collider::cuboid(cell.half_size[0], cell.half_size[1], cell.half_size[2]),
+            Transform::from_translation(Vec3::from(cell.center)),
+        ));
+    }
+    for (index, block) in common::map::BLOCKS.iter().enumerate() {
+        if common::map::destructible(index) {
+            continue;
+        }
         commands.spawn((
             block.surface,
             Collider::cuboid(block.half_size[0], block.half_size[1], block.half_size[2]),
@@ -355,6 +378,7 @@ fn send_world_snapshot(
         .fired_projectiles
         .retain(|shot| time.elapsed_secs() - shot.time < 0.5);
     let snapshot = WorldSnapshot {
+        destroyed_cells: common::map::destroyed_mask(&state.destroyed_cells),
         sequence: state.snapshot_sequence,
         raid: raid.clone(),
         players,

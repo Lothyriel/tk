@@ -40,6 +40,7 @@ impl bevy::prelude::Plugin for Plugin {
                 sync_ammo_hud,
                 sync_barrel_laser.after(feedback::advance),
                 sync_loot_visuals,
+                sync_barrier_visuals,
             )
                 .in_set(ClientSystems::Present),
         );
@@ -90,6 +91,25 @@ struct BarrelLaser;
 
 #[derive(Component)]
 struct LootVisual(usize);
+
+#[derive(Component)]
+struct BarrierVisual(u16);
+
+fn sync_barrier_visuals(
+    session: Res<ClientSession>,
+    mut cells: Query<(&BarrierVisual, &mut Visibility)>,
+) {
+    if !session.is_changed() {
+        return;
+    }
+    for (cell, mut visibility) in &mut cells {
+        *visibility = if session.destroyed_cells.contains(&cell.0) {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+    }
+}
 
 #[derive(Resource)]
 struct LootMaterials {
@@ -307,7 +327,32 @@ fn spawn_world_model(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.insert_resource(ClearColor(Color::srgb(0.18, 0.27, 0.35)));
+    let wood = materials.add(Color::srgb(0.48, 0.27, 0.1));
+    let concrete = materials.add(Color::srgb(0.43, 0.49, 0.53));
+    let mut cell_meshes: Vec<([f32; 3], Handle<Mesh>)> = Vec::new();
+    for cell in barrier_cells() {
+        let mesh =
+            if let Some((_, mesh)) = cell_meshes.iter().find(|(size, _)| *size == cell.half_size) {
+                mesh.clone()
+            } else {
+                let mesh = meshes.add(Cuboid::from_size(Vec3::from(cell.half_size) * 2.0));
+                cell_meshes.push((cell.half_size, mesh.clone()));
+                mesh
+            };
+        commands.spawn((
+            BarrierVisual(cell.id),
+            Mesh3d(mesh),
+            MeshMaterial3d(match cell.surface {
+                SurfaceKind::Wood => wood.clone(),
+                SurfaceKind::Concrete => concrete.clone(),
+            }),
+            Transform::from_translation(Vec3::from(cell.center)),
+        ));
+    }
     for (i, block) in BLOCKS.iter().enumerate() {
+        if destructible(i) {
+            continue;
+        }
         let color = match block.surface {
             SurfaceKind::Wood => Color::srgb(0.48, 0.27, 0.1),
             SurfaceKind::Concrete if i == 0 => Color::srgb(0.2, 0.24, 0.25),
@@ -326,21 +371,6 @@ fn spawn_world_model(
             })),
             Transform::from_translation(Vec3::from(block.center)),
         ));
-        if matches!(block.surface, SurfaceKind::Wood) {
-            let seam = meshes.add(Cuboid::new(0.014, block.half_size[1] * 1.98, 0.006));
-            let seam_material = materials.add(Color::srgb(0.17, 0.09, 0.035));
-            for plank in -4..=4 {
-                commands.spawn((
-                    Mesh3d(seam.clone()),
-                    MeshMaterial3d(seam_material.clone()),
-                    Transform::from_xyz(
-                        block.center[0] + plank as f32 * block.half_size[0] * 0.22,
-                        block.center[1],
-                        block.center[2] + block.half_size[2] + 0.004,
-                    ),
-                ));
-            }
-        }
     }
     let full = materials.add(Color::srgb(1.0, 0.38, 0.045));
     let empty = materials.add(Color::srgb(0.27, 0.25, 0.22));
@@ -896,5 +926,59 @@ mod view_tests {
                 assert!(p.x.abs() / (-p.z) < 1.5);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod barrier_tests {
+    use super::*;
+
+    #[test]
+    fn voxel_barriers_full_state_hides_neighbors_and_restores_after_reset() {
+        let mut app = App::new();
+        app.init_resource::<ClientSession>()
+            .add_systems(Update, sync_barrier_visuals);
+        let a = app
+            .world_mut()
+            .spawn((BarrierVisual(0), Visibility::Inherited))
+            .id();
+        let b = app
+            .world_mut()
+            .spawn((BarrierVisual(1), Visibility::Inherited))
+            .id();
+        // One complete later snapshot is sufficient, even if earlier updates were lost.
+        app.world_mut()
+            .resource_mut::<ClientSession>()
+            .destroyed_cells = vec![0];
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(a).unwrap(),
+            Visibility::Hidden
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(b).unwrap(),
+            Visibility::Inherited
+        );
+        app.world_mut()
+            .resource_mut::<ClientSession>()
+            .destroyed_cells = vec![0, 1];
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(b).unwrap(),
+            Visibility::Hidden
+        );
+        app.world_mut()
+            .resource_mut::<ClientSession>()
+            .destroyed_cells
+            .clear();
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(a).unwrap(),
+            Visibility::Inherited
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(b).unwrap(),
+            Visibility::Inherited
+        );
     }
 }

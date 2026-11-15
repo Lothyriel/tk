@@ -2054,3 +2054,236 @@ fn muzzle_inside_the_same_wood_keeps_penetration_ids_across_both_paths() {
         0
     );
 }
+
+fn voxel_shot(app: &mut App, owner: Entity, cell: &common::map::BarrierCell, damage: f32) {
+    app.world_mut().spawn((
+        Projectile {
+            id: 9000,
+            weapon: WeaponKind::Rifle,
+            velocity: -Vec3::Z * 100.0,
+            damage,
+            penetration: 30.0,
+            lifetime: PROJECTILE_LIFETIME,
+            owner_entity: owner,
+            penetrated: Vec::new(),
+        },
+        Transform::from_translation(Vec3::from(cell.center) + Vec3::Z * 0.6),
+    ));
+}
+
+fn voxel_entity(app: &mut App, id: u16) -> Entity {
+    app.world_mut()
+        .query::<(Entity, &BarrierVoxel)>()
+        .iter(app.world())
+        .find(|(_, voxel)| voxel.id == id)
+        .unwrap()
+        .0
+}
+
+#[test]
+fn voxel_barriers_damage_neighbors_concrete_stopping_and_raid_reset() {
+    let (mut app, owner, other) = physical_fixture();
+    let cell = common::map::barrier_cells()
+        .into_iter()
+        .find(|c| c.id == 2)
+        .unwrap();
+    let entity = voxel_entity(&mut app, cell.id);
+    let neighbor = voxel_entity(&mut app, cell.id - 1);
+    for expected in [60.0, 20.0, 0.0] {
+        voxel_shot(&mut app, owner, &cell, 40.0);
+        steps(&mut app, 2);
+        assert_eq!(
+            app.world().get::<BarrierVoxel>(entity).unwrap().health,
+            expected
+        );
+        assert_eq!(
+            app.world().get::<BarrierVoxel>(neighbor).unwrap().health,
+            100.0
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&Projectile>()
+                .iter(app.world())
+                .count(),
+            0,
+            "even the shot destroying concrete must stop"
+        );
+    }
+    assert!(app.world().get::<ColliderDisabled>(entity).is_some());
+    assert_eq!(
+        app.world().resource::<WorldState>().destroyed_cells,
+        vec![cell.id]
+    );
+    steps(&mut app, 2);
+    // A fresh shot crosses the removed cell and hits the next depth layer.
+    voxel_shot(&mut app, owner, &cell, 40.0);
+    steps(&mut app, 2);
+    assert_eq!(
+        app.world().get::<BarrierVoxel>(neighbor).unwrap().health,
+        60.0
+    );
+    app.world_mut().resource_mut::<RaidState>().phase = RaidPhase::Debrief;
+    ready(&mut app, owner);
+    steps(&mut app, 3);
+    assert_eq!(app.world().resource::<RaidState>().phase, RaidPhase::Lobby);
+    assert!(
+        app.world()
+            .resource::<WorldState>()
+            .destroyed_cells
+            .is_empty()
+    );
+    assert_eq!(
+        app.world().get::<BarrierVoxel>(entity).unwrap().health,
+        100.0
+    );
+    assert_eq!(
+        app.world().get::<BarrierVoxel>(neighbor).unwrap().health,
+        100.0
+    );
+    assert!(app.world().get::<ColliderDisabled>(entity).is_none());
+    // Start also repairs a damaged world independently of the lobby transition.
+    app.world_mut()
+        .get_mut::<BarrierVoxel>(entity)
+        .unwrap()
+        .health = 0.0;
+    app.world_mut().entity_mut(entity).insert(ColliderDisabled);
+    app.world_mut()
+        .resource_mut::<WorldState>()
+        .destroyed_cells
+        .push(cell.id);
+    ready(&mut app, owner);
+    ready(&mut app, other);
+    steps(&mut app, 390);
+    assert_eq!(app.world().resource::<RaidState>().phase, RaidPhase::Active);
+    assert_eq!(
+        app.world().get::<BarrierVoxel>(entity).unwrap().health,
+        100.0
+    );
+    assert!(app.world().get::<ColliderDisabled>(entity).is_none());
+    assert!(
+        app.world()
+            .resource::<WorldState>()
+            .destroyed_cells
+            .is_empty()
+    );
+}
+
+#[test]
+fn voxel_barriers_wood_penetration_same_tick_holes_and_movement() {
+    let (mut app, owner, _) = physical_fixture();
+    let cells: Vec<_> = common::map::barrier_cells()
+        .into_iter()
+        .filter(|c| matches!(c.surface, SurfaceKind::Wood) && c.center[0] < 0.0)
+        .collect();
+    let cell = &cells[0];
+    let entity = voxel_entity(&mut app, cell.id);
+    voxel_shot(&mut app, owner, cell, 30.0);
+    voxel_shot(&mut app, owner, cell, 30.0);
+    steps(&mut app, 1);
+    let mut energies: Vec<f32> = app
+        .world_mut()
+        .query::<&Projectile>()
+        .iter(app.world())
+        .map(|p| p.penetration)
+        .collect();
+    energies.sort_by(f32::total_cmp);
+    assert_eq!(energies.len(), 2);
+    assert!(
+        (energies[0] - 25.2).abs() < 0.001,
+        "wood must cost 4.8 penetration"
+    );
+    assert_eq!(
+        energies[1], 30.0,
+        "second shot in same tick must cross the hole freely"
+    );
+    assert_eq!(app.world().get::<BarrierVoxel>(entity).unwrap().health, 0.0);
+    assert_eq!(
+        app.world().resource::<WorldState>().destroyed_cells,
+        vec![cell.id]
+    );
+    // Existing solid panel blocks the production character controller.
+    app.world_mut()
+        .get_mut::<Transform>(owner)
+        .unwrap()
+        .translation = Vec3::new(-7.0, 1.05, -3.5);
+    app.world_mut()
+        .get_mut::<ClientInput>(owner)
+        .unwrap()
+        .forward = true;
+    held_steps(&mut app, owner, 70);
+    assert!(app.world().get::<Transform>(owner).unwrap().translation.z > -4.6);
+    for cell in &cells[1..] {
+        voxel_shot(&mut app, owner, cell, 30.0);
+    }
+    steps(&mut app, 3);
+    assert_eq!(
+        app.world().resource::<WorldState>().destroyed_cells.len(),
+        32
+    );
+    held_steps(&mut app, owner, 100);
+    assert!(
+        app.world().get::<Transform>(owner).unwrap().translation.z < -5.5,
+        "character must pass through the cleared panel"
+    );
+}
+
+#[test]
+fn voxel_barriers_normal_weapon_input_breaks_wood_with_one_round() {
+    let (mut app, owner, _) = physical_fixture();
+    app.world_mut()
+        .get_mut::<Transform>(owner)
+        .unwrap()
+        .translation = Vec3::new(-7.0, 1.05, -3.0);
+    steps(&mut app, 3);
+    let before = app.world().get::<Arsenal>(owner).unwrap().magazines[WeaponKind::Rifle.index()];
+    normal_shot(&mut app, owner, Vec3::new(-7.25, 1.35, -5.0));
+    assert_eq!(
+        app.world().get::<Arsenal>(owner).unwrap().magazines[WeaponKind::Rifle.index()],
+        before - 1
+    );
+    let removed = &app.world().resource::<WorldState>().destroyed_cells;
+    assert_eq!(removed.len(), 1);
+    let id = removed[0];
+    let entity = voxel_entity(&mut app, id);
+    assert_eq!(app.world().get::<BarrierVoxel>(entity).unwrap().health, 0.0);
+    assert!(app.world().get::<ColliderDisabled>(entity).is_some());
+}
+
+#[test]
+fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
+    let (mut app, owner, _) = physical_fixture();
+    let cell = common::map::barrier_cells()
+        .into_iter()
+        .find(|c| c.id == 72)
+        .unwrap();
+    voxel_shot(&mut app, owner, &cell, 30.0);
+    steps(&mut app, 3);
+    let mut peer = bevy_renet2::prelude::RenetClient::new(data::renet_config(), false);
+    peer.set_connected();
+    app.world_mut()
+        .resource_mut::<RenetServer>()
+        .add_connection(999, false);
+    // Join after destruction and discard a whole outgoing snapshot.
+    steps(&mut app, 5);
+    let _ = app
+        .world_mut()
+        .resource_mut::<RenetServer>()
+        .get_packets_to_send(999)
+        .unwrap();
+    steps(&mut app, 5);
+    {
+        let mut server = app.world_mut().resource_mut::<RenetServer>();
+        for packet in server.get_packets_to_send(999).unwrap() {
+            peer.process_packet(packet);
+        }
+    }
+    let bytes = peer
+        .receive_message(DefaultChannel::Unreliable)
+        .expect("production snapshot");
+    let snapshot = data::decode::<WorldSnapshot>(&bytes);
+    assert_eq!(
+        common::map::destroyed_ids(&snapshot.destroyed_cells),
+        vec![cell.id]
+    );
+    assert_eq!(PROTOCOL_ID, 8);
+}

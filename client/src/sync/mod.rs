@@ -11,6 +11,7 @@ use common::raid::{RaidPhase, RaidState, RaidStatus};
 
 #[derive(Debug, Default, Resource)]
 pub(crate) struct ClientSession {
+    pub destroyed_cells: Vec<u16>,
     pub raid: RaidState,
     pub players: Vec<ClientData>,
     pub last_sequence: u64,
@@ -222,6 +223,7 @@ fn recv_players_pos(
         &impact_visuals,
         &snapshot.impact_marks,
     );
+    session.destroyed_cells = common::map::destroyed_ids(&snapshot.destroyed_cells);
     session.last_sequence = snapshot.sequence;
     session.last_received = time.elapsed_secs_f64();
     session.raid = snapshot.raid;
@@ -410,4 +412,58 @@ fn sync_impact_visuals(
 fn impact_mark_scale(size_mm: u8) -> Vec3 {
     let diameter = size_mm as f32 / 1000.0;
     Vec3::new(diameter, diameter, 0.002)
+}
+
+#[cfg(test)]
+mod barrier_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn voxel_barriers_receive_replaces_full_state_and_rejects_old_snapshots() {
+        let mut app = App::new();
+        let mut peer = RenetClient::new(data::renet_config(), false);
+        peer.set_connected();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(peer)
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Lobby>()
+            .init_resource::<ClientSession>()
+            .insert_resource(PlayerId(999))
+            .insert_resource(SnapshotLoss {
+                every: 0,
+                dropped: 0,
+            })
+            .add_systems(Update, recv_players_pos);
+        let mut server = bevy_renet2::prelude::RenetServer::new(data::renet_config());
+        server.add_connection(999, false);
+        for (sequence, destroyed, expected) in [
+            (3, vec![2, 7], vec![2, 7]),
+            (2, vec![], vec![2, 7]),
+            (4, vec![], vec![]),
+        ] {
+            let snapshot = WorldSnapshot {
+                sequence,
+                destroyed_cells: common::map::destroyed_mask(&destroyed),
+                raid: default(),
+                players: vec![],
+                projectiles: vec![],
+                impact_marks: vec![],
+                fired_projectiles: vec![],
+                physics_pieces: vec![],
+                simulation_time: 0.0,
+            };
+            server.broadcast_message(DefaultChannel::Unreliable, data::encode(&snapshot));
+            for packet in server.get_packets_to_send(999).unwrap() {
+                app.world_mut()
+                    .resource_mut::<RenetClient>()
+                    .process_packet(packet);
+            }
+            app.update();
+            assert_eq!(
+                app.world().resource::<ClientSession>().destroyed_cells,
+                expected
+            );
+        }
+    }
 }

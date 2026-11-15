@@ -60,3 +60,119 @@ pub const BLOCKS: &[MapBlock] = &[
         surface: SurfaceKind::Concrete,
     },
 ];
+
+/// Full destruction state fits in 22 bytes, preserving the snapshot budget.
+pub const BARRIER_CELL_COUNT: usize = 176;
+pub type DestroyedCells = [u8; BARRIER_CELL_COUNT / 8];
+
+pub fn destroyed_mask(ids: &[u16]) -> DestroyedCells {
+    let mut mask = [0; BARRIER_CELL_COUNT / 8];
+    for &id in ids {
+        let id = id as usize;
+        if id < BARRIER_CELL_COUNT {
+            mask[id / 8] |= 1 << (id % 8);
+        }
+    }
+    mask
+}
+
+pub fn destroyed_ids(mask: &DestroyedCells) -> Vec<u16> {
+    (0..BARRIER_CELL_COUNT)
+        .filter(|id| mask[id / 8] & (1 << (id % 8)) != 0)
+        .map(|id| id as u16)
+        .collect()
+}
+
+/// Interior cover only. The floor, arena boundary and loot stay indestructible.
+pub fn destructible(block_index: usize) -> bool {
+    (5..BLOCKS.len()).contains(&block_index)
+}
+
+#[derive(Debug, Clone)]
+pub struct BarrierCell {
+    pub id: u16,
+    pub center: [f32; 3],
+    pub half_size: [f32; 3],
+    pub surface: SurfaceKind,
+}
+
+impl BarrierCell {
+    pub fn health(&self) -> f32 {
+        match self.surface {
+            SurfaceKind::Wood => 20.0,
+            SurfaceKind::Concrete => 100.0,
+        }
+    }
+}
+
+/// Stable iteration order is shared by authority and presentation, never client input.
+pub fn barrier_cells() -> Vec<BarrierCell> {
+    let mut cells = Vec::new();
+    for (index, block) in BLOCKS.iter().enumerate() {
+        if !destructible(index) {
+            continue;
+        }
+        let counts = block
+            .half_size
+            .map(|half| (half * 2.0 / 0.5).ceil() as usize);
+        let half_size = std::array::from_fn(|axis| block.half_size[axis] / counts[axis] as f32);
+        for x in 0..counts[0] {
+            for y in 0..counts[1] {
+                for z in 0..counts[2] {
+                    let offset = [x, y, z];
+                    cells.push(BarrierCell {
+                        id: cells.len() as u16,
+                        center: std::array::from_fn(|axis| {
+                            block.center[axis] - block.half_size[axis]
+                                + half_size[axis] * (2 * offset[axis] + 1) as f32
+                        }),
+                        half_size,
+                        surface: block.surface,
+                    });
+                }
+            }
+        }
+    }
+    cells
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voxel_barriers_tile_only_interior_cover_with_stable_ids() {
+        let cells = barrier_cells();
+        assert_eq!(cells.len(), BARRIER_CELL_COUNT);
+        assert_eq!(
+            destroyed_ids(&destroyed_mask(&[0, 17, 175])),
+            vec![0, 17, 175]
+        );
+        for (id, cell) in cells.iter().enumerate() {
+            assert_eq!(cell.id as usize, id);
+            assert_eq!(cell.center, barrier_cells()[id].center);
+            assert!(cell.half_size.iter().all(|h| *h > 0.0 && *h <= 0.25));
+        }
+        for (index, block) in BLOCKS.iter().enumerate() {
+            let volume: f32 = cells
+                .iter()
+                .filter(|cell| {
+                    (0..3).all(|axis| {
+                        (cell.center[axis] - block.center[axis]).abs() + cell.half_size[axis]
+                            <= block.half_size[axis] + 0.0001
+                    })
+                })
+                .map(|cell| cell.half_size.iter().product::<f32>() * 8.0)
+                .sum();
+            let expected = if destructible(index) {
+                block.half_size.iter().product::<f32>() * 8.0
+            } else {
+                0.0
+            };
+            assert!(
+                (volume - expected).abs() < 0.001,
+                "block {index}: {volume} != {expected}"
+            );
+        }
+    }
+}

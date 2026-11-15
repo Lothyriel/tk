@@ -83,6 +83,7 @@ mod tests {
             direction: [0.0, 0.0, -1.0],
         };
         let snapshot = WorldSnapshot {
+            destroyed_cells: crate::map::destroyed_mask(&[0, 17, 175]),
             sequence: 200,
             raid: default(),
             players: vec![player.clone()],
@@ -98,6 +99,10 @@ mod tests {
             simulation_time: 4.0,
         };
         let decoded = try_decode::<WorldSnapshot>(&encode(&snapshot)).unwrap();
+        assert_eq!(
+            crate::map::destroyed_ids(&decoded.destroyed_cells),
+            vec![0, 17, 175]
+        );
         assert_eq!(decoded.players[0].body.anatomy.missing, (1 << 6) | (1 << 7));
         assert_eq!(decoded.players[0].body.anatomy.organs[1], 25.0);
         assert_eq!(decoded.players[0].pose.mode, PhysicalMode::Fallen);
@@ -110,6 +115,7 @@ mod tests {
         assert_eq!(decoded.impact_marks[0].id, 9);
         assert_eq!(decoded.impact_marks[0].size_mm, 25);
         let mut worst = snapshot;
+        worst.destroyed_cells = [u8::MAX; 22];
         worst.players = (0..32)
             .map(|id| ClientData {
                 id,

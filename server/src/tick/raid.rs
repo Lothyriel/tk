@@ -27,6 +27,7 @@ pub(super) fn lobby_tick(
     projectiles: Query<Entity, With<Projectile>>,
     pieces: Query<Entity, With<super::physical::PhysicsPiece>>,
     mut poses: Query<(Entity, &mut common::humanoid::PoseState)>,
+    mut voxels: Query<(Entity, &mut super::BarrierVoxel)>,
 ) {
     let previous_phase = raid.phase;
     let mut return_requested = false;
@@ -109,6 +110,13 @@ pub(super) fn lobby_tick(
         for entity in &projectiles {
             commands.entity(entity).despawn();
         }
+        for (entity, mut voxel) in &mut voxels {
+            if voxel.health != voxel.max_health {
+                voxel.health = voxel.max_health;
+                commands.entity(entity).remove::<ColliderDisabled>();
+            }
+        }
+        world_state.destroyed_cells.clear();
         world_state.impact_marks.clear();
         world_state.fired_projectiles.clear();
     }
