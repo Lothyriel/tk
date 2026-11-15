@@ -13,6 +13,7 @@ mod motion;
 
 #[derive(Debug, Default, Resource)]
 pub(crate) struct ClientSession {
+    pub configurations: common::replication::ConfigurationReceiver,
     pub local_motion: motion::LocalMotion,
     pub destroyed_cells: Vec<u16>,
     pub raid: RaidState,
@@ -122,7 +123,15 @@ fn recv_players_pos(
     time: Res<Time<Real>>,
     mut loss: ResMut<SnapshotLoss>,
 ) {
-    let mut latest: Option<WorldSnapshot> = None;
+    while let Some(message) = client.receive_message(common::replication::CONFIGURATION_CHANNEL) {
+        if let Err(error) = session.configurations.message(
+            &message,
+            common::catalog::catalog(),
+            common::replication::catalog_fingerprint(common::catalog::CATALOG_SOURCE),
+        ) {
+            warn!("Rejected weapon configuration: {error:?}");
+        }
+    }
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
         let Ok(snapshot) = data::try_decode::<WorldSnapshot>(&message) else {
             continue;
@@ -141,17 +150,21 @@ fn recv_players_pos(
             }
             continue;
         }
-        if snapshot.sequence > session.last_sequence
-            && latest
-                .as_ref()
-                .is_none_or(|last| snapshot.sequence > last.sequence)
-        {
-            latest = Some(snapshot);
+        if let Err(error) = session.configurations.snapshot(snapshot) {
+            warn!("Rejected weapon configuration reference: {error:?}");
         }
     }
-    let Some(snapshot) = latest else {
-        return;
+    let snapshot = match session.configurations.take_ready() {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => return,
+        Err(error) => {
+            warn!("Rejected inconsistent weapon configuration reference: {error:?}");
+            return;
+        }
     };
+    if snapshot.sequence <= session.last_sequence {
+        return;
+    }
     let new_raid = session.raid.raid_id != snapshot.raid.raid_id
         || session.raid.phase != snapshot.raid.phase && snapshot.raid.phase == RaidPhase::Lobby;
     if new_raid {
@@ -438,6 +451,97 @@ mod barrier_snapshot_tests {
     use super::*;
 
     #[test]
+    fn configuration_receive_unblocks_pending_snapshot_without_a_new_snapshot() {
+        use common::{catalog::*, replication::*};
+        let mut app = App::new();
+        let mut peer = RenetClient::new(data::renet_config(), false);
+        peer.set_connected();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(peer)
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Lobby>()
+            .init_resource::<ClientSession>()
+            .insert_resource(PlayerId(7))
+            .insert_resource(SnapshotLoss {
+                every: 0,
+                dropped: 0,
+            })
+            .add_systems(Update, recv_players_pos);
+        let mut server = bevy_renet2::prelude::RenetServer::new(data::renet_config());
+        server.add_connection(7, false);
+        let fingerprint = catalog_fingerprint(CATALOG_SOURCE);
+        let mut publisher = ConfigurationPublisher::new(1, fingerprint).unwrap();
+        let mut weapon = EquippedWeapon::new(
+            catalog(),
+            common::WeaponInstanceId(41),
+            catalog().configuration(common::WeaponId::M4A1).unwrap(),
+        )
+        .unwrap();
+        assert!(weapon.fire());
+        assert!(weapon.mechanics_mut().start_reload(2.4));
+        weapon.advance(0.7); // chamber retained, magazine already removed
+        let handle = publisher
+            .register(7, common::EquipmentSlot::Primary, weapon.instance())
+            .unwrap();
+        let snapshot = WorldSnapshot {
+            configuration_epoch: 1,
+            sequence: 9,
+            simulation_time: 1.0,
+            destroyed_cells: Default::default(),
+            raid: Default::default(),
+            players: vec![ClientData {
+                id: 7,
+                configuration: handle,
+                weapon_instance: weapon.instance().id,
+                mechanics: weapon.mechanics().snapshot(),
+                ..Default::default()
+            }],
+            projectiles: vec![],
+            impact_marks: vec![],
+            fired_projectiles: vec![],
+            physics_pieces: vec![],
+        };
+        server.send_message(7, DefaultChannel::Unreliable, data::encode(&snapshot));
+        let deliver = |server: &mut bevy_renet2::prelude::RenetServer, app: &mut App| {
+            for packet in server.get_packets_to_send(7).unwrap() {
+                app.world_mut()
+                    .resource_mut::<RenetClient>()
+                    .process_packet(packet);
+            }
+            app.update();
+        };
+        deliver(&mut server, &mut app);
+        assert!(app.world().resource::<ClientSession>().players.is_empty());
+        server.send_message(
+            7,
+            CONFIGURATION_CHANNEL,
+            data::encode(&ConfigurationMessage::Epoch {
+                epoch: 1,
+                catalog: fingerprint,
+            }),
+        );
+        server.send_message(
+            7,
+            CONFIGURATION_CHANNEL,
+            data::encode(&ConfigurationMessage::Configuration(
+                publisher.entries()[0].clone(),
+            )),
+        );
+        deliver(&mut server, &mut app);
+        let session = app.world().resource::<ClientSession>();
+        assert_eq!(session.last_sequence, 9);
+        assert_eq!(session.players.len(), 1);
+        assert!(!session.players[0].mechanics.magazine_inserted);
+        assert!(session.players[0].mechanics.chambered);
+        assert_eq!(
+            data::encode(&session.players[0].mechanics),
+            data::encode(&weapon.mechanics().snapshot())
+        );
+        assert!(session.configurations.cache.matches(1, &session.players[0]));
+    }
+
+    #[test]
     fn voxel_barriers_receive_replaces_full_state_and_rejects_old_snapshots() {
         let mut app = App::new();
         let mut peer = RenetClient::new(data::renet_config(), false);
@@ -456,12 +560,21 @@ mod barrier_snapshot_tests {
             .add_systems(Update, recv_players_pos);
         let mut server = bevy_renet2::prelude::RenetServer::new(data::renet_config());
         server.add_connection(999, false);
+        server.send_message(
+            999,
+            common::replication::CONFIGURATION_CHANNEL,
+            data::encode(&common::replication::ConfigurationMessage::Epoch {
+                epoch: 1,
+                catalog: common::replication::catalog_fingerprint(common::catalog::CATALOG_SOURCE),
+            }),
+        );
         for (sequence, destroyed, expected) in [
             (3, vec![2, 7], vec![2, 7]),
             (2, vec![], vec![2, 7]),
             (4, vec![], vec![]),
         ] {
             let snapshot = WorldSnapshot {
+                configuration_epoch: 1,
                 sequence,
                 destroyed_cells: common::map::destroyed_mask(&destroyed),
                 raid: default(),

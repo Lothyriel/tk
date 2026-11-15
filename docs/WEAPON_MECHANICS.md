@@ -92,7 +92,7 @@ mechanical time by `0.45 + 0.55 * anatomy.handling()`, so commits and the replic
 fraction slow together. `reload_remaining` remains a derived compatibility field,
 never a source of commits.
 
-Protocol 10 carries a compact `MechanicalSnapshot`: last action ID, explicit kind/
+Protocol 11 carries a compact `MechanicalSnapshot`: last action ID, explicit kind/
 phase, normalized fraction, remaining mechanical time, chamber/bolt/magazine,
 selector and equipped state. It omits the physical pool and attachment tree.
 Local/remote reload presentation reads the explicit variant and fraction instead

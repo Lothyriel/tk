@@ -1,8 +1,9 @@
 # Weapon configuration replication
 
-`common::replication` defines the configuration contract. Transport integration
-is in progress; the running game still uses protocol 10 until both endpoints
-are migrated together.
+Protocol 11 integrates `common::replication` with both endpoints. Rebuild client
+and server together. Weapon configuration uses reliable ordered channel 3 in
+each direction, with a 2 MiB queue and 100 ms retransmission. Existing continuous
+input/connectivity channels remain independent.
 
 ## Identity and bounded publication
 
@@ -34,6 +35,21 @@ Duplicate epoch announcements preserve valid entries; older epochs are rejected.
 Epoch exhaustion also fails without clearing state. Reconnect creates a fresh
 client cache and connection-specific command ledger.
 
+The server registers both slots of each actor, including bots, and advances a
+per-peer reliable publication cursor. A late join receives the bounded history;
+unchanged configurations are not sent again. Queue pressure postpones unsent
+entries. Raid changes and returning to the lobby advance the epoch. Cache
+saturation starts a new epoch and republishes the current equipment set.
+
+Snapshots carry one epoch and a four-byte handle per actor. Grouping scalar
+fields/flags removes padding, so the handle does not increase the actor's fixed
+archive size. The receive boundary validates owner, slot, instance and definition
+against the cache. It holds only the latest snapshot until all referenced
+configurations arrive. Configuration arrival alone can unblock it; no subsequent
+snapshot is required. Until then, presentation retains the last accepted world
+(subject to the existing stale timeout), and continuous inputs keep flowing.
+The resolved cache is available for the modular visual integration in TAR-23.
+
 ## Authoritative commands
 
 A configuration command includes epoch, monotonically increasing request ID,
@@ -55,5 +71,14 @@ The common fixtures cover roundtrip and resolution for M4A1/M1911/MP5,
 unaligned transport slices, malformed/oversized archives, exact structural
 bounds, invalid trees/catalogs, reordered revisions, duplicate/reset behavior,
 bounded cache exhaustion, CAS, forged ownership, locked commands and conserved
-physical state. These are contract-level tests; real endpoint/UDP acceptance and
-the final snapshot/shot overflow measurements remain part of TAR-17 integration.
+physical state. Native receive tests reconstruct an interrupted reload when its
+configuration arrives after the final snapshot. A production ECS/Renet fixture
+exercises publication, duplicate commands, independent continuous input, packet
+loss, late join and epoch reset. These are headless in-memory transports; real
+UDP acceptance and shot overflow remain part of TAR-17 integration.
+
+The existing stress fixture (32 actors, 320 pieces, 256 impacts, 224 shots) now
+measures 54,376 bytes, or 59,816 bytes with all 32 physical rigs, below 60,000.
+Each actor's fixed archive is 544 bytes. The current one-component M4A1/M1911/MP5
+configuration payload is 96 bytes and the CAS command is 80 bytes, before the
+server-message envelope and Renet/UDP framing.

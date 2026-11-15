@@ -20,7 +20,7 @@ once with `catalog()`. The server does not load a mesh, texture or audio file.
 - General items extend this document and namespace. Inventory references the
   existing weapon instance instead of duplicating its ammunition state.
 
-Protocol 10 inputs select `Primary`/`Sidearm` slots and sequence reload, inspect
+Protocol 11 inputs select `Primary`/`Sidearm` slots and sequence reload, inspect
 and selector changes. Snapshots include the compact mechanical action/phase,
 chamber, bolt, inserted-magazine, selector and equip state. Loadouts carry a stable
 weapon definition ID; equipped snapshots carry definition/instance IDs and
@@ -29,6 +29,8 @@ metadata in every recent shot exceeds the existing worst-case snapshot budget.
 The legacy player class field remains a procedural presentation profile, checked
 against the definition at the receive boundary. It never selects ammunition.
 The lobby cycles registry primaries; new definitions need no selector match.
+Versioned configuration travels reliably once per change; snapshots refer to an
+epoch/handle. See [replication](WEAPON_REPLICATION.md) for cache and command bounds.
 Local view templates are created on first equip rather than all at startup.
 
 ## Resolution

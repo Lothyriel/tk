@@ -1,4 +1,4 @@
-use bevy_renet2::prelude::ConnectionConfig;
+use bevy_renet2::prelude::{ChannelConfig, ConnectionConfig, SendType};
 use bytes::Bytes;
 use rkyv::{
     api::high::{to_bytes_in, HighSerializer, HighValidator},
@@ -10,8 +10,19 @@ use rkyv::{
 };
 
 pub fn renet_config() -> ConnectionConfig {
-    // change here if we need more reliable/unrealiable channels
-    ConnectionConfig::test()
+    let mut config = ConnectionConfig::test();
+    // Separate queues/order domains: configuration must not head-of-line block
+    // ordinary input or connectivity. The shared ID is unidirectional.
+    let channel = ChannelConfig {
+        channel_id: crate::replication::CONFIGURATION_CHANNEL,
+        max_memory_usage_bytes: 2 * 1024 * 1024,
+        send_type: SendType::ReliableOrdered {
+            resend_time: std::time::Duration::from_millis(100),
+        },
+    };
+    config.server_channels_config.push(channel.clone());
+    config.client_channels_config.push(channel);
+    config
 }
 
 pub fn encode(
@@ -60,6 +71,7 @@ mod tests {
         use crate::{combat::*, humanoid::*, *};
         let mut player = ClientData {
             id: 7,
+            configuration: 1,
             weapon_instance: WeaponInstanceId(73),
             ..default()
         };
@@ -67,6 +79,11 @@ mod tests {
         player.body.anatomy.organs[Organ::Heart as usize] = 25.0;
         player.pose.mode = PhysicalMode::Fallen;
         player.pose.mode_time = 1.2;
+        println!(
+            "TK ACTOR archive_fixed_bytes={} normal_bytes={}",
+            std::mem::size_of::<crate::ArchivedClientData>(),
+            encode(&player).len()
+        );
         let piece = PhysicsPieceData {
             id: 123,
             owner: 7,
@@ -87,6 +104,7 @@ mod tests {
             direction: [0.0, 0.0, -1.0],
         };
         let snapshot = WorldSnapshot {
+            configuration_epoch: 1,
             destroyed_cells: crate::map::destroyed_mask(&[0, 17, 175]),
             sequence: 200,
             raid: default(),

@@ -12,6 +12,7 @@ mod metrics;
 mod physical;
 mod ragdoll;
 mod raid;
+mod replication;
 mod simulation;
 use bots::{Bot, bot_tick};
 use raid::{lobby_tick, objectives_tick};
@@ -24,6 +25,7 @@ impl bevy::prelude::Plugin for Plugin {
         app.insert_resource(Time::<Fixed>::from_hz(128.0))
             .init_resource::<WorldState>()
             .init_resource::<RaidState>()
+            .init_resource::<replication::Replication>()
             .init_resource::<metrics::TickMetrics>()
             .add_systems(FixedFirst, metrics::begin)
             .add_systems(FixedLast, metrics::end)
@@ -35,6 +37,7 @@ impl bevy::prelude::Plugin for Plugin {
                     recv_players_input,
                     expire_input,
                     lobby_tick,
+                    replication::commands,
                     bot_tick,
                     physical::physical_tick,
                     live_body::begin_falls,
@@ -274,10 +277,12 @@ fn recv_connectivity(
     mut lobby: ResMut<Lobby>,
     mut server: ResMut<RenetServer>,
     time: Res<Time>,
+    mut replication: ResMut<replication::Replication>,
 ) {
     for event in events.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
+                replication.forget(*client_id);
                 if *client_id >= (1_u64 << 63) {
                     server.disconnect(*client_id);
                     continue;
@@ -309,6 +314,7 @@ fn recv_connectivity(
                 );
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
+                replication.forget(*client_id);
                 info!("Player {client_id} disconnected: {reason}");
                 if let Some(entity) = lobby.players.remove(client_id) {
                     commands.entity(entity).despawn();
@@ -327,26 +333,60 @@ fn send_world_snapshot(
     mut server: ResMut<RenetServer>,
     raid: Res<RaidState>,
     mut state: ResMut<WorldState>,
-    players: Query<(
-        &Transform,
-        &Client,
-        &MovementState,
-        &BodyHealth,
-        &ArmorState,
-        &Arsenal,
-        &Participant,
-        Has<Bot>,
-        &common::humanoid::PoseState,
-    )>,
-    projectiles: Query<(&Projectile, &Transform)>,
-    pieces: Query<(&physical::PhysicsPiece, &Transform)>,
+    mut replication: ResMut<replication::Replication>,
+    scene: (
+        Query<(
+            &Transform,
+            &Client,
+            &MovementState,
+            &BodyHealth,
+            &ArmorState,
+            &Arsenal,
+            &Participant,
+            Has<Bot>,
+            &common::humanoid::PoseState,
+        )>,
+        Query<(&Projectile, &Transform)>,
+        Query<(&physical::PhysicsPiece, &Transform)>,
+    ),
 ) {
+    let (players, projectiles, pieces) = scene;
     state.snapshot_elapsed += time.delta_secs();
     if state.snapshot_elapsed < 1.0 / 30.0 {
         return;
     }
     state.snapshot_elapsed %= 1.0 / 30.0;
     state.snapshot_sequence += 1;
+    if let Err(error) = replication.synchronize_raid(&raid) {
+        error!("Cannot publish configuration epoch: {error:?}");
+        server.disconnect_all();
+        return;
+    }
+    // Register every owned slot for late join and subsequent equip. At capacity,
+    // reset once then rebuild the complete current set under the new epoch.
+    for attempt in 0..2 {
+        let result = players
+            .iter()
+            .try_for_each(|(_, client, _, _, _, arsenal, _, _, _)| {
+                replication.register(client.id, arsenal)
+            });
+        match result {
+            Ok(()) => break,
+            Err(common::replication::ConfigurationError::Capacity) if attempt == 0 => {
+                if replication.reset().is_err() {
+                    error!("Configuration epoch exhausted");
+                    server.disconnect_all();
+                    return;
+                }
+            }
+            Err(error) => {
+                error!("Cannot publish weapon configuration: {error:?}");
+                server.disconnect_all();
+                return;
+            }
+        }
+    }
+    replication.publish(&mut server);
     let players = players
         .iter()
         .map(
@@ -361,6 +401,7 @@ fn send_world_snapshot(
                 health: body.total(),
                 weapon: arsenal.current().spec().class,
                 weapon_id: arsenal.current().spec().definition,
+                configuration: replication.handle(client.id, arsenal),
                 weapon_instance: arsenal.current().instance().id,
                 weapon_slot: arsenal.active,
                 ammo_in_mag: arsenal.current().rounds(),
@@ -389,6 +430,7 @@ fn send_world_snapshot(
     let snapshot = WorldSnapshot {
         destroyed_cells: common::map::destroyed_mask(&state.destroyed_cells),
         sequence: state.snapshot_sequence,
+        configuration_epoch: replication.epoch(),
         raid: raid.clone(),
         players,
         projectiles,

@@ -12,6 +12,27 @@ use crate::{
 
 pub const MAX_CONFIGURATION_BYTES: usize = 8_192;
 pub const MAX_CACHED_CONFIGURATIONS: usize = 1_024;
+pub const CONFIGURATION_CHANNEL: u8 = 3;
+
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+pub enum ConfigurationMessage {
+    Epoch { epoch: u64, catalog: u64 },
+    Configuration(Configuration),
+    Result(CommandResult),
+}
+
+impl ConfigurationMessage {
+    pub fn decode(bytes: &[u8]) -> Result<Self, ConfigurationError> {
+        if bytes.len() > MAX_CONFIGURATION_BYTES {
+            return Err(ConfigurationError::PayloadSize);
+        }
+        let message: Self = data::try_decode(bytes).map_err(|_| ConfigurationError::Archive)?;
+        if let Self::Configuration(packet) = &message {
+            packet.bounds()?;
+        }
+        Ok(message)
+    }
+}
 
 /// Content compatibility marker, not an authentication/security hash. The exact
 /// bundled document must agree, including definitions not present in a packet.
@@ -84,6 +105,107 @@ pub struct CachedConfiguration {
     pub resolved: ResolvedWeapon,
 }
 
+/// Shared receive boundary used by the native client and headless transports.
+/// Keep only the newest snapshot while reliable configuration catches up.
+#[derive(Debug, Default)]
+pub struct ConfigurationReceiver {
+    pub cache: ConfigurationCache,
+    pub last_result: Option<CommandResult>,
+    pending: Option<crate::WorldSnapshot>,
+    last_sequence: u64,
+}
+
+impl ConfigurationReceiver {
+    pub fn message(
+        &mut self,
+        bytes: &[u8],
+        catalog: &Catalog,
+        fingerprint: u64,
+    ) -> Result<(), ConfigurationError> {
+        match ConfigurationMessage::decode(bytes)? {
+            ConfigurationMessage::Epoch { epoch, catalog } => {
+                if catalog != fingerprint {
+                    return Err(ConfigurationError::Catalog);
+                }
+                if self.cache.begin_epoch(epoch)? {
+                    self.last_result = None;
+                    if self
+                        .pending
+                        .as_ref()
+                        .is_some_and(|snapshot| snapshot.configuration_epoch < epoch)
+                    {
+                        self.pending = None;
+                    }
+                }
+            }
+            ConfigurationMessage::Configuration(packet) => {
+                self.cache.apply(catalog, fingerprint, packet)?;
+            }
+            ConfigurationMessage::Result(result) => {
+                if result.epoch != self.cache.epoch() {
+                    return Err(ConfigurationError::Epoch);
+                }
+                if self
+                    .last_result
+                    .as_ref()
+                    .is_none_or(|last| result.request >= last.request)
+                {
+                    self.last_result = Some(result);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn snapshot(&mut self, snapshot: crate::WorldSnapshot) -> Result<(), ConfigurationError> {
+        if snapshot.configuration_epoch == 0 || snapshot.configuration_epoch < self.cache.epoch() {
+            return Err(ConfigurationError::Epoch);
+        }
+        if !snapshot.catalog_valid()
+            || snapshot
+                .players
+                .iter()
+                .any(|actor| actor.configuration == 0 || actor.weapon_instance.0 == 0)
+        {
+            return Err(ConfigurationError::Bounds);
+        }
+        if snapshot.sequence > self.last_sequence
+            && self
+                .pending
+                .as_ref()
+                .is_none_or(|previous| snapshot.sequence > previous.sequence)
+        {
+            self.pending = Some(snapshot);
+        }
+        Ok(())
+    }
+
+    pub fn take_ready(&mut self) -> Result<Option<crate::WorldSnapshot>, ConfigurationError> {
+        let Some(snapshot) = &self.pending else {
+            return Ok(None);
+        };
+        if snapshot.configuration_epoch != self.cache.epoch() {
+            return Ok(None);
+        }
+        for actor in &snapshot.players {
+            if self
+                .cache
+                .get(snapshot.configuration_epoch, actor.configuration)
+                .is_none()
+            {
+                return Ok(None);
+            }
+            if !self.cache.matches(snapshot.configuration_epoch, actor) {
+                self.pending = None;
+                return Err(ConfigurationError::Conflict);
+            }
+        }
+        let snapshot = self.pending.take().expect("pending snapshot");
+        self.last_sequence = snapshot.sequence;
+        Ok(Some(snapshot))
+    }
+}
+
 /// Unknown references never allocate placeholders. Retain old revisions until
 /// epoch reset so in-flight snapshots cannot accidentally use the newest tree.
 #[derive(Debug, Default)]
@@ -113,6 +235,19 @@ impl ConfigurationCache {
         (epoch == self.epoch)
             .then(|| self.entries.get(&handle))
             .flatten()
+    }
+
+    /// A handle is not sufficient on its own: the snapshot must refer to the
+    /// same actor, physical instance, slot and definition as the cached tree.
+    pub fn matches(&self, epoch: u64, actor: &crate::ClientData) -> bool {
+        self.get(epoch, actor.configuration).is_some_and(|entry| {
+            let packet = &entry.packet;
+            packet.owner == actor.id
+                && packet.instance == actor.weapon_instance
+                && packet.slot == actor.weapon_slot
+                && packet.weapon.definition == actor.weapon_id
+                && entry.resolved.class == actor.weapon
+        })
     }
 
     pub fn apply(
@@ -201,15 +336,23 @@ impl ConfigurationPublisher {
         slot: EquipmentSlot,
         instance: &WeaponInstance,
     ) -> Result<u32, ConfigurationError> {
-        let mut weapon = instance.configuration.clone();
-        weapon.components.sort_by_key(|node| node.node);
         if let Some(existing) = self.entries.iter().find(|entry| {
             entry.owner == owner
                 && entry.slot == slot
                 && entry.instance == instance.id
                 && entry.revision == instance.revision
         }) {
-            return if existing.weapon == weapon {
+            // The hot snapshot path only compares the bounded tree; allocation
+            // and canonicalization happen once on publication, not every tick.
+            let weapon = &instance.configuration;
+            return if existing.weapon.definition == weapon.definition
+                && existing.weapon.components.len() == weapon.components.len()
+                && existing
+                    .weapon
+                    .components
+                    .iter()
+                    .all(|node| weapon.components.contains(node))
+            {
                 Ok(existing.handle)
             } else {
                 Err(ConfigurationError::Conflict)
@@ -218,6 +361,8 @@ impl ConfigurationPublisher {
         if self.entries.len() == MAX_CACHED_CONFIGURATIONS {
             return Err(ConfigurationError::Capacity);
         }
+        let mut weapon = instance.configuration.clone();
+        weapon.components.sort_by_key(|node| node.node);
         let packet = Configuration {
             epoch: self.epoch,
             handle: self.entries.len() as u32 + 1,
