@@ -263,7 +263,7 @@ pub(super) fn physical_tick(
             .tick(dt, input.run && Vec3::from(pose.velocity).length() > 1.0);
         if articulated {
             pose.mode_time += dt;
-            pose.aim_pitch = input.camera.pitch;
+            pose.aim_pitch = arsenal.recoil.camera(input.camera).pitch;
             pose.aim_roll = input.camera.roll;
             pose.reload_fraction = 0.0;
             pose.lean = pose.lean.map(|x| x * (-dt * 9.0).exp());
@@ -283,7 +283,7 @@ pub(super) fn physical_tick(
                 o.effective_translation / dt.max(0.001)
             });
         let local = t.rotation.inverse() * effective;
-        pose.aim_pitch = input.camera.pitch;
+        pose.aim_pitch = arsenal.recoil.camera(input.camera).pitch;
         pose.aim_roll = input.camera.roll;
         pose.weapon = arsenal.current().spec().class;
         pose.arm_weakness = [

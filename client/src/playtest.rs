@@ -124,6 +124,11 @@ fn aim_barrel(input: &mut ClientInput, local: &ClientData, target: Vec3) {
                     0.0
                 });
     input.camera = barrel_aim(eye, target, input.weapon_id());
+    // The driver acts as a player holding an anatomical aim point. Recoil is
+    // authority-owned; counter only its received estimate through normal input.
+    let recoil = local.recoil.unpack();
+    input.camera.yaw -= recoil.angles[0];
+    input.camera.pitch -= recoil.angles[1];
 }
 
 /// Exact zero-roll offset-ray solution. Fixed-point look-at iteration oscillates near the muzzle.
@@ -555,7 +560,7 @@ fn drive(
                         local.weapon,
                         local.ammo_in_mag,
                         local.reserve_ammo,
-                        local.reload_remaining,
+                        local.reload_remaining(),
                         audio.iter().count()
                     );
                     if name == "weapon-empty" {
@@ -565,14 +570,14 @@ fn drive(
                         assert_eq!(local.weapon, WeaponKind::Pistol);
                         assert!(local.mechanics.chambered && local.mechanics.magazine_inserted);
                         assert_eq!(local.ammo_in_mag, local.weapon_id.spec().magazine_size + 1);
-                        assert_eq!(local.reload_remaining, 0.0);
+                        assert_eq!(local.reload_remaining(), 0.0);
                     }
                 }
             }
             if elapsed > 10.0 {
                 assert_eq!(local.weapon_id, desired.primary);
                 assert_eq!(local.ammo_in_mag, desired.primary.spec().magazine_size);
-                assert_eq!(local.reload_remaining, 0.0);
+                assert_eq!(local.reload_remaining(), 0.0);
                 info!(
                     "WEAPON EXERCISE PASS primary empty, blocked trigger, interrupted reload, pistol shot/full reload, primary full reload; audio_entities=0"
                 );

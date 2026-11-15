@@ -116,6 +116,8 @@ pub struct AmmoDefinition {
     pub damage: f32,
     pub penetration: f32,
     pub muzzle_speed: f32,
+    /// Effective bullet/gas momentum, N*s; gameplay approximation, not damage.
+    pub recoil_impulse_ns: f32,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -129,6 +131,8 @@ pub struct ProfileDefinition {
     /// Shared authoritative muzzle offset during the legacy geometry migration.
     pub barrel_offset: [f32; 3],
     pub impact_size_mm: u8,
+    /// Angular transfer gain for the platform's bracing/ergonomics.
+    pub recoil_control: f32,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -158,6 +162,7 @@ pub struct ResolvedWeapon {
     pub barrel_offset: [f32; 3],
     pub impact_size_mm: u8,
     pub assembly: ResolvedAssembly,
+    pub recoil: crate::recoil::RecoilProfile,
 }
 
 impl ResolvedWeapon {
@@ -289,6 +294,15 @@ impl Catalog {
             }
         }
         for (i, ammo) in document.ammo.iter().enumerate() {
+            if !ammo.recoil_impulse_ns.is_finite()
+                || !(0.01..=100.0).contains(&ammo.recoil_impulse_ns)
+            {
+                return Err(error(
+                    file,
+                    format!("ammo[{i}].recoil_impulse_ns"),
+                    "expected 0.01..=100 N*s",
+                ));
+            }
             for (field, value) in [
                 ("damage", ammo.damage),
                 ("penetration", ammo.penetration),
@@ -298,6 +312,15 @@ impl Catalog {
             }
         }
         for (i, profile) in document.profiles.iter().enumerate() {
+            if !profile.recoil_control.is_finite()
+                || !(0.01..=10.0).contains(&profile.recoil_control)
+            {
+                return Err(error(
+                    file,
+                    format!("profiles[{i}].recoil_control"),
+                    "expected 0.01..=10 gain",
+                ));
+            }
             positive(
                 file,
                 format!("profiles[{i}].rounds_per_minute"),
@@ -419,6 +442,11 @@ impl Catalog {
             muzzle_speed,
             barrel_offset,
             impact_size_mm: profile.impact_size_mm,
+            recoil: crate::recoil::RecoilProfile::resolve(
+                &assembly,
+                ammo.recoil_impulse_ns,
+                profile.recoil_control,
+            ),
             assembly,
         })
     }

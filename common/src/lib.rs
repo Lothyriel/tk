@@ -4,6 +4,7 @@ pub mod data;
 pub mod humanoid;
 pub mod map;
 pub mod raid;
+pub mod recoil;
 pub mod replication;
 pub mod weapon_animation;
 
@@ -14,7 +15,7 @@ pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 11;
+pub const PROTOCOL_ID: u64 = 12;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
 pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;
@@ -76,17 +77,27 @@ pub struct ClientData {
     pub configuration: u32,
     pub ammo_in_mag: u32,
     pub reserve_ammo: u32,
-    pub reload_remaining: f32,
-    pub mechanics: catalog::MechanicalSnapshot,
-    pub body: combat::BodyHealth,
-    pub armor: combat::ArmorState,
-    pub participant: raid::Participant,
-    pub pose: humanoid::PoseState,
     pub weapon: WeaponKind,
     pub weapon_slot: EquipmentSlot,
     pub crouched: bool,
     pub alive: bool,
+    pub mechanics: catalog::MechanicalSnapshot,
+    pub recoil: recoil::PackedRecoil,
+    pub body: combat::BodyHealth,
+    pub armor: combat::ArmorState,
+    pub participant: raid::Participant,
+    pub pose: humanoid::PoseState,
     pub bot: bool,
+}
+
+impl ClientData {
+    pub fn reload_remaining(&self) -> f32 {
+        if self.mechanics.reloading() {
+            self.mechanics.remaining
+        } else {
+            0.0
+        }
+    }
 }
 
 #[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
