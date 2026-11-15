@@ -5,9 +5,9 @@
   "axes": "right_handed_y_up_negative_z_forward",
   "provenance": "Original TK cuboid reconstruction from FN M4A1 F1/F2 references in docs/WEAPON_REFERENCES.md. Barrel/overall length are published targets; exterior widths, controls and recesses are visual interpretations. Extended stock. No third-party mesh or texture.",
   "materials": [
-    {"id": "anodized", "surface": "metal", "color": [0.105, 0.115, 0.125, 1], "roughness": 0.62, "metallic": 0.72},
-    {"id": "steel", "surface": "metal", "color": [0.065, 0.072, 0.08, 1], "roughness": 0.48, "metallic": 0.88},
-    {"id": "carrier", "surface": "metal", "color": [0.18, 0.19, 0.20, 1], "roughness": 0.36, "metallic": 0.9},
+    {"id": "anodized", "surface": "metal", "color": [0.17, 0.185, 0.20, 1], "roughness": 0.62, "metallic": 0.50},
+    {"id": "steel", "surface": "metal", "color": [0.09, 0.10, 0.11, 1], "roughness": 0.48, "metallic": 0.75},
+    {"id": "carrier", "surface": "metal", "color": [0.26, 0.27, 0.28, 1], "roughness": 0.36, "metallic": 0.85},
     {"id": "polymer", "surface": "polymer", "color": [0.045, 0.05, 0.047, 1], "roughness": 0.86, "metallic": 0},
     {"id": "rubber", "surface": "rubber", "color": [0.022, 0.024, 0.021, 1], "roughness": 0.96, "metallic": 0}
   ],
