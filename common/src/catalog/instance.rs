@@ -41,22 +41,56 @@ impl EquippedWeapon {
         id: WeaponInstanceId,
         configuration: WeaponConfiguration,
     ) -> Result<Self, CatalogError> {
+        let kit = WeaponKit::from_configuration(catalog, configuration)?;
+        Self::from_kit(catalog, id, &kit)
+    }
+
+    /// Materialize initial owned equipment from a validated free-raid selection.
+    /// This is not an inventory mutation or a way to replenish a live instance.
+    pub fn from_kit(
+        catalog: &Catalog,
+        id: WeaponInstanceId,
+        kit: &WeaponKit,
+    ) -> Result<Self, CatalogError> {
         if id.0 == 0 {
             return Err(error(&catalog.file, "instance.id", "zero is reserved"));
         }
-        let resolved = catalog.resolve(&configuration)?;
+        let resolved = kit.resolve(catalog)?;
+        let inserted = WeaponKit::magazine(catalog, &kit.weapon)?.definition;
+        let count = kit.reserves.len() + 1;
         let first = NEXT_MAGAZINE
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                next.checked_add(MAX_RETAINED_MAGAZINES as u64)
+                next.checked_add(count as u64)
             })
             .map_err(|_| error(&catalog.file, "magazine.id", "identity exhausted"))?;
-        let ids = std::array::from_fn(|i| MagazineInstanceId(first + i as u64));
-        let mechanics = MechanicalState::new(catalog, &resolved, ids)?;
+        let mut magazines: Vec<_> = std::iter::once(inserted)
+            .chain(kit.reserves.iter().copied())
+            .enumerate()
+            .map(|(index, definition)| {
+                let part = catalog.component(definition).unwrap();
+                MagazineInstance {
+                    id: MagazineInstanceId(first + index as u64),
+                    definition,
+                    ammo: part.ammo,
+                    capacity: part.capacity,
+                    rounds: part.capacity,
+                }
+            })
+            .collect();
+        // Chambering transfers an existing round; it never grants capacity +1.
+        magazines[0].rounds -= 1;
+        let mechanics = MechanicalState::with_magazines(
+            catalog,
+            &resolved,
+            magazines,
+            Some(MagazineInstanceId(first)),
+            Some(resolved.ammo),
+        )?;
         Self::restore(
             catalog,
             WeaponInstance {
                 id,
-                configuration,
+                configuration: kit.weapon.clone(),
                 mechanics,
                 revision: 0,
             },

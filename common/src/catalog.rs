@@ -6,6 +6,8 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 mod instance;
 pub use instance::*;
+mod kit;
+pub use kit::*;
 mod assembly;
 pub use assembly::*;
 mod mechanics;
