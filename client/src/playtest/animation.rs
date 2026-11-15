@@ -167,7 +167,9 @@ pub(super) fn drive(
         {
             // Asset review: a near side view outside the actor's muzzle ray.
             // Locomotion still uses ordinary replicated input.
-            (Vec3::from(other.pos) + Vec3::new(1.35, 0.0, 0.15)).to_array()
+            (Vec3::from(other.pos)
+                + Quat::from_rotation_y(other.rot.yaw) * Vec3::new(1.35, 0.0, -0.65))
+            .to_array()
         } else if peer {
             [-7.0, 1.0, 13.0]
         } else {

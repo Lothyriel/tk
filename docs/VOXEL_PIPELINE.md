@@ -62,6 +62,12 @@ python scripts/playtest.py --no-build --clients 2 --animation-review \
 
 Use a separate output directory with `--weapon-lod far` for comparison. The
 debug route observes the actor from a close side position using ordinary input.
+After the action route, it takes `asset-right/left/front/top.png` of the other
+player's accepted assembly. This eight-second diagnostic changes only the world
+camera, using the normal 70° projection and game lighting. Body surfaces are
+temporarily hidden for these four unoccluded dimensional views; the preceding
+action captures retain the equipped actor and contacts. Meshes stay in place.
+It does not implement the player-facing inspect action or alter server positions.
 Settings are recorded in `run-settings.json`; video still requires `--video`.
 
 The comparison was limited to `pipeline_fixture.json`: receiver, magazine,

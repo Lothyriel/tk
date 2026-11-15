@@ -175,6 +175,11 @@ def main():
                  "weapon-burst", "weapon-empty", "weapon-reload", "weapon-pistol", "weapon-pistol-reload", "weapon-pistol-ready", "weapon-primary-reload",
                  "injury-healthy", "injury-correction", "injury-lateral-limp", "injury-arm", "injury-separation", "injury-fall", "injury-recovery", "injury-ragdoll"]
         for directory in (output, output / "peer"):
+            if args.weapon_debug:
+                for label in ("right", "left", "front", "top"):
+                    path = directory / f"asset-{label}.png"
+                    data = path.read_bytes()
+                    assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing live asset view: {path}"
             for name in names:
                 path = directory / f"{name}.png"
                 data = path.read_bytes()

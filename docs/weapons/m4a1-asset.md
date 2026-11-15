@@ -23,7 +23,8 @@ recesses below are **V** interpretations. PBR values and simplification are
 | Magazine seat | (0, -0.065, +0.029) m; magazine has its own seat-local root |
 | Ejection opening | Right upper-receiver wall; open between Z=0.012–0.084 m |
 
-The shell, carrier, charging handle, bolt catch, dust cover, trigger and selector
+The shell, carrier, charging handle, bolt catch, dust cover, trigger, selector,
+forward assist and serrated magazine release
 have separate pivots. The charging handle is a receiver child, never a carrier
 child. Receiver and magwell are hollow assemblies of surfaces; the source does
 not paint an opening onto a solid receiver. The near rear sight contains an
@@ -38,7 +39,7 @@ simplification is not yet the required complete 2/4 mm in-game comparison.
 
 | Asset | Near vertices / triangles | Far vertices / triangles | Draw submissions | Cached mesh bytes |
 | --- | --- | --- | --- | --- |
-| M4A1 | 3272 / 1636 | 2824 / 1412 | 19 | 101040 |
+| M4A1 | 3768 / 1884 | 3320 / 1660 | 22 | 115920 |
 | 30-round magazine | 272 / 136 | same | 2 | 8160 |
 
 Counts come from the committed manifests, excluding engine/GPU allocation
@@ -63,6 +64,9 @@ client's baked hierarchy, including grip orientation; moving the carrier leaves
 the charging handle and other receiver-mounted controls fixed. Logical moving
 controls conjugate their deltas through the same authored pivot as the renderer.
 The rifle's carrier stays open when the authoritative action reports an open bolt.
+The hip view's virtual shoulders are placed relative to the authored stock,
+behind and below the breech. ADS still blends into the existing stock pocket;
+the 30/28 cm arm segments and source hand contacts remain rigid.
 
 Source/render fixtures exercise active local/remote contacts, stock and clothing,
 reloads, ADS sight centring and independent physical-bore/device-outlet positions.

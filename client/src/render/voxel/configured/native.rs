@@ -200,10 +200,24 @@ pub(crate) fn action(
         },
         weight: action.control_grip,
     });
+    // The authored breech is ahead of the camera-space shoulders. Keeping the
+    // legacy shoulders at the breech raised the upper arms beside the sights.
+    // Derive the hip torso from the stock, then brace_view blends into ADS.
+    let shoulders = spec
+        .assembly
+        .anchors
+        .get(&common::catalog::AnchorKind::StockContact)
+        .filter(|_| spec.assembly.pivots.contains_key("stock"))
+        .map_or(
+            [Vec3::new(-0.30, 0.1, 0.0), Vec3::new(0.30, 0.1, 0.0)],
+            |stock| {
+                [-1.0, 1.0].map(|side| stock.translation + Vec3::new(side * 0.30, -0.12, -0.17))
+            },
+        );
     ConfiguredHandling {
         preflight_error: None,
         preferred_root: Transform::IDENTITY,
-        shoulders: [Vec3::new(-0.30, 0.1, 0.0), Vec3::new(0.30, 0.1, 0.0)],
+        shoulders,
         poles: [Vec3::new(-0.8, -1.0, 0.0), Vec3::new(0.8, -1.0, 0.0)],
         stock_target: None,
         max_adjustment: 0.35,

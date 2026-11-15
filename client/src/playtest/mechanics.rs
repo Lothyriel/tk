@@ -38,6 +38,7 @@ pub(super) fn loaded(local: &ClientData) -> bool {
 #[derive(Default)]
 pub(super) struct Injury {
     clock: Clock,
+    fall_seen: bool,
 }
 
 impl Injury {
@@ -50,6 +51,8 @@ impl Injury {
         peer: bool,
     ) -> f64 {
         assert!(now < 40.0, "injury route timed out at {}", self.clock.value);
+        let victim = if peer { local } else { other };
+        self.fall_seen |= victim.pose.mode == common::humanoid::PhysicalMode::Fallen;
         self.clock.advance(
             now,
             &[
@@ -60,6 +63,9 @@ impl Injury {
                         && ready(other, EquipmentSlot::Sidearm)
                         && loaded(other),
                 ),
+                // Frame-rate differences must not make the leader inspect a
+                // fall before the peer's movement has reached authority.
+                (14.2, self.fall_seen),
                 (18.5, peer || ready(local, EquipmentSlot::Primary)),
             ],
         );
@@ -259,6 +265,31 @@ mod tests {
             };
             70.0 + (aimed - 70.0) * self.received.pose.ads
         }
+    }
+
+    #[test]
+    fn injury_checkpoint_waits_for_replicated_peer_fall_under_clock_skew() {
+        let ready = ClientData {
+            weapon_slot: EquipmentSlot::Sidearm,
+            mechanics: MechanicalSnapshot {
+                equipped: true,
+                chambered: true,
+                magazine_inserted: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut victim = ready.clone();
+        let mut route = Injury::default();
+        let mut input = ClientInput::default();
+        for step in 0..1600 {
+            let t = route.control(&mut input, &ready, &victim, step as f64 * 0.01, false);
+            assert!(t < 14.2, "leader outran the peer's fall");
+        }
+        victim.pose.mode = common::humanoid::PhysicalMode::Fallen;
+        assert!(route.control(&mut input, &ready, &victim, 16.0, false) >= 14.2);
+        victim.pose.mode = common::humanoid::PhysicalMode::Recovering;
+        assert!(route.control(&mut input, &ready, &victim, 16.01, false) > 14.2);
     }
 
     #[test]
