@@ -75,6 +75,7 @@ struct Driver {
     fall_ids: Vec<u64>,
     recovery_seen: bool,
     recovery_recorded: bool,
+    next_fight_report: f64,
 }
 
 impl Driver {
@@ -128,6 +129,13 @@ fn barrel_aim(eye: Vec3, target: Vec3, weapon: WeaponId) -> CameraInput {
         yaw: (-d.x).atan2(-d.z) + b.x.atan2(-local_z),
         roll: 0.0,
     }
+}
+
+fn head_target(target: &ClientData) -> Vec3 {
+    let rig = common::humanoid::evaluate_pose(&target.pose, 1.0, 1.0);
+    Vec3::from(target.pos)
+        + Quat::from_rotation_y(target.rot.yaw)
+            * Vec3::from(rig[common::humanoid::Segment::Head.index()].position)
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
@@ -570,11 +578,25 @@ fn drive(
                     .iter()
                     .find(|p| p.bot && p.id == bot_id)
                     .expect("First sentry replicated");
-                let origin = Vec3::from(local.pos) + Vec3::Y * PLAYER_VIEW_HEIGHT;
-                let target = Vec3::from(target.pos) + Vec3::Y * 0.68;
-                // Aim the actual offset barrel at the smaller anatomical head, not the old broad capsule.
-                input.camera = barrel_aim(origin, target, desired.primary);
+                if now >= driver.next_fight_report {
+                    driver.next_fight_report = now + 1.0;
+                    info!(
+                        "PLAYTEST FIGHT local={:?} ammo={}/{} mechanics={:?} body={:?} target={:?} head={:?} target_roll={} target_body={:?}",
+                        local.pos,
+                        local.ammo_in_mag,
+                        local.reserve_ammo,
+                        local.mechanics,
+                        local.body.parts,
+                        target.pos,
+                        head_target(target),
+                        target.pose.aim_roll,
+                        target.body.parts
+                    );
+                }
                 input.weapon = EquipmentSlot::Primary;
+                // Roll/lean displaces the head away from the actor root. A fixed
+                // root + height can miss every round while the sentry is leaning.
+                aim_barrel(&mut input, local, head_target(target));
                 input.fire = true;
                 if local.ammo_in_mag == 0 {
                     input.reload_sequence = input.reload_sequence.wrapping_add(1);
@@ -955,6 +977,69 @@ fn drive(
             exit.write(AppExit::Success);
         }
         _ => (),
+    }
+}
+
+#[cfg(test)]
+mod aiming_tests {
+    use super::*;
+    use common::humanoid::{Segment, SegmentPose, ray_box};
+
+    #[test]
+    fn native_sentry_aim_hits_leaning_head_instead_of_fixed_root_height() {
+        let eye = Vec3::new(-4.12, 1.018 + PLAYER_VIEW_HEIGHT, 0.918);
+        for roll in [-0.4456, -0.2569, 0.2569, 0.4456] {
+            for yaw in [-0.65, 0.0, 0.65] {
+                let target = ClientData {
+                    pos: [0.0, 1.018, -10.0],
+                    rot: CameraInput { yaw, ..default() },
+                    pose: common::humanoid::PoseState {
+                        aim_roll: roll,
+                        aim_pitch: -0.0471,
+                        ..default()
+                    },
+                    ..default()
+                };
+                // Independent anatomical oracle: standing head is 0.65 m above
+                // root, shifted 0.7 m/rad by roll, then rotated by actor yaw.
+                let root_rotation = Quat::from_rotation_y(yaw);
+                let center =
+                    Vec3::from(target.pos) + root_rotation * Vec3::new(-roll * 0.7, 0.65, 0.0);
+                assert!(head_target(&target).distance(center) < 1e-6);
+                let head = SegmentPose {
+                    position: center.to_array(),
+                    rotation: (root_rotation
+                        * Quat::from_rotation_x(-0.0471)
+                        * Quat::from_rotation_z(roll))
+                    .to_array(),
+                };
+                let aim = Quat::from(&barrel_aim(eye, head_target(&target), WeaponId::M4A1));
+                let muzzle = eye + aim * Vec3::from(WeaponId::M4A1.spec().barrel_offset);
+                let direction = aim * Vec3::NEG_Z;
+                assert!((center - muzzle).cross(direction).length() < 0.001);
+                assert!(
+                    ray_box(muzzle, direction, head, Segment::Head.half_size(), 20.0).is_some()
+                );
+                if roll.abs() > 0.4 && yaw == 0.0 {
+                    let old = Quat::from(&barrel_aim(
+                        eye,
+                        Vec3::from(target.pos) + Vec3::Y * 0.68,
+                        WeaponId::M4A1,
+                    ));
+                    assert!(
+                        ray_box(
+                            eye + old * Vec3::from(WeaponId::M4A1.spec().barrel_offset),
+                            old * Vec3::NEG_Z,
+                            head,
+                            Segment::Head.half_size(),
+                            20.0,
+                        )
+                        .is_none(),
+                        "fixture must reproduce the old fixed-height miss"
+                    );
+                }
+            }
+        }
     }
 }
 
