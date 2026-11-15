@@ -49,6 +49,15 @@
             "magazine.grasp": (translation: (-0.04500000178813934, -0.02500000037252903, 0.02500000037252903), rotation: (0.0, 0.0, -0.1494381420979968, 0.9887710764814569)),
         },
     ),
+    "m4a1_pmag_20": (
+        pivots: {
+            "magazine": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+        sockets: {
+            "magazine.grasp": (translation: (-0.014, -0.068, 0.004), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "magazine.seat": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
+        },
+    ),
     "m4a1_refined": (
         pivots: {
             "barrel": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),

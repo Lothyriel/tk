@@ -62,6 +62,18 @@ TAR-87 consume this same origin; no alternate inventory mesh or magazine-ammo
 state is introduced here. Capacity is 30 or 20 according to the installed
 definition, excluding the independently modeled chamber.
 
+`m4a1_pmag_20.json` is the authored empty PMAG source, with a recessed follower,
+open feed lips, left catch opening, stepped lower body, ribs and flared base.
+Its V interpretation uses the manufacturer's [side view][pmag-side] and
+[oblique view][pmag-oblique]; loaded cartridges in the reference photograph are
+not baked into the empty magazine. The continuous length is 0.14224 m.
+Near/far share 816 vertices / 408 triangles, 3 submissions and 24480 cached
+mesh bytes. Source tests cover its full magwell removal sweep and palm contact.
+Catalog integration and native visual acceptance are pending.
+
+[pmag-side]: https://magpul.com/media/catalog/product/cache/f8158826193ba5faa8b862a9bd1eb9e9/m/a/mag560-blk_magpul_pmag_20_ar_m4_gen_m3_02.1.jpg
+[pmag-oblique]: https://magpul.com/media/catalog/product/cache/f8158826193ba5faa8b862a9bd1eb9e9/m/a/mag560-blk_magpul_pmag_20_ar_m4_gen_m3_01.1.jpg
+
 Use typed extension, barrel, handguard, muzzle, optic-mount and magazine
 interfaces. Required sockets enforce the barrel/device/furniture chain.
 Picatinny placements use bounded intervals; solids and swept corridors qualify
