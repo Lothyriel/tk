@@ -3,6 +3,7 @@ pub mod data;
 pub mod humanoid;
 pub mod map;
 pub mod raid;
+pub mod weapon_animation;
 
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_rapier3d::prelude::*;
@@ -10,7 +11,7 @@ use bevy_renet2::{netcode::NetcodeTransportError, prelude::ClientId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 2;
+pub const PROTOCOL_ID: u64 = 5;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
 pub const PLAYER_CROUCH_COLLIDER_HALF_HEIGHT: f32 = 0.25;
@@ -90,6 +91,7 @@ pub struct ClientInput {
     pub crouch: bool,
     pub jump: bool,
     pub fire: bool,
+    pub aim: bool,
     pub fire_pressed_sequence: u32,
     pub reload_sequence: u32,
     pub weapon: WeaponKind,
