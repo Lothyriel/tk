@@ -56,7 +56,9 @@ T1 gate: all 18 copies matched the installed bytes, all five Python scripts pars
 **Depends on**: T1
 **Requirement**: DEV-03, DEV-04, DEV-05, DEV-06, DEV-07, DEV-08
 **Done when**:
-- [ ] Mode commands, filters, validation, first-failure propagation, missing executables, root resolution and shell-free subprocess execution pass unit tests and real CLI smoke checks.
+- [x] Mode commands, filters, validation, first-failure propagation, missing executables, root resolution and shell-free subprocess execution pass unit tests and real CLI smoke checks.
+
+T2 gate: 12 Python tests passed. Docs mode passed both with the selected feature and when launched from outside the repository. A real quick-mode run with server/real_rapier executed 2 existing tests, both passed; no client or recorder ran. Tests were written first and initially failed because verify.py did not exist.
 **Tests**: unit + CLI smoke
 **Gate**: Quick
 
