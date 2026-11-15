@@ -19,18 +19,23 @@ pub(super) struct PhysicsPiece {
 #[derive(Component)]
 pub(super) struct Corpsed;
 
+#[derive(Clone, Copy)]
+pub(super) struct PieceActor<'a> {
+    pub root: &'a Transform,
+    pub owner: u64,
+    pub bot: bool,
+}
+
 fn spawn_piece(
     commands: &mut Commands,
     state: &mut WorldState,
     segment: Segment,
     pose: SegmentPose,
-    root: &Transform,
-    velocity: Vec3,
-    angular: Vec3,
-    owner: u64,
-    bot: bool,
+    actor: PieceActor<'_>,
+    velocity: Velocity,
     detached: bool,
 ) -> Entity {
+    let PieceActor { root, owner, bot } = actor;
     let half = segment.half_size() * 0.88;
     let t = root.mul_transform(pose.transform());
     let id = state.next_piece_id;
@@ -48,10 +53,7 @@ fn spawn_piece(
             RigidBody::Dynamic,
             Collider::cuboid(half.x, half.y, half.z),
             t,
-            Velocity {
-                linear: velocity,
-                angular,
-            },
+            velocity,
             Damping {
                 linear_damping: 0.25,
                 angular_damping: 1.5,
@@ -72,10 +74,8 @@ pub(super) fn spawn_fragments(
     state: &mut WorldState,
     mask: u32,
     rig: &[SegmentPose; SEGMENT_COUNT],
-    root: &Transform,
+    actor: PieceActor<'_>,
     velocity: Vec3,
-    owner: u64,
-    bot: bool,
 ) {
     for segment in SEGMENTS {
         if mask & (1 << segment.index()) != 0 {
@@ -84,11 +84,11 @@ pub(super) fn spawn_fragments(
                 state,
                 segment,
                 rig[segment.index()],
-                root,
-                velocity,
-                Vec3::new(2.0, 1.0, 0.5),
-                owner,
-                bot,
+                actor,
+                Velocity {
+                    linear: velocity,
+                    angular: Vec3::new(2.0, 1.0, 0.5),
+                },
                 true,
             );
         }
@@ -99,11 +99,9 @@ pub(super) fn corpse(
     commands: &mut Commands,
     state: &mut WorldState,
     rig: &[SegmentPose; SEGMENT_COUNT],
-    root: &Transform,
+    actor: PieceActor<'_>,
     velocities: &[(Vec3, Vec3); SEGMENT_COUNT],
     body: &BodyHealth,
-    owner: u64,
-    bot: bool,
 ) -> [Option<Entity>; SEGMENT_COUNT] {
     let mut entities = [None; SEGMENT_COUNT];
     for segment in SEGMENTS {
@@ -115,11 +113,11 @@ pub(super) fn corpse(
             state,
             segment,
             rig[segment.index()],
-            root,
-            velocities[segment.index()].0,
-            velocities[segment.index()].1,
-            owner,
-            bot,
+            actor,
+            Velocity {
+                linear: velocities[segment.index()].0,
+                angular: velocities[segment.index()].1,
+            },
             false,
         ));
     }
@@ -480,11 +478,13 @@ pub(super) fn spawn_dead(
             &mut commands,
             &mut state,
             &rig,
-            root,
+            PieceActor {
+                root,
+                owner: client.id,
+                bot,
+            },
             &velocities,
             body,
-            client.id,
-            bot,
         );
         commands.entity(entity).insert(Corpsed);
         let already_down = matches!(pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering);
@@ -573,11 +573,13 @@ mod handoff_tests {
                         &mut commands,
                         &mut state,
                         &f.rig,
-                        &f.root,
+                        PieceActor {
+                            root: &f.root,
+                            owner: 7,
+                            bot: false,
+                        },
                         &f.velocities,
                         &BodyHealth::default(),
-                        7,
-                        false,
                     );
                 },
             );

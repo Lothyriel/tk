@@ -12,17 +12,27 @@ pub(super) struct Sequence {
     pub mechanism_captures: u8,
 }
 
+pub(super) struct ReviewFrame {
+    pub elapsed: f64,
+    pub peer: bool,
+    pub primary: WeaponKind,
+    pub world_fov: f32,
+}
+
 pub(super) fn drive(
     commands: &mut Commands,
     sequence: &mut Sequence,
     input: &mut ClientInput,
     local: &ClientData,
     other: Option<&ClientData>,
-    elapsed: f64,
-    peer: bool,
-    primary: WeaponKind,
-    world_fov: f32,
+    frame: ReviewFrame,
 ) -> bool {
+    let ReviewFrame {
+        elapsed,
+        peer,
+        primary,
+        world_fov,
+    } = frame;
     let observe = if peer {
         elapsed < 29.0
     } else {
@@ -54,7 +64,7 @@ pub(super) fn drive(
     };
     input.camera = CameraInput {
         pitch: 0.55,
-        yaw: ((t - 1.0).max(0.0).min(3.0) as f32 * 0.7).sin() * 0.22,
+        yaw: ((t - 1.0).clamp(0.0, 3.0) as f32 * 0.7).sin() * 0.22,
         roll: 0.0,
     };
     input.forward = (1.0..1.8).contains(&t) || (8.6..9.1).contains(&t);

@@ -112,11 +112,13 @@ pub(super) fn begin_falls(
             &mut commands,
             &mut state,
             &rig,
-            root,
+            physical::PieceActor {
+                root,
+                owner: client.id,
+                bot,
+            },
             &velocities,
             health,
-            client.id,
-            bot,
         );
         impact.impulse = Vec3::ZERO;
         pose.physical = Some(Box::new(PackedRig::pack(&rig)));

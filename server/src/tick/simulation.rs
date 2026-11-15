@@ -217,6 +217,18 @@ pub(super) fn weapons_tick(
     }
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct ProjectileEnvironment<'w, 's> {
+    surfaces: Query<
+        'w,
+        's,
+        (&'static SurfaceKind, &'static Collider, &'static Transform),
+        Without<Projectile>,
+    >,
+    physics_pieces: Query<'w, 's, (Entity, &'static mut super::physical::PhysicsPiece)>,
+    voxels: Query<'w, 's, &'static mut super::BarrierVoxel>,
+}
+
 pub(super) fn projectiles_tick(
     mut commands: Commands,
     mut world_state: ResMut<WorldState>,
@@ -244,10 +256,13 @@ pub(super) fn projectiles_tick(
         ),
         Without<Projectile>,
     >,
-    surfaces: Query<(&SurfaceKind, &Collider, &Transform), Without<Projectile>>,
-    mut physics_pieces: Query<(Entity, &mut super::physical::PhysicsPiece)>,
-    mut voxels: Query<&mut super::BarrierVoxel>,
+    environment: ProjectileEnvironment,
 ) {
+    let ProjectileEnvironment {
+        surfaces,
+        mut physics_pieces,
+        mut voxels,
+    } = environment;
     let Ok(context) = context.single() else {
         return;
     };
@@ -304,7 +319,7 @@ pub(super) fn projectiles_tick(
                         ..default()
                     };
                     let pose = evaluate_pose(
-                        pose.as_deref().unwrap_or(&fallback),
+                        pose.unwrap_or(&fallback),
                         body.anatomy.capacity(Region::LeftLeg),
                         body.anatomy.capacity(Region::RightLeg),
                     );
@@ -314,13 +329,11 @@ pub(super) fn projectiles_tick(
                         ray_segments(local, inv * direction, max, &pose, body.anatomy.missing)
                             .first()
                             .copied()
-                    {
-                        if nearest
+                        && nearest
                             .as_ref()
                             .is_none_or(|(_, _, d): &(Entity, Segment, f32)| distance < *d)
-                        {
-                            nearest = Some((target, segment, distance));
-                        }
+                    {
+                        nearest = Some((target, segment, distance));
                     }
                 }
                 if let Some((target, segment, distance)) = nearest {
@@ -355,13 +368,15 @@ pub(super) fn projectiles_tick(
                     );
                     let inv = t.rotation.inverse();
                     let mask = body.hit_anatomy(
-                        segment,
-                        projectile.damage,
-                        projectile.penetration,
+                        AnatomyHit {
+                            segment,
+                            damage: projectile.damage,
+                            penetration: projectile.penetration,
+                            origin: inv * (start - t.translation),
+                            direction: inv * direction,
+                            range: max,
+                        },
                         &mut armor,
-                        inv * (start - t.translation),
-                        inv * direction,
-                        max,
                         &rig,
                     );
                     if let Some(pose) = pose.as_deref_mut() {
@@ -395,10 +410,12 @@ pub(super) fn projectiles_tick(
                             &mut world_state,
                             mask & !reused,
                             &rig,
-                            t,
+                            super::physical::PieceActor {
+                                root: t,
+                                owner: client.map_or(0, |c| c.id),
+                                bot,
+                            },
                             movement.velocity + direction * 3.0,
-                            client.map_or(0, |c| c.id),
-                            bot,
                         );
                     }
                     stopped = true;

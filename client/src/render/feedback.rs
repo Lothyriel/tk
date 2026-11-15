@@ -561,12 +561,17 @@ fn apply_local_camera_recoil(
     );
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct LocalAnimationState<'w> {
+    time: Res<'w, Time>,
+    id: Res<'w, PlayerId>,
+    session: Res<'w, ClientSession>,
+    feedback: Res<'w, Feedback>,
+    input: Res<'w, LocalInput>,
+}
+
 pub(super) fn animate_local(
-    time: Res<Time>,
-    id: Res<PlayerId>,
-    session: Res<ClientSession>,
-    feedback: Res<Feedback>,
-    input: Res<LocalInput>,
+    state: LocalAnimationState,
     mut views: Query<(&WeaponViewModel, &mut Transform), With<LocalView>>,
     mut parts: Query<
         (
@@ -598,6 +603,13 @@ pub(super) fn animate_local(
         ),
     >,
 ) {
+    let LocalAnimationState {
+        time,
+        id,
+        session,
+        feedback,
+        input,
+    } = state;
     let Some(p) = session.local(id.0) else {
         return;
     };
@@ -799,11 +811,16 @@ fn camera_height_feedback(pose: &common::humanoid::PoseState) -> f32 {
 #[derive(Component, Clone, Copy)]
 pub(super) struct ViewFrameBounds(pub [Vec3; 8]);
 
+#[derive(bevy::ecs::system::SystemParam)]
+struct LocalFramingState<'w> {
+    time: Res<'w, Time>,
+    id: Res<'w, PlayerId>,
+    session: Res<'w, ClientSession>,
+    feedback: ResMut<'w, Feedback>,
+}
+
 fn frame_local_pistol(
-    time: Res<Time>,
-    id: Res<PlayerId>,
-    session: Res<ClientSession>,
-    mut feedback: ResMut<Feedback>,
+    state: LocalFramingState,
     camera: Single<
         (&Transform, &Projection),
         (
@@ -870,6 +887,12 @@ fn frame_local_pistol(
         ),
     >,
 ) {
+    let LocalFramingState {
+        time,
+        id,
+        session,
+        mut feedback,
+    } = state;
     let (eye, projection) = *camera;
     let Projection::Perspective(projection) = projection else {
         return;

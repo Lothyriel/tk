@@ -266,10 +266,10 @@ fn update(
     let mut drops = 0;
     for (entity, mut blood, mut transform, mut mesh, mut material) in &mut effects {
         if advance(&mut blood, &mut transform, delta) {
-            if state.stains.len() == MAX_STAINS {
-                if let Some(old) = state.stains.pop_front() {
-                    commands.entity(old).despawn();
-                }
+            if state.stains.len() == MAX_STAINS
+                && let Some(old) = state.stains.pop_front()
+            {
+                commands.entity(old).despawn();
             }
             state.stains.push_back(entity);
             mesh.0 = assets.stain_mesh.clone();

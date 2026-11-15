@@ -128,19 +128,31 @@ fn barrel_aim(eye: Vec3, target: Vec3, weapon: WeaponKind) -> CameraInput {
     }
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+struct PlaytestState<'w> {
+    time: Res<'w, Time<Real>>,
+    session: Res<'w, ClientSession>,
+    id: Res<'w, PlayerId>,
+    input: ResMut<'w, LocalInput>,
+    driver: ResMut<'w, Driver>,
+}
+
 fn drive(
     mut commands: Commands,
-    time: Res<Time<Real>>,
-    session: Res<ClientSession>,
-    id: Res<PlayerId>,
-    mut input: ResMut<LocalInput>,
-    mut driver: ResMut<Driver>,
+    state: PlaytestState,
     mut exit: MessageWriter<AppExit>,
     audio: Query<(), With<AudioPlayer>>,
     mut view_camera: Single<&mut Camera, With<crate::render::ViewModelCamera>>,
     flashes: Query<&Visibility, With<crate::render::feedback::Flash>>,
     projections: Query<(&Projection, Has<crate::render::ViewModelCamera>), With<Camera3d>>,
 ) {
+    let PlaytestState {
+        time,
+        session,
+        id,
+        mut input,
+        mut driver,
+    } = state;
     let now = time.elapsed_secs_f64();
     let lens = |view: bool| {
         projections
@@ -308,9 +320,11 @@ fn drive(
                 &mut input,
                 local,
                 other,
-                peer,
-                &name,
-                elapsed,
+                physical::ReviewStep {
+                    peer,
+                    name: &name,
+                    elapsed,
+                },
             ) {
                 driver.advance(Step::PhysicalRest, now);
             }
@@ -335,9 +349,11 @@ fn drive(
                 local,
                 target,
                 &session.physics_pieces,
-                peer,
-                &name,
-                elapsed,
+                physical::ReviewStep {
+                    peer,
+                    name: &name,
+                    elapsed,
+                },
             ) {
                 driver.advance(Step::Done, now);
             }
@@ -372,10 +388,12 @@ fn drive(
                 &mut input,
                 local,
                 session.players.iter().find(|p| !p.bot && p.id != id.0),
-                elapsed,
-                peer,
-                desired.primary,
-                world_fov,
+                animation::ReviewFrame {
+                    elapsed,
+                    peer,
+                    primary: desired.primary,
+                    world_fov,
+                },
             );
             view_camera.is_active = !observer;
             if elapsed > 59.0 {
@@ -825,12 +843,14 @@ fn drive(
                 if !peer && elapsed > 18.5 && other.body.alive() {
                     input.fire = true;
                 }
-                if !peer && elapsed > 20.0 && !other.body.alive() {
-                    if let Some(piece) = session.physics_pieces.iter().find(|p| {
+                if !peer
+                    && elapsed > 20.0
+                    && !other.body.alive()
+                    && let Some(piece) = session.physics_pieces.iter().find(|p| {
                         p.owner == other.id && p.segment == Segment::Thorax && !p.detached
-                    }) {
-                        aim_barrel(&mut input, local, piece.pose.position.into());
-                    }
+                    })
+                {
+                    aim_barrel(&mut input, local, piece.pose.position.into());
                 }
             }
             for (index, (at, name)) in [

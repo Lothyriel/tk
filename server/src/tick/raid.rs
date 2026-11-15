@@ -4,6 +4,15 @@ use common::{combat::*, map::*, raid::*, *};
 use super::{Bot, Projectile, WorldState, character_bundle, set_crouched_state};
 use bevy_rapier3d::prelude::*;
 
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct RaidResetEntities<'w, 's> {
+    bots: Query<'w, 's, Entity, With<Bot>>,
+    projectiles: Query<'w, 's, Entity, With<Projectile>>,
+    pieces: Query<'w, 's, Entity, With<super::physical::PhysicsPiece>>,
+    poses: Query<'w, 's, (Entity, &'static mut common::humanoid::PoseState)>,
+    voxels: Query<'w, 's, (Entity, &'static mut super::BarrierVoxel)>,
+}
+
 pub(super) fn lobby_tick(
     mut commands: Commands,
     time: Res<Time>,
@@ -23,12 +32,15 @@ pub(super) fn lobby_tick(
         ),
         Without<Bot>,
     >,
-    bots: Query<Entity, With<Bot>>,
-    projectiles: Query<Entity, With<Projectile>>,
-    pieces: Query<Entity, With<super::physical::PhysicsPiece>>,
-    mut poses: Query<(Entity, &mut common::humanoid::PoseState)>,
-    mut voxels: Query<(Entity, &mut super::BarrierVoxel)>,
+    reset_entities: RaidResetEntities,
 ) {
+    let RaidResetEntities {
+        bots,
+        projectiles,
+        pieces,
+        mut poses,
+        mut voxels,
+    } = reset_entities;
     let previous_phase = raid.phase;
     let mut return_requested = false;
     for (_, input, mut player, ..) in &mut players {

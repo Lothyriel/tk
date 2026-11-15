@@ -94,8 +94,10 @@ pub(super) fn advance(
                 foot.planted = false;
                 foot.replanting = pose.foot_weight[i] > 0.01;
             }
-            if stance && !foot.planted && !foot.replanting {
-                if let Some((_, hit)) = context.cast_ray_and_get_normal(
+            if stance
+                && !foot.planted
+                && !foot.replanting
+                && let Some((_, hit)) = context.cast_ray_and_get_normal(
                     proposed + Vec3::Y * 0.35,
                     -Vec3::Y,
                     0.75,
@@ -104,12 +106,12 @@ pub(super) fn advance(
                         .exclude_collider(entity)
                         .exclude_sensors()
                         .groups(CollisionGroups::new(Group::ALL, Group::GROUP_1)),
-                ) {
-                    foot.position = hit.point + hit.normal * 0.055;
-                    foot.normal = hit.normal;
-                    foot.yaw = yaw;
-                    foot.planted = hit.normal.y > 0.65;
-                }
+                )
+            {
+                foot.position = hit.point + hit.normal * 0.055;
+                foot.normal = hit.normal;
+                foot.yaw = yaw;
+                foot.planted = hit.normal.y > 0.65;
             }
             if !stance || proposed.distance(foot.position) > 0.8 {
                 foot.planted = false;

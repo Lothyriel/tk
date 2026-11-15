@@ -10,6 +10,12 @@ pub(super) struct Review {
     pub rest: Option<Vec<PhysicsPieceData>>,
 }
 
+pub(super) struct ReviewStep<'a> {
+    pub peer: bool,
+    pub name: &'a str,
+    pub elapsed: f64,
+}
+
 pub(super) fn scenario() -> Option<String> {
     std::env::var("TK_PHYSICAL_REVIEW").ok()
 }
@@ -37,10 +43,13 @@ pub(super) fn action(
     input: &mut ClientInput,
     local: &ClientData,
     other: &ClientData,
-    peer: bool,
-    name: &str,
-    elapsed: f64,
+    step: ReviewStep<'_>,
 ) -> bool {
+    let ReviewStep {
+        peer,
+        name,
+        elapsed,
+    } = step;
     let target = if peer { local } else { other };
     if target.body.alive() {
         review.previous_alive = Some(target.clone());
@@ -101,28 +110,29 @@ pub(super) fn rest(
     local: &ClientData,
     target: &ClientData,
     pieces: &[PhysicsPieceData],
-    peer: bool,
-    name: &str,
-    elapsed: f64,
+    step: ReviewStep<'_>,
 ) -> bool {
+    let ReviewStep {
+        peer,
+        name,
+        elapsed,
+    } = step;
     let owned: Vec<_> = pieces
         .iter()
         .filter(|p| p.owner == target.id && !p.detached)
         .cloned()
         .collect();
-    if !peer {
-        if let Some(thorax) = owned.iter().find(|p| p.segment == Segment::Thorax) {
-            if elapsed > 1.5 {
-                let centre = Vec3::from(thorax.pose.position);
-                let mut away = Vec3::from(local.pos) - centre;
-                away.y = 0.0;
-                if away.length() > 3.2 {
-                    let target = centre + away.normalize() * 2.8;
-                    move_toward(input, local.pos, target.into());
-                }
+    if !peer && let Some(thorax) = owned.iter().find(|p| p.segment == Segment::Thorax) {
+        if elapsed > 1.5 {
+            let centre = Vec3::from(thorax.pose.position);
+            let mut away = Vec3::from(local.pos) - centre;
+            away.y = 0.0;
+            if away.length() > 3.2 {
+                let target = centre + away.normalize() * 2.8;
+                move_toward(input, local.pos, target.into());
             }
-            aim_barrel(input, local, thorax.pose.position.into());
         }
+        aim_barrel(input, local, thorax.pose.position.into());
     }
     if elapsed > 0.25 {
         assert_eq!(

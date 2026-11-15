@@ -1015,10 +1015,11 @@ fn ragdoll_running_and_resting_contact_matrix_settles_without_floor_escape_or_jo
         for obstacle in 0..4 {
             let (mut app, _, b) = physical_fixture();
             if running {
-                let mut input = app.world_mut().get_mut::<ClientInput>(b).unwrap();
-                input.forward = true;
-                input.run = true;
-                drop(input);
+                {
+                    let mut input = app.world_mut().get_mut::<ClientInput>(b).unwrap();
+                    input.forward = true;
+                    input.run = true;
+                }
                 held_steps(&mut app, b, 45);
             }
             let start = app.world().get::<Transform>(b).unwrap().translation;
@@ -1857,9 +1858,11 @@ fn narrow_concrete_on_eye_to_muzzle_path_stops_hip_and_ads_without_parallel_eye_
             Collider::cuboid(0.04, 0.015, 0.04),
             Transform::from_translation(centre),
         ));
-        let mut target = app.world_mut().get_mut::<Transform>(b).unwrap();
-        target.translation.x = eye.x + barrel.x;
-        drop(target);
+        app.world_mut()
+            .get_mut::<Transform>(b)
+            .unwrap()
+            .translation
+            .x = eye.x + barrel.x;
         held_steps(&mut app, a, 3);
         app.world_mut().get_mut::<ClientInput>(a).unwrap().fire = true;
         held_steps(&mut app, a, 1);
