@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "id": "m4a1_magazine_30",
+  "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK 30-round STANAG exterior interpretation from FN M4A1 F2. Continuous magazine-seat-local coordinates; dimensions are visual estimates, not manufacturing specifications.",
+  "materials": [
+    {"id": "aluminum", "surface": "metal", "color": [0.18, 0.19, 0.17, 1], "roughness": 0.68, "metallic": 0.65},
+    {"id": "floorplate", "surface": "metal", "color": [0.09, 0.10, 0.09, 1], "roughness": 0.56, "metallic": 0.8}
+  ],
+  "parts": [
+    {
+      "id": "magazine", "parent": null, "movable": true,
+      "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+      "boxes": [
+        {"min": [-0.012, -0.040, -0.031], "max": [0.012, 0.026, 0.031], "material": "aluminum"},
+        {"min": [-0.012, -0.060, -0.033], "max": [0.012, -0.040, 0.031], "material": "aluminum"},
+        {"min": [-0.012, -0.080, -0.037], "max": [0.012, -0.060, 0.029], "material": "aluminum"},
+        {"min": [-0.012, -0.100, -0.043], "max": [0.012, -0.080, 0.025], "material": "aluminum"},
+        {"min": [-0.012, -0.120, -0.051], "max": [0.012, -0.100, 0.019], "material": "aluminum"},
+        {"min": [-0.014, -0.124, -0.053], "max": [0.014, -0.120, 0.021], "material": "floorplate"},
+        {"min": [-0.013, -0.094, -0.018], "max": [0.013, -0.028, -0.015], "material": "aluminum"},
+        {"min": [-0.013, -0.094, 0.008], "max": [0.013, -0.028, 0.011], "material": "aluminum"}
+      ]
+    }
+  ],
+  "sockets": [
+    {"id": "magazine.seat", "part": "magazine", "pose": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]}},
+    {"id": "magazine.grasp", "part": "magazine", "pose": {"translation": [-0.013, -0.060, 0.005], "rotation": [0, 0, 0, 1]}}
+  ]
+}
