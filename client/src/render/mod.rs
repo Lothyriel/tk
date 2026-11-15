@@ -432,18 +432,24 @@ fn spawn_world_model(
         ..default()
     });
     commands.spawn((
+        ExtractionMarker,
         Mesh3d(meshes.add(Cylinder::new(EXTRACTION_RADIUS, 0.04))),
         MeshMaterial3d(green.clone()),
         Transform::from_translation(Vec3::from(EXTRACTION_CENTER)),
     ));
     for x in [-EXTRACTION_RADIUS, EXTRACTION_RADIUS] {
         commands.spawn((
+            ExtractionMarker,
             Mesh3d(meshes.add(Cuboid::new(0.16, 4.0, 0.16))),
             MeshMaterial3d(green.clone()),
             Transform::from_xyz(x, 2.1, EXTRACTION_CENTER[2]),
         ));
     }
 }
+
+/// Non-colliding exit indicators, separable from geometry for diagnostic views.
+#[derive(Component)]
+pub(crate) struct ExtractionMarker;
 
 fn spawn_lights(mut commands: Commands) {
     commands.insert_resource(GlobalAmbientLight {

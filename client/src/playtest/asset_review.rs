@@ -3,7 +3,7 @@
 //! stay on the ordinary path. This is asset evidence, not a player inspect action.
 use super::*;
 use crate::render::{
-    PlayerBodyVisual, WorldModelCamera,
+    ExtractionMarker, PlayerBodyVisual, WorldModelCamera,
     voxel::{
         VoxelPart,
         configured::{ConfiguredPose, ConfiguredWeapon},
@@ -12,11 +12,12 @@ use crate::render::{
 
 pub(super) const VIEWS: [&str; 4] = ["right", "left", "front", "top"];
 
-/// Remove body occlusion for dimensional views of the live assembly. Equipped
+/// Remove body/exit-marker occlusion for dimensional views of the live assembly. Equipped
 /// actor/contact evidence is captured in the preceding action route.
 pub(super) fn body_visibility(
     driver: Res<Driver>,
     bodies: Query<(), With<PlayerBodyVisual>>,
+    markers: Query<(), With<ExtractionMarker>>,
     parts: Query<(), With<VoxelPart>>,
     parents: Query<&ChildOf>,
     mut meshes: Query<(Entity, &mut Visibility), With<Mesh3d>>,
@@ -31,6 +32,11 @@ pub(super) fn body_visibility(
         return;
     }
     for (entity, mut visibility) in &mut meshes {
+        if markers.contains(entity) {
+            saved.entry(entity).or_insert(*visibility);
+            *visibility = Visibility::Hidden;
+            continue;
+        }
         let mut parent = entity;
         while let Ok(next) = parents.get(parent) {
             parent = next.0;
