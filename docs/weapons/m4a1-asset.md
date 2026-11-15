@@ -30,6 +30,10 @@ child. Receiver and magwell are hollow assemblies of surfaces; the source does
 not paint an opening onto a solid receiver. The near rear sight contains an
 actual aperture. Rubber buttpad, polymer furniture, anodized receiver, darker
 steel and carrier have distinct material responses.
+The oxide-coated receiver uses a medium metallic response (0.50) and a slightly
+lighter neutral base than steel; the exposed carrier is brighter and smoother.
+These **G** values preserve surface separation under the game's existing ambient
+light instead of using emissive edges or changing the scene lighting.
 
 The first far override removes only the rail covers' 2 mm raised ribs. It
 retains the bore cavity and shares every pivot/socket with near. This bounded

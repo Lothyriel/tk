@@ -63,6 +63,16 @@ impl Injury {
                         && ready(other, EquipmentSlot::Sidearm)
                         && loaded(other),
                 ),
+                (
+                    7.7,
+                    victim.body.anatomy.capacity(combat::Region::RightArm) < 1.0,
+                ),
+                (
+                    13.3,
+                    victim.body.anatomy.missing
+                        & (1 << common::humanoid::Segment::LeftShin.index())
+                        != 0,
+                ),
                 // Frame-rate differences must not make the leader inspect a
                 // fall before the peer's movement has reached authority.
                 (14.2, self.fall_seen),
@@ -280,6 +290,8 @@ mod tests {
             ..Default::default()
         };
         let mut victim = ready.clone();
+        victim.body.anatomy.regions[Region::RightArm as usize] = 37.9;
+        victim.body.anatomy.missing = 1 << common::humanoid::Segment::LeftShin.index();
         let mut route = Injury::default();
         let mut input = ClientInput::default();
         for step in 0..1600 {
@@ -290,6 +302,33 @@ mod tests {
         assert!(route.control(&mut input, &ready, &victim, 16.0, false) >= 14.2);
         victim.pose.mode = common::humanoid::PhysicalMode::Recovering;
         assert!(route.control(&mut input, &ready, &victim, 16.01, false) > 14.2);
+    }
+
+    #[test]
+    fn injury_arm_and_separation_captures_wait_for_authoritative_outcomes() {
+        let mut actor = ClientData {
+            weapon_slot: EquipmentSlot::Sidearm,
+            mechanics: MechanicalSnapshot {
+                equipped: true,
+                chambered: true,
+                magazine_inserted: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let other = actor.clone();
+        let mut route = Injury::default();
+        let mut input = ClientInput::default();
+        for step in 0..900 {
+            assert!(route.control(&mut input, &actor, &other, step as f64 * 0.01, true) < 7.7);
+        }
+        actor.body.anatomy.regions[Region::RightArm as usize] = 37.9;
+        for step in 900..1600 {
+            let t = route.control(&mut input, &actor, &other, step as f64 * 0.01, true);
+            assert!((7.7..13.3).contains(&t));
+        }
+        actor.body.anatomy.missing = 1 << common::humanoid::Segment::LeftShin.index();
+        assert!(route.control(&mut input, &actor, &other, 16.0, true) >= 13.3);
     }
 
     #[test]
