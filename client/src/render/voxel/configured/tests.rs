@@ -88,8 +88,10 @@ fn input() -> ConfiguredHandling {
         poles: [Vec3::new(-0.8, -1.0, 0.0), Vec3::new(0.8, -1.0, 0.0)],
         stock_target: None,
         max_adjustment: 0.35,
-        support_socket: None,
+        support_blends: Vec::new(),
         motions: Vec::new(),
+        hidden_parts: Vec::new(),
+        visible_hands: [true; 6],
     }
 }
 
@@ -262,10 +264,13 @@ fn configured_visual_moving_socket_drives_both_hands_and_rigid_part_tree() {
     for drop in [0.0, 0.04, 0.10] {
         for root in [world, view] {
             let mut handling = app.world_mut().get_mut::<ConfiguredHandling>(root).unwrap();
-            handling.support_socket = Some(SocketAddress {
-                node: 1,
-                socket: "magazine.grasp".into(),
-            });
+            handling.support_blends = vec![SocketBlend {
+                address: SocketAddress {
+                    node: 1,
+                    socket: "magazine.grasp".into(),
+                },
+                weight: 1.0,
+            }];
             handling.motions = vec![PartMotion {
                 node: 1,
                 part: "magazine".into(),

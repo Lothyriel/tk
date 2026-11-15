@@ -6,6 +6,9 @@ use common::{
     humanoid::handling::{self, WeaponContacts},
 };
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct PoseConfigured;
+
 /// Visual bindings belong to the client. Catalogue/network data never supplies
 /// filesystem paths or mesh handles. Node zero is the weapon definition.
 #[derive(Resource)]
@@ -47,6 +50,12 @@ pub(crate) struct SocketAddress {
 }
 
 #[derive(Clone)]
+pub(crate) struct SocketBlend {
+    pub address: SocketAddress,
+    pub weight: f32,
+}
+
+#[derive(Clone)]
 pub(crate) struct PartMotion {
     pub node: u16,
     pub part: String,
@@ -64,8 +73,17 @@ pub(crate) struct ConfiguredHandling {
     pub poles: [Vec3; 2],
     pub stock_target: Option<Vec3>,
     pub max_adjustment: f32,
-    pub support_socket: Option<SocketAddress>,
+    pub support_blends: Vec<SocketBlend>,
     pub motions: Vec<PartMotion>,
+    pub hidden_parts: Vec<(u16, String)>,
+    pub visible_hands: [bool; 6],
+}
+
+/// Last atomically accepted solution, in the request entity's frame.
+#[derive(Component, Clone, Copy)]
+pub(crate) struct ConfiguredPose {
+    pub solution: handling::HandlingSolution,
+    pub shoulders: [Vec3; 2],
 }
 
 #[derive(Component)]
@@ -185,7 +203,7 @@ pub(super) fn assemble(
         }
         commands
             .entity(entity)
-            .remove::<(Instance, ConfigurationVisualError)>();
+            .remove::<(Instance, ConfigurationVisualError, ConfiguredPose)>();
     }
     let Some(session) = session else {
         return;
@@ -405,11 +423,6 @@ fn part_poses(
     Ok(result)
 }
 
-fn bone_pose(from: Vec3, to: Vec3) -> Transform {
-    Transform::from_translation((from + to) * 0.5)
-        .with_rotation(Quat::from_rotation_arc(Vec3::Y, (from - to).normalize()))
-}
-
 fn resolve_pose<'a>(
     cache: &VoxelCache,
     mut contacts: WeaponContacts,
@@ -418,7 +431,7 @@ fn resolve_pose<'a>(
 ) -> Result<(handling::HandlingSolution, Vec<(u16, String, Transform)>), String> {
     let mut updates = Vec::new();
     let mut nodes = std::collections::BTreeSet::new();
-    let mut socket_found = input.support_socket.is_none();
+    let mut sockets = BTreeMap::new();
     for (node, asset, piece_pose) in pieces {
         nodes.insert(node);
         let asset = &cache.assets[asset];
@@ -426,29 +439,64 @@ fn resolve_pose<'a>(
         for (name, (local, _)) in &poses {
             updates.push((node, name.clone(), *local));
         }
-        if let Some(address) = &input.support_socket
-            && address.node == node
-        {
+        for blend in &input.support_blends {
+            let address = &blend.address;
+            if address.node != node {
+                continue;
+            }
             let socket = asset
                 .sockets
                 .iter()
                 .find(|s| s.id == address.socket)
                 .ok_or_else(|| format!("unknown socket {}", address.socket))?;
-            contacts = contacts
-                .with_support(
-                    piece_pose
-                        .mul_transform(poses[&socket.part].1)
-                        .mul_transform(socket.pose.transform()),
-                )
-                .map_err(|e| format!("socket contact: {e:?}"))?;
-            socket_found = true;
+            sockets.insert(
+                (node, address.socket.as_str()),
+                piece_pose
+                    .mul_transform(poses[&socket.part].1)
+                    .mul_transform(socket.pose.transform()),
+            );
+        }
+        if input
+            .hidden_parts
+            .iter()
+            .any(|(n, part)| *n == node && !poses.contains_key(part))
+        {
+            return Err("visibility references unknown part".into());
         }
     }
     if input.motions.iter().any(|m| !nodes.contains(&m.node)) {
         return Err("motion references unknown configuration node".into());
     }
-    if !socket_found {
-        return Err("socket references unknown configuration node".into());
+    if input
+        .hidden_parts
+        .iter()
+        .any(|(node, _)| !nodes.contains(node))
+    {
+        return Err("visibility references unknown configuration node".into());
+    }
+    for blend in &input.support_blends {
+        if !blend.weight.is_finite() || !(0.0..=1.0).contains(&blend.weight) {
+            return Err("invalid contact blend".into());
+        }
+        let target = sockets
+            .get(&(blend.address.node, blend.address.socket.as_str()))
+            .ok_or("socket references unknown configuration node")?;
+        contacts = contacts
+            .with_support(
+                Transform::from_translation(
+                    contacts
+                        .support
+                        .translation
+                        .lerp(target.translation, blend.weight),
+                )
+                .with_rotation(
+                    contacts
+                        .support
+                        .rotation
+                        .slerp(target.rotation, blend.weight),
+                ),
+            )
+            .map_err(|e| format!("socket contact: {e:?}"))?;
     }
     let solved = handling::fit_weapon(
         input.preferred_root,
@@ -505,36 +553,45 @@ pub(super) fn pose(
                     .parts
                     .get(&name)
                     .ok_or("piece part is not instantiated")?;
-                updates.push((*target, local));
+                updates.push((*target, local, !input.hidden_parts.contains(&(node, name))));
             }
-            updates.push((model.weapon_root, solved.root));
+            updates.push((model.weapon_root, solved.root, true));
             for (i, arm) in [solved.support, solved.trigger].into_iter().enumerate() {
-                updates.extend([
-                    (model.hands[i * 3], bone_pose(input.shoulders[i], arm.elbow)),
-                    (
-                        model.hands[i * 3 + 1],
-                        bone_pose(arm.elbow, arm.wrist.translation),
-                    ),
-                    (model.hands[i * 3 + 2], arm.wrist),
-                ]);
+                for (j, segment) in arm.segments(input.shoulders[i]).into_iter().enumerate() {
+                    updates.push((
+                        model.hands[i * 3 + j],
+                        segment.transform(),
+                        input.visible_hands[i * 3 + j],
+                    ));
+                }
             }
             if updates
                 .iter()
-                .any(|(entity, _)| !transforms.contains(*entity))
+                .any(|(entity, _, _)| !transforms.contains(*entity))
             {
                 return Err("pose target is missing".into());
             }
-            Ok(updates)
+            Ok((solved, updates))
         };
         match prepare() {
-            Ok(updates) => {
-                for (target, pose) in updates {
+            Ok((solved, updates)) => {
+                for (target, pose, visible) in updates {
                     if let Ok((mut transform, mut visibility)) = transforms.get_mut(target) {
                         *transform = pose;
-                        *visibility = Visibility::Inherited;
+                        *visibility = if visible {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        };
                     }
                 }
-                commands.entity(entity).remove::<ConfigurationVisualError>();
+                commands
+                    .entity(entity)
+                    .remove::<ConfigurationVisualError>()
+                    .insert(ConfiguredPose {
+                        solution: solved,
+                        shoulders: input.shoulders,
+                    });
             }
             Err(error) => report_error(&mut commands, entity, error, old_error),
         }
@@ -543,3 +600,5 @@ pub(super) fn pose(
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod native;

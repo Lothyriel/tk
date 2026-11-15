@@ -83,11 +83,35 @@ expose their moving grasp socket. Catalogue anchors preserve existing support/
 trigger contacts, place the magazine attachment, and locate the authored stock
 surface where present. They do not force every pose to be stock-braced.
 
-Production actor/view-model producers still need to migrate to these components.
+The production remote actor producer now uses these components. It creates one
+configured weapon per actor, takes the epoch/handle from the accepted snapshot,
+and preserves the previous displayed configuration during the holster phase.
+The view-model producer still needs to migrate.
 The modular revision fixtures use the pipeline exemplar, while a separate native
 fixture loads all six baseline assets in both perspectives and checks actual
 contacts, muzzle position, render layers and shared buffers. This establishes the
 asset/assembly path before switching production presentation.
+
+`WeaponAction` carries magazine/control contact weights alongside its existing
+mechanism poses. Feedback filters those weights with the action; the native
+adapter blends the authored support grip toward the **current** moving magazine
+socket, then the control socket. The magazine delta is attachment-local and uses
+the resolved node ID. Visibility is addressed by node/part, including a removed
+magazine after reload interruption.
+
+The assembler publishes `ConfiguredPose` only after a successful atomic update.
+It includes the accepted shoulders, so a rejected update cannot recompute an
+upper arm from a new shoulder and an old elbow. `ArmSolution::segments` produces
+the existing anatomical upper-arm/forearm/hand centres and rotations. Remote
+presentation applies them to the existing skin/wound/core entities and records
+them in the last-live handoff cache; its additional configured arm meshes are
+hidden. Muzzle flash follows the accepted root and is hidden without a visible
+weapon. Missing limbs retain their anatomical visibility; falling, physical,
+dead or trigger-arm-disabled actors hide their weapon.
+
+This aligns remote visual tissue with the accepted contacts and preserves all 17
+segment IDs. Authority-side configured anatomical evaluation and the local
+view-model still require migration before the card can be completed.
 
 Fixtures independently measure both bone lengths, exact contact position and
 orientation, elbow limits and pole direction. They cover collinear poles,
@@ -103,3 +127,10 @@ three oriented axes, 60 frames keep entities and allocation counts stable, and
 rejected updates preserve the entire previous pose. Affine decomposition produces
 nearly-unit quaternions; angular comparisons normalize these first, alongside
 direct basis-vector comparisons, without loosening the contact tolerances.
+
+Native producer fixtures run the actual actor, feedback and voxel systems plus
+Bevy transform/visibility propagation. All three baseline weapons traverse
+tactical and empty reloads with recoil, crouch, lean and pitch, measuring body-arm
+endpoints and contacts against the rendered socket hierarchy. Separate cases
+cover magazine-node revision replacement, missing limbs, fall/recovery/death,
+entity/cache stability and absence of duplicate arm rendering.

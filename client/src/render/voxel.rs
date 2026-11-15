@@ -28,9 +28,10 @@ impl bevy::prelude::Plugin for Plugin {
                     configured::assemble,
                     remove_models,
                     instantiate,
-                    configured::pose,
+                    configured::pose.in_set(configured::PoseConfigured),
                 )
                     .chain()
+                    .after(super::actors::AnimateActors)
                     .in_set(crate::ClientSystems::Present),
             )
             .add_systems(
