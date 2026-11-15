@@ -423,7 +423,13 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
 #[test]
 fn configured_remote_m4a1_kit_extremes_keep_rendered_contacts_and_piece_identity() {
     use common::catalog::{Attachment, DefinitionId};
-    for (short, suppressed, grip) in [(true, false, 0), (false, true, 134), (false, false, 135)] {
+    for (short, suppressed, grip, position) in [
+        (true, false, 0, 0),
+        (false, true, 134, 0),
+        (false, true, 134, 9),
+        (false, false, 135, 0),
+        (false, false, 135, 2),
+    ] {
         let (mut app, body) = fixture(WeaponKind::Rifle);
         let mut packet = app
             .world()
@@ -464,13 +470,10 @@ fn configured_remote_m4a1_kit_extremes_keep_rendered_contacts_and_piece_identity
             ]);
         }
         if grip != 0 {
-            packet.weapon.components.push(attachment(
-                11,
-                grip,
-                Some(3),
-                "bottom",
-                if grip == 134 { 4 } else { 1 },
-            ));
+            packet
+                .weapon
+                .components
+                .push(attachment(11, grip, Some(3), "bottom", position));
         }
         let expected_nodes = packet.weapon.components.len() + 1;
         {

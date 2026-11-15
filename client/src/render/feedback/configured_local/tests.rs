@@ -394,7 +394,13 @@ impl Fixture {
 #[test]
 fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_reload() {
     use common::catalog::{Attachment, DefinitionId};
-    for (short, suppressed, grip) in [(true, false, 0), (false, true, 134), (false, false, 135)] {
+    for (short, suppressed, grip, position) in [
+        (true, false, 0, 0),
+        (false, true, 134, 0),
+        (false, true, 134, 9),
+        (false, false, 135, 0),
+        (false, false, 135, 2),
+    ] {
         let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
         let mut packet = f
             .app
@@ -436,13 +442,10 @@ fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_rel
             ]);
         }
         if grip != 0 {
-            packet.weapon.components.push(attachment(
-                11,
-                grip,
-                Some(3),
-                "bottom",
-                if grip == 134 { 4 } else { 1 },
-            ));
+            packet
+                .weapon
+                .components
+                .push(attachment(11, grip, Some(3), "bottom", position));
         }
         {
             let mut session = f.app.world_mut().resource_mut::<ClientSession>();
