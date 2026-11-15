@@ -168,8 +168,8 @@ def main():
                 path = directory / f"{name}.png"
                 data = path.read_bytes()
                 assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing native evidence: {path}"
-            primary = "rifle" if directory == output else "smg"
-            for weapon in (primary, "pistol"):
+            primary = "m4a1" if directory == output else "mp5"
+            for weapon in (primary, "m1911"):
                 path = directory / f"confirmed-{weapon}-flash.png"
                 data = path.read_bytes()
                 assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing confirmed flash capture: {path}"

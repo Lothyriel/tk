@@ -119,7 +119,8 @@ impl WeaponKind {
         match self {
             Self::Rifle => WeaponSpec {
                 kind: self,
-                name: "Rifle",
+                catalog_key: "m4a1",
+                name: "M4A1",
                 magazine_size: 30,
                 rounds_per_minute: 600.0,
                 reload_seconds: 2.4,
@@ -133,6 +134,7 @@ impl WeaponKind {
             },
             Self::Pistol => WeaponSpec {
                 kind: self,
+                catalog_key: "m1911",
                 name: "Pistol",
                 magazine_size: 17,
                 rounds_per_minute: 400.0,
@@ -147,6 +149,7 @@ impl WeaponKind {
             },
             Self::Smg => WeaponSpec {
                 kind: self,
+                catalog_key: "mp5",
                 name: "SMG",
                 magazine_size: 25,
                 rounds_per_minute: 850.0,
@@ -166,6 +169,8 @@ impl WeaponKind {
 #[derive(Debug, Clone, Copy)]
 pub struct WeaponSpec {
     pub kind: WeaponKind,
+    /// Identity of the current base model, distinct from its presentation class.
+    pub catalog_key: &'static str,
     pub name: &'static str,
     pub magazine_size: u32,
     pub rounds_per_minute: f32,
