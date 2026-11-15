@@ -231,9 +231,14 @@ fn drive(
     };
     let p = &local.participant;
     let cache = &session.configurations.cache;
+    // A new configuration epoch can arrive before its replacement snapshot.
+    // Held input is already cleared above; wait for the exact accepted reference.
+    if !cache.matches(cache.epoch(), local) {
+        return;
+    }
     let spec = &cache
         .get(cache.epoch(), local.configuration)
-        .expect("published actor configuration")
+        .unwrap()
         .resolved;
     let peer = std::env::var("TK_PLAYTEST_ROLE").is_ok_and(|role| role == "1");
     view_camera.is_active = !(driver.step == Step::Injury || peer && driver.step == Step::Showcase);
