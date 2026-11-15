@@ -5,6 +5,8 @@ use bevy::{platform::collections::HashMap, prelude::*};
 use common::weapon_animation::{WeaponAction, WeaponRig, reload_action};
 use common::{humanoid::PhysicalMode, *};
 
+mod configured_local;
+
 // Each pair is (lateral impulse, vertical impulse scale) for one shot in the
 // rifle's repeating pattern. Keep values bounded so the spread stays legible.
 const RIFLE_RECOIL_PATTERN: [(f32, f32); 8] = [
@@ -77,6 +79,8 @@ fn rifle_recoil_pattern(shot_index: u32, shot_id: u64) -> (f32, f32) {
 }
 
 pub struct Plugin;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct PrepareLocal;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Feedback>()
@@ -87,12 +91,21 @@ impl bevy::prelude::Plugin for Plugin {
                         .chain()
                         .before(super::sync_local_view),
                     animate_local.after(super::sync_local_view),
-                    frame_local_pistol.after(animate_local),
+                    configured_local::prepare
+                        .after(animate_local)
+                        .in_set(PrepareLocal),
                 )
                     .in_set(ClientSystems::Present),
             )
             .init_resource::<CasingState>()
             .add_systems(Startup, setup_casing_assets)
+            .add_systems(
+                Update,
+                configured_local::flash
+                    .after(super::voxel::configured::PoseConfigured)
+                    .after(super::sync_view_weapon_visibility)
+                    .in_set(ClientSystems::Present),
+            )
             .add_systems(Update, update_casings.in_set(ClientSystems::Present));
     }
 }
@@ -340,22 +353,29 @@ pub(super) struct Feedback {
 #[derive(Component)]
 pub(crate) struct Flash;
 #[derive(Component)]
+#[cfg(test)]
 pub(super) struct Bolt;
 #[derive(Component)]
+#[cfg(test)]
 pub(super) struct Magazine;
 #[derive(Component)]
+#[cfg(test)]
 pub(super) struct SupportHand;
 #[derive(Component)]
+#[cfg(test)]
 pub(super) struct Control;
 #[derive(Component)]
+#[cfg(test)]
 pub(super) struct Forearm {
     pub support: bool,
 }
 #[derive(Component)]
+#[cfg(test)]
 pub(super) struct UpperArm {
     pub support: bool,
 }
 
+#[cfg(test)]
 fn forearm_pose(wrist: Vec3, elbow: Vec3) -> Transform {
     let length = wrist.distance(elbow);
     let direction = if length > 0.000001 {
@@ -368,6 +388,7 @@ fn forearm_pose(wrist: Vec3, elbow: Vec3) -> Transform {
         .with_scale(Vec3::new(1.0, length / 0.28, 1.0))
 }
 
+#[cfg(test)]
 fn body_side_elbow(wrist: Vec3, body_anchor: Vec3) -> Vec3 {
     // The upper arm is outside this view model. Do not stretch a 28cm forearm
     // all the way to the torso anchor when reaching up to a slide or HK handle.
@@ -576,7 +597,7 @@ pub(super) struct LocalAnimationState<'w> {
 pub(super) fn animate_local(
     state: LocalAnimationState,
     mut views: Query<(&WeaponViewModel, &mut Transform), With<LocalView>>,
-    mut parts: Query<
+    #[cfg(test)] mut parts: Query<
         (
             &ChildOf,
             Option<&Flash>,
@@ -595,8 +616,8 @@ pub(super) fn animate_local(
             Without<ViewModelCamera>,
         ),
     >,
-    roots: Query<&ChildOf, With<WeaponMeshRoot>>,
-    weapons: Query<&WeaponViewModel>,
+    #[cfg(test)] roots: Query<&ChildOf, With<WeaponMeshRoot>>,
+    #[cfg(test)] weapons: Query<&WeaponViewModel>,
     projection: Single<&Projection, With<ViewModelCamera>>,
     mut cameras: Query<
         &mut Transform,
@@ -677,6 +698,9 @@ pub(super) fn animate_local(
         t.translation.y -= physical_drop * 0.34;
         t.rotation *= Quat::from_rotation_x(physical_drop * 0.6);
     }
+    // Retained only as a migration oracle for the pre-configured regression
+    // fixtures. Production parts and arms are exclusively configured.
+    #[cfg(test)]
     for (parent, flash, bolt, mag, hand, control, forearm, upper_arm, mut t, mut visibility) in
         &mut parts
     {
@@ -815,6 +839,7 @@ fn camera_height_feedback(pose: &common::humanoid::PoseState) -> f32 {
 // Sleeves intentionally leave the bottom of the view; only the manipulated
 // weapon, gloves and visible magazine define the presentation envelope.
 #[derive(Component, Clone, Copy)]
+#[cfg(test)]
 pub(super) struct ViewFrameBounds(pub [Vec3; 8]);
 
 #[derive(bevy::ecs::system::SystemParam)]
@@ -825,6 +850,7 @@ struct LocalFramingState<'w> {
     feedback: ResMut<'w, Feedback>,
 }
 
+#[cfg(test)]
 fn frame_local_pistol(
     state: LocalFramingState,
     camera: Single<

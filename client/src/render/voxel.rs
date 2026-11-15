@@ -32,6 +32,7 @@ impl bevy::prelude::Plugin for Plugin {
                 )
                     .chain()
                     .after(super::actors::AnimateActors)
+                    .after(super::feedback::PrepareLocal)
                     .in_set(crate::ClientSystems::Present),
             )
             .add_systems(

@@ -86,11 +86,12 @@ surface where present. They do not force every pose to be stock-braced.
 The production remote actor producer now uses these components. It creates one
 configured weapon per actor, takes the epoch/handle from the accepted snapshot,
 and preserves the previous displayed configuration during the holster phase.
-The view-model producer still needs to migrate.
+The first-person producer uses the same bindings, cache, action adapter and
+solver, retaining one presentation container per equipped class and replacing
+its configured contents by revision.
 The modular revision fixtures use the pipeline exemplar, while a separate native
 fixture loads all six baseline assets in both perspectives and checks actual
-contacts, muzzle position, render layers and shared buffers. This establishes the
-asset/assembly path before switching production presentation.
+contacts, muzzle position, render layers and shared buffers.
 
 `WeaponAction` carries magazine/control contact weights alongside its existing
 mechanism poses. Feedback filters those weights with the action; the native
@@ -109,9 +110,19 @@ hidden. Muzzle flash follows the accepted root and is hidden without a visible
 weapon. Missing limbs retain their anatomical visibility; falling, physical,
 dead or trigger-arm-disabled actors hide their weapon.
 
+The first-person rig explicitly uses presentation-space shoulders/poles, whereas
+the remote rig derives them from the anatomical torso. Both keep 30/28 cm bones
+and the same socket conventions. Pistol framing previews the cached part bounds
+and solved palms, then translates the complete view rig. It retains ADS centring
+and the existing lens; it does not rescale forearms or independently move hands.
+Magazine removal and a locked-open pistol slide use the shared native adapter.
+Production no longer constructs procedural weapon meshes or uses the old
+view-arm placement. The previous procedural assembly/placement remains compiled
+only in tests as a migration oracle.
+
 This aligns remote visual tissue with the accepted contacts and preserves all 17
-segment IDs. Authority-side configured anatomical evaluation and the local
-view-model still require migration before the card can be completed.
+segment IDs. Authority-side configured anatomical evaluation, native stock/
+clothing validation and rendered acceptance remain before the card can complete.
 
 Fixtures independently measure both bone lengths, exact contact position and
 orientation, elbow limits and pole direction. They cover collinear poles,
@@ -134,3 +145,12 @@ tactical and empty reloads with recoil, crouch, lean and pitch, measuring body-a
 endpoints and contacts against the rendered socket hierarchy. Separate cases
 cover magazine-node revision replacement, missing limbs, fall/recovery/death,
 entity/cache stability and absence of duplicate arm rendering.
+
+First-person native fixtures instantiate the production view-model container and
+baked hierarchy. They measure bone endpoints and moving contacts for all three
+weapons, tactical/empty reloads, recoil, ADS and three portrait-to-ultrawide
+aspects. The pistol check projects actual visible weapon/palm vertices, enforces
+the 94% framing envelope and 35 mm/frame continuity bound, and checks the actual
+ADS sight point. Additional cases cover node replacement, missing limbs/fall and
+reload interruption with a removed magazine and locked-open slide. These remain
+headless geometric checks, not visual acceptance.

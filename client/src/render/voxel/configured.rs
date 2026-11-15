@@ -36,6 +36,30 @@ impl Default for VisualBindings {
     }
 }
 
+type BoundPiece = (u16, u32, String, Transform);
+
+impl VisualBindings {
+    fn pieces(&self, spec: &common::catalog::ResolvedWeapon) -> Result<Vec<BoundPiece>, String> {
+        let asset = self
+            .weapons
+            .get(&spec.definition)
+            .ok_or_else(|| "weapon visual binding is missing".to_owned())?;
+        let mut pieces = vec![(0, spec.definition.0, asset.clone(), Transform::IDENTITY)];
+        for part in &spec.assembly.parts {
+            let asset = self.components.get(&part.definition).ok_or_else(|| {
+                format!("component {} visual binding is missing", part.definition.0)
+            })?;
+            pieces.push((part.node, part.definition.0, asset.clone(), part.pose));
+        }
+        for (_, _, asset, _) in &pieces {
+            if !BAKED_ASSETS.iter().any(|(id, _)| id == asset) {
+                return Err(format!("unknown voxel asset '{asset}'"));
+            }
+        }
+        Ok(pieces)
+    }
+}
+
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ConfiguredWeapon {
     pub epoch: u64,
@@ -236,27 +260,7 @@ pub(super) fn assemble(
             }
             let contacts = WeaponContacts::from_assembly(&entry.resolved.assembly)
                 .map_err(|e| format!("weapon contacts: {e:?}"))?;
-            let root_asset = bindings
-                .weapons
-                .get(&entry.packet.weapon.definition)
-                .ok_or_else(|| "weapon visual binding is missing".to_owned())?;
-            let mut pieces = vec![(
-                0,
-                entry.packet.weapon.definition.0,
-                root_asset.clone(),
-                Transform::IDENTITY,
-            )];
-            for part in &entry.resolved.assembly.parts {
-                let asset = bindings.components.get(&part.definition).ok_or_else(|| {
-                    format!("component {} visual binding is missing", part.definition.0)
-                })?;
-                pieces.push((part.node, part.definition.0, asset.clone(), part.pose));
-            }
-            for (_, _, asset, _) in &pieces {
-                if !BAKED_ASSETS.iter().any(|(id, _)| id == asset) {
-                    return Err(format!("unknown voxel asset '{asset}'"));
-                }
-            }
+            let pieces = bindings.pieces(&entry.resolved)?;
             Ok((entry, contacts, pieces))
         };
         let (entry, contacts, pieces) = match prepare() {
@@ -335,6 +339,11 @@ pub(super) fn assemble(
                 _ => &handles.2,
             };
             let mut hand = commands.spawn((
+                Name::new(format!(
+                    "configured-{}-{}",
+                    if i < 3 { "support" } else { "trigger" },
+                    ["upper", "forearm", "palm"][i % 3]
+                )),
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(handles.3.clone()),
                 Transform::default(),

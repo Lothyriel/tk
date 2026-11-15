@@ -176,8 +176,8 @@ fn spawn_view_model(mut commands: Commands, mut lobby: ResMut<Lobby>, player_id:
     lobby.players.insert(player_id.0, player);
 }
 
-/// The current procedural assets are class templates. Instantiate only a template
-/// actually equipped by the local actor, independent of catalog size.
+/// Keep one presentation container per equipped class; configured contents are
+/// replaced atomically by instance/revision, independently of catalog size.
 fn ensure_weapon_view(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -270,7 +270,22 @@ fn weapon_view_model(
         children![
             (
                 WeaponMeshRoot,
-                weapons::assembly(meshes, materials, weapon, view_model_translation(weapon)),
+                Transform::from_translation(view_model_translation(weapon)),
+                Visibility::Inherited,
+                children![(
+                    feedback::Flash,
+                    Mesh3d(meshes.add(Cuboid::new(0.075, 0.075, 0.12))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgb(1.0, 0.75, 0.1),
+                        emissive: LinearRgba::rgb(14.0, 6.0, 0.5),
+                        unlit: true,
+                        ..default()
+                    })),
+                    Transform::default(),
+                    Visibility::Hidden,
+                    RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
+                    NotShadowCaster,
+                )],
             ),
             (
                 BarrelLaser,
