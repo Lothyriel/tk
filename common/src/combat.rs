@@ -304,6 +304,30 @@ impl Arsenal {
         self.equipped(self.active).expect("equipped active slot")
     }
 
+    /// Authoritative configuration boundary. Lobby ownership/ready locks are
+    /// enforced by the caller; this layer rejects stale or invalid assemblies.
+    pub fn reconfigure(
+        &mut self,
+        catalog: &Catalog,
+        slot: EquipmentSlot,
+        expected_revision: u64,
+        configuration: crate::catalog::WeaponConfiguration,
+    ) -> Result<u64, CatalogError> {
+        if self.reload_remaining > 0.0 {
+            return Err(CatalogError {
+                file: crate::catalog::CATALOG_FILE.into(),
+                field: "equipment.reload".into(),
+                message: "cannot reconfigure during reload".into(),
+            });
+        }
+        let weapon = self.equipped_mut(slot).ok_or_else(|| CatalogError {
+            file: crate::catalog::CATALOG_FILE.into(),
+            field: "equipment.slot".into(),
+            message: "empty slot".into(),
+        })?;
+        weapon.reconfigure(catalog, expected_revision, configuration)
+    }
+
     /// Returns an authorized shot, never a client-authoritative projectile.
     pub fn step(&mut self, input: &ClientInput, delta: f32, now: f32) -> Option<WeaponId> {
         let pressed = input.fire_pressed_sequence != self.last_trigger;

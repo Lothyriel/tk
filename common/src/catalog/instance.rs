@@ -10,7 +10,7 @@ pub enum EquipmentSlot {
 #[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub struct WeaponConfiguration {
     pub definition: WeaponId,
-    pub components: Vec<DefinitionId>,
+    pub components: Vec<Attachment>,
 }
 
 /// Persistent identity and mutable state belong to one physical weapon, not a
@@ -21,6 +21,7 @@ pub struct WeaponInstance {
     pub configuration: WeaponConfiguration,
     pub magazine: u32,
     pub reserve: u32,
+    pub revision: u64,
 }
 
 /// Configuration resolved once on equip/reconfigure, never in the frame loop.
@@ -46,6 +47,7 @@ impl EquippedWeapon {
                 configuration,
                 magazine: resolved.magazine_size,
                 reserve: resolved.magazine_size * 3,
+                revision: 0,
             },
             resolved,
         })
@@ -57,6 +59,51 @@ impl EquippedWeapon {
 
     pub fn spec(&self) -> &ResolvedWeapon {
         &self.resolved
+    }
+
+    /// Compare-and-swap of the entire validated configuration. No partial
+    /// removal, client-supplied stats or ammunition truncation is possible.
+    pub fn reconfigure(
+        &mut self,
+        catalog: &Catalog,
+        expected_revision: u64,
+        mut configuration: WeaponConfiguration,
+    ) -> Result<u64, CatalogError> {
+        if expected_revision != self.instance.revision {
+            return Err(error(
+                &catalog.file,
+                "instance.revision",
+                "stale configuration revision",
+            ));
+        }
+        if configuration.definition != self.instance.configuration.definition {
+            return Err(error(
+                &catalog.file,
+                "configuration.definition",
+                "cannot replace instance identity",
+            ));
+        }
+        configuration.components.sort_by_key(|node| node.node);
+        let mut previous = self.instance.configuration.clone();
+        previous.components.sort_by_key(|node| node.node);
+        if configuration == previous {
+            return Ok(self.instance.revision);
+        }
+        let revision = expected_revision
+            .checked_add(1)
+            .ok_or_else(|| error(&catalog.file, "instance.revision", "revision exhausted"))?;
+        let resolved = catalog.resolve(&configuration)?;
+        if self.instance.magazine > resolved.magazine_size {
+            return Err(error(
+                &catalog.file,
+                "instance.magazine",
+                "unload rounds before reducing capacity",
+            ));
+        }
+        self.instance.configuration = configuration;
+        self.instance.revision = revision;
+        self.resolved = resolved;
+        Ok(revision)
     }
 
     pub fn rounds(&self) -> u32 {

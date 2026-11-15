@@ -25,6 +25,81 @@ fn catalog_input_rejects_unknown_definition_without_substituting_a_weapon() {
 use bevy::{time::TimeUpdateStrategy, transform::TransformPlugin};
 use std::time::Duration;
 
+#[test]
+fn assembly_authority_rejects_invalid_changes_and_fires_from_cached_properties() {
+    use common::catalog::{CATALOG_SOURCE, Catalog, DefinitionId, WeaponConfiguration};
+    let (mut app, player, _) = physical_fixture();
+    // Controlled registry fixture: configuration packets contain only node IDs
+    // and placements. Capacity/velocity must come from this server's registry.
+    let source = CATALOG_SOURCE
+        .replace("capacity: 30", "capacity: 40")
+        .replace(
+            "occupied_positions: 1, geometry: ()",
+            "occupied_positions: 1, geometry: (), modifiers: (velocity: 1.2)",
+        );
+    let catalog = Catalog::parse("server-fixture.ron", &source).unwrap();
+    let mut configuration = catalog.configuration(WeaponId::M4A1).unwrap();
+    configuration.components[0].node = 2;
+    let received: WeaponConfiguration = data::decode(&data::encode(&configuration));
+    {
+        let mut arsenal = app.world_mut().get_mut::<Arsenal>(player).unwrap();
+        let before = data::encode(arsenal.current().instance());
+        let mut invalid = received.clone();
+        invalid.components[0].definition = DefinitionId(u32::MAX);
+        assert!(
+            arsenal
+                .reconfigure(&catalog, EquipmentSlot::Primary, 0, invalid)
+                .is_err()
+        );
+        assert_eq!(data::encode(arsenal.current().instance()), before);
+        assert_eq!(
+            arsenal
+                .reconfigure(&catalog, EquipmentSlot::Primary, 0, received.clone())
+                .unwrap(),
+            1
+        );
+        assert_eq!(arsenal.current().spec().magazine_size, 40);
+        assert!((arsenal.current().spec().muzzle_speed - 858.0).abs() < 0.001);
+        assert_eq!(
+            (arsenal.current().rounds(), arsenal.current().reserve()),
+            (30, 90)
+        );
+    }
+    app.world_mut().get_mut::<ClientInput>(player).unwrap().fire = true;
+    held_steps(&mut app, player, 1);
+    assert_eq!(
+        app.world()
+            .get::<Arsenal>(player)
+            .unwrap()
+            .current()
+            .rounds(),
+        29
+    );
+    assert!(
+        app.world()
+            .resource::<WorldState>()
+            .fired_projectiles
+            .iter()
+            .any(|shot| shot.shooter == 7)
+    );
+    {
+        let mut input = app.world_mut().get_mut::<ClientInput>(player).unwrap();
+        input.fire = false;
+        input.reload_sequence += 1;
+    }
+    held_steps(&mut app, player, 1);
+    let mut arsenal = app.world_mut().get_mut::<Arsenal>(player).unwrap();
+    assert!(arsenal.reload_remaining > 0.0);
+    assert!(
+        arsenal
+            .reconfigure(&catalog, EquipmentSlot::Primary, 1, received)
+            .unwrap_err()
+            .message
+            .contains("reload")
+    );
+    assert_eq!(arsenal.current().instance().revision, 1);
+}
+
 fn app() -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, TransformPlugin, common::Plugin))
