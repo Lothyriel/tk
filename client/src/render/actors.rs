@@ -1,10 +1,13 @@
 //! Reusable original voxel wardrobe and presentation of the common damage rig.
 use super::PlayerBodyVisual;
+use super::voxel::configured::{self, ConfiguredPose, ConfiguredWeapon};
 use crate::{ClientSystems, sync::ClientSession};
 use bevy::{platform::collections::HashMap, prelude::*};
 use common::{combat::*, humanoid::*, *};
 
 pub struct Plugin;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct AnimateActors;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PoseCache>()
@@ -12,9 +15,21 @@ impl bevy::prelude::Plugin for Plugin {
             .add_systems(PostUpdate, verify_native_replication)
             .add_systems(
                 Update,
-                (build_actors, interpolate, animate, sync_pieces)
+                (
+                    build_actors,
+                    interpolate,
+                    animate.in_set(AnimateActors),
+                    sync_pieces,
+                )
                     .chain()
                     .after(super::feedback::advance)
+                    .in_set(ClientSystems::Present),
+            )
+            .add_systems(
+                Update,
+                apply_configured_contacts
+                    .after(configured::PoseConfigured)
+                    .after(sync_pieces)
                     .in_set(ClientSystems::Present),
             );
     }
@@ -49,7 +64,6 @@ struct PoseCache {
 #[derive(Component)]
 struct WorldWeapon {
     owner: u64,
-    part: usize,
 }
 #[derive(Component)]
 struct WorldFlash(u64);
@@ -79,9 +93,6 @@ struct VoxelAssets {
     vest: Handle<StandardMaterial>,
     helmet: Handle<Mesh>,
     plate: Handle<Mesh>,
-    weapons: Vec<Vec<Handle<Mesh>>>,
-    weapon_metal: Handle<StandardMaterial>,
-    weapon_trim: Vec<Handle<StandardMaterial>>,
     flash: Handle<StandardMaterial>,
     cube: Handle<Mesh>,
 }
@@ -179,20 +190,6 @@ fn assets(
         vest: material(&mut materials, Color::srgb(0.21, 0.24, 0.14), 0.9),
         helmet: meshes.add(Cuboid::new(0.34, 0.16, 0.32)),
         plate: meshes.add(Cuboid::new(0.39, 0.32, 0.055)),
-        weapons: [WeaponKind::Rifle, WeaponKind::Pistol, WeaponKind::Smg]
-            .into_iter()
-            .map(|w| {
-                super::weapons::world_meshes(w)
-                    .into_iter()
-                    .map(|m| meshes.add(m))
-                    .collect()
-            })
-            .collect(),
-        weapon_metal: materials.add(super::weapons::steel()),
-        weapon_trim: [WeaponKind::Rifle, WeaponKind::Pistol, WeaponKind::Smg]
-            .into_iter()
-            .map(|w| materials.add(super::weapons::trim(w)))
-            .collect(),
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         flash: materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 0.7, 0.1),
@@ -314,21 +311,11 @@ fn build_actors(
                 MeshMaterial3d(assets.vest.clone()),
                 Transform::default(),
             ));
-            for part in 0..5 {
-                c.spawn((
-                    WorldWeapon {
-                        owner: client.id,
-                        part,
-                    },
-                    Mesh3d(assets.weapons[0][part].clone()),
-                    MeshMaterial3d(if part == 1 {
-                        assets.weapon_trim[0].clone()
-                    } else {
-                        assets.weapon_metal.clone()
-                    }),
-                    Transform::default(),
-                ));
-            }
+            c.spawn((
+                WorldWeapon { owner: client.id },
+                Transform::default(),
+                Visibility::Hidden,
+            ));
             c.spawn((
                 WorldFlash(client.id),
                 Mesh3d(assets.cube.clone()),
@@ -553,11 +540,10 @@ struct ActorVisuals<'w, 's> {
         'w,
         's,
         (
+            Entity,
             &'static WorldWeapon,
-            &'static mut Transform,
-            &'static mut Mesh3d,
-            &'static mut MeshMaterial3d<StandardMaterial>,
             &'static mut Visibility,
+            Option<&'static ConfiguredWeapon>,
         ),
         (
             Without<BoneVisual>,
@@ -618,7 +604,85 @@ struct ActorVisuals<'w, 's> {
     >,
 }
 
+fn apply_configured_contacts(
+    session: Res<ClientSession>,
+    mut cache: ResMut<PoseCache>,
+    weapons: Query<(&WorldWeapon, &ConfiguredPose, &Visibility)>,
+    mut bones: Query<(&BoneVisual, &mut Transform), Without<WorldFlash>>,
+    mut flashes: Query<
+        (&WorldFlash, &mut Transform, &mut Visibility),
+        (Without<BoneVisual>, Without<WorldWeapon>),
+    >,
+) {
+    let mut arms = HashMap::new();
+    let mut roots = HashMap::new();
+    for (weapon, pose, visible) in &weapons {
+        if *visible == Visibility::Hidden {
+            continue;
+        }
+        let Some(player) = session.local(weapon.owner) else {
+            continue;
+        };
+        let root = cache.roots.get(&player.id).copied().unwrap_or_else(|| {
+            Transform::from_translation(player.pos.into())
+                .with_rotation(Quat::from_rotation_y(player.rot.yaw))
+        });
+        roots.insert(player.id, pose.solution.root);
+        for (arm, shoulder, segments) in [
+            (
+                pose.solution.support,
+                pose.shoulders[0],
+                [
+                    Segment::LeftUpperArm,
+                    Segment::LeftForearm,
+                    Segment::LeftHand,
+                ],
+            ),
+            (
+                pose.solution.trigger,
+                pose.shoulders[1],
+                [
+                    Segment::RightUpperArm,
+                    Segment::RightForearm,
+                    Segment::RightHand,
+                ],
+            ),
+        ] {
+            for (segment, pose) in segments.into_iter().zip(arm.segments(shoulder)) {
+                if player.body.anatomy.missing & (1 << segment.index()) == 0 {
+                    let transform = pose.transform();
+                    arms.insert((player.id, segment), transform);
+                    cache
+                        .last_live
+                        .insert((player.id, segment), root.mul_transform(transform));
+                }
+            }
+        }
+    }
+    for (bone, mut transform) in &mut bones {
+        if let Some(pose) = arms.get(&(bone.owner, bone.segment)) {
+            *transform = *pose;
+            if bone.inner == 2 {
+                let offset = transform.rotation * Vec3::new(0.0, 0.0, -0.035);
+                transform.translation += offset;
+            }
+        }
+    }
+    for (flash, mut transform, mut visible) in &mut flashes {
+        if let Some(root) = roots.get(&flash.0) {
+            let weapon = cache.poses[&flash.0].weapon;
+            transform.translation = root.transform_point(
+                common::weapon_animation::WeaponRig::for_weapon(weapon).muzzle - Vec3::Z * 0.05,
+            );
+            transform.rotation = root.rotation;
+        } else {
+            *visible = Visibility::Hidden;
+        }
+    }
+}
+
 fn animate(
+    mut commands: Commands,
     session: Res<ClientSession>,
     assets: Res<VoxelAssets>,
     feedback: Res<super::feedback::Feedback>,
@@ -808,17 +872,27 @@ fn animate(
         let offset = t.rotation * organ.offset;
         t.translation += offset;
     }
-    for (weapon, mut t, mut mesh, mut material, mut visible) in &mut weapons {
+    for (entity, weapon, mut visible, previous) in &mut weapons {
         let Some(p) = session.local(weapon.owner) else {
             continue;
         };
-        *visible = if p.alive && p.body.anatomy.capacity(Region::RightArm) > 0.0 {
+        let usable = p.alive
+            && p.pose.physical.is_none()
+            && matches!(
+                p.pose.mode,
+                PhysicalMode::Standing | PhysicalMode::Stumbling
+            )
+            && p.body.anatomy.capacity(Region::RightArm) > 0.0;
+        *visible = if usable {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
+        if !usable {
+            continue;
+        }
         let pose = rigs[&p.id];
-        *t = posed_weapon(&cache.poses[&p.id], &pose);
+        let mut preferred = posed_weapon(&cache.poses[&p.id], &pose);
         let displayed = cache.poses[&p.id].weapon;
         let action = feedback
             .responses
@@ -831,37 +905,45 @@ fn animate(
                     p.pose.reload_empty,
                 )
             });
-        if weapon.part == 3 {
-            *t = t.mul_transform(action.magazine);
-            if !action.magazine_visible
-                || (!p.mechanics.magazine_inserted && !p.mechanics.reloading())
-            {
-                *visible = Visibility::Hidden;
+        let request = if displayed == p.weapon {
+            ConfiguredWeapon {
+                epoch: session.configurations.cache.epoch(),
+                handle: p.configuration,
+                view_model: false,
             }
-        }
-        if weapon.part == 4 {
-            *t = t.mul_transform(common::weapon_animation::control_transform(
-                displayed, &action,
-            ));
-        }
-        if let Some(r) = feedback.responses.get(&p.id) {
-            t.translation.z += r.recoil;
-            if weapon.part == 2 {
-                let bolt = common::weapon_animation::bolt_transform(
-                    displayed,
-                    &action,
-                    r.recoil,
-                    p.mechanics.reloading(),
-                );
-                *t = t.mul_transform(bolt);
-            }
-        }
-        mesh.0 = assets.weapons[displayed.index()][weapon.part].clone();
-        material.0 = if weapon.part == 1 {
-            assets.weapon_trim[displayed.index()].clone()
+        } else if let Some(previous) = previous {
+            *previous
         } else {
-            assets.weapon_metal.clone()
+            continue;
         };
+        let Some(entry) = session
+            .configurations
+            .cache
+            .get(request.epoch, request.handle)
+        else {
+            *visible = Visibility::Hidden;
+            continue;
+        };
+        let recoil = feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
+        preferred.translation.z += recoil;
+        let mut input = configured::native::action(
+            &entry.resolved,
+            action,
+            recoil,
+            p.mechanics.reloading(),
+            p.mechanics.magazine_inserted,
+        );
+        input.preferred_root = preferred;
+        input.shoulders = [Segment::LeftUpperArm, Segment::RightUpperArm].map(|segment| {
+            pose[segment.index()]
+                .transform()
+                .transform_point(Vec3::Y * 0.15)
+                + Vec3::Z * recoil
+        });
+        // Existing anatomical meshes (including wounds/cores) consume the same
+        // accepted solution below, rather than drawing a second pair of arms.
+        input.visible_hands = [false; 6];
+        commands.entity(entity).insert((request, input));
     }
     for (flash, mut t, mut visible) in &mut flashes {
         let Some(p) = session.local(flash.0) else {
@@ -1127,3 +1209,6 @@ mod tests {
         assert!(voxel_mesh(Segment::Head, true, true).count_vertices() > 24);
     }
 }
+
+#[cfg(test)]
+mod configured_tests;

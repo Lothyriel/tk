@@ -238,6 +238,7 @@ fn control(w: WeaponKind) -> Mesh {
     boxes(&[(Vec3::new(0.012, 0.024, 0.035), centre)])
 }
 
+#[cfg(test)]
 pub(super) fn world_meshes(w: WeaponKind) -> [Mesh; 5] {
     [receiver(w), furniture(w), bolt(w), magazine(w), control(w)]
 }

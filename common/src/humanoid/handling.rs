@@ -78,6 +78,21 @@ pub struct ArmSolution {
     pub wrist: Transform,
 }
 
+impl ArmSolution {
+    /// Anatomical upper-arm, forearm and hand poses. Rendering and tissue
+    /// volumes use the same segment centres/orientations, without bone scaling.
+    pub fn segments(self, shoulder: Vec3) -> [super::SegmentPose; 3] {
+        [
+            super::bone(shoulder, self.elbow),
+            super::bone(self.elbow, self.wrist.translation),
+            super::SegmentPose {
+                position: self.wrist.translation.to_array(),
+                rotation: self.wrist.rotation.to_array(),
+            },
+        ]
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct HandlingSolution {
     pub root: Transform,

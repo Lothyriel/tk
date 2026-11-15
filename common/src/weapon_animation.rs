@@ -43,6 +43,10 @@ impl WeaponRig {
 pub struct WeaponAction {
     pub root: Transform,
     pub support: Transform,
+    /// Ordered contact blends: authored grip -> moving magazine -> control.
+    /// Presentation filters these weights with the mechanisms, not wrist positions.
+    pub magazine_grip: f32,
+    pub control_grip: f32,
     pub magazine: Transform,
     pub magazine_visible: bool,
     pub bolt: f32,
@@ -153,8 +157,12 @@ pub fn reload_action(weapon: WeaponKind, fraction: f32, empty: bool) -> WeaponAc
         WeaponKind::Rifle => Vec3::new(-0.067, 0.055, -0.085),
     };
     hand = hand.lerp(release_point, manipulate);
-    if weapon == WeaponKind::Smg && empty {
-        let charge = ramp(t, 0.0, 0.045) * (1.0 - ramp(t, 0.12, 0.18));
+    let charge = if weapon == WeaponKind::Smg && empty {
+        ramp(t, 0.0, 0.045) * (1.0 - ramp(t, 0.12, 0.18))
+    } else {
+        0.0
+    };
+    if charge > 0.0 {
         hand = hand.lerp(release_point, charge);
     }
     let (pitch, yaw, roll) = match weapon {
@@ -165,6 +173,8 @@ pub fn reload_action(weapon: WeaponKind, fraction: f32, empty: bool) -> WeaponAc
         WeaponKind::Rifle => (0.10, -0.22, -0.30),
     };
     WeaponAction {
+        magazine_grip: reach,
+        control_grip: 1.0 - (1.0 - manipulate) * (1.0 - charge),
         root: Transform::from_translation(
             Vec3::new(
                 if weapon == WeaponKind::Pistol {

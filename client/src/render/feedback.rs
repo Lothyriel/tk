@@ -451,6 +451,8 @@ pub(super) fn advance(
             .rotation
             .slerp(target.magazine.rotation, alpha);
         action.magazine_visible = target.magazine_visible;
+        action.magazine_grip += (target.magazine_grip - action.magazine_grip) * alpha;
+        action.control_grip += (target.control_grip - action.control_grip) * alpha;
         action.bolt += (target.bolt - action.bolt) * alpha;
         action.control += (target.control - action.control) * alpha;
         action.latch += (target.latch - action.latch) * alpha;
