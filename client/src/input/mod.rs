@@ -50,8 +50,7 @@ fn cursor_control(
 }
 
 fn keyboard(
-    keys: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
+    (keys, buttons): (Res<ButtonInput<KeyCode>>, Res<ButtonInput<MouseButton>>),
     session: Res<ClientSession>,
     id: Res<PlayerId>,
     time: Res<Time<Real>>,

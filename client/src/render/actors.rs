@@ -498,90 +498,143 @@ fn interpolate(
     }
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+struct ActorVisuals<'w, 's> {
+    bones: Query<
+        'w,
+        's,
+        (
+            &'static BoneVisual,
+            &'static mut Transform,
+            &'static mut Mesh3d,
+            &'static mut Visibility,
+        ),
+        (
+            Without<EquipmentVisual>,
+            Without<OrganVisual>,
+            Without<WorldWeapon>,
+            Without<WorldFlash>,
+            Without<DetailVisual>,
+        ),
+    >,
+    gear: Query<
+        'w,
+        's,
+        (
+            &'static EquipmentVisual,
+            &'static mut Transform,
+            &'static mut Visibility,
+        ),
+        (
+            Without<BoneVisual>,
+            Without<OrganVisual>,
+            Without<WorldWeapon>,
+            Without<WorldFlash>,
+            Without<DetailVisual>,
+        ),
+    >,
+    organs: Query<
+        'w,
+        's,
+        (
+            &'static OrganVisual,
+            &'static mut Transform,
+            &'static mut Visibility,
+        ),
+        (
+            Without<BoneVisual>,
+            Without<EquipmentVisual>,
+            Without<WorldWeapon>,
+            Without<WorldFlash>,
+            Without<DetailVisual>,
+        ),
+    >,
+    weapons: Query<
+        'w,
+        's,
+        (
+            &'static WorldWeapon,
+            &'static mut Transform,
+            &'static mut Mesh3d,
+            &'static mut MeshMaterial3d<StandardMaterial>,
+            &'static mut Visibility,
+        ),
+        (
+            Without<BoneVisual>,
+            Without<EquipmentVisual>,
+            Without<OrganVisual>,
+            Without<WorldFlash>,
+            Without<DetailVisual>,
+        ),
+    >,
+    flashes: Query<
+        'w,
+        's,
+        (
+            &'static WorldFlash,
+            &'static mut Transform,
+            &'static mut Visibility,
+        ),
+        (
+            Without<BoneVisual>,
+            Without<EquipmentVisual>,
+            Without<OrganVisual>,
+            Without<WorldWeapon>,
+            Without<DetailVisual>,
+        ),
+    >,
+    details: Query<
+        'w,
+        's,
+        (
+            &'static DetailVisual,
+            &'static mut Transform,
+            &'static mut Visibility,
+        ),
+        (
+            Without<BoneVisual>,
+            Without<EquipmentVisual>,
+            Without<OrganVisual>,
+            Without<WorldWeapon>,
+            Without<WorldFlash>,
+        ),
+    >,
+    stumps: Query<
+        'w,
+        's,
+        (
+            &'static StumpVisual,
+            &'static mut Transform,
+            &'static mut Visibility,
+        ),
+        (
+            Without<BoneVisual>,
+            Without<EquipmentVisual>,
+            Without<OrganVisual>,
+            Without<WorldWeapon>,
+            Without<WorldFlash>,
+            Without<DetailVisual>,
+        ),
+    >,
+}
+
 fn animate(
     session: Res<ClientSession>,
     assets: Res<VoxelAssets>,
     feedback: Res<super::feedback::Feedback>,
     time: Res<Time<Real>>,
     mut cache: ResMut<PoseCache>,
-    mut bones: Query<
-        (&BoneVisual, &mut Transform, &mut Mesh3d, &mut Visibility),
-        (
-            Without<EquipmentVisual>,
-            Without<OrganVisual>,
-            Without<WorldWeapon>,
-            Without<WorldFlash>,
-            Without<DetailVisual>,
-        ),
-    >,
-    mut gear: Query<
-        (&EquipmentVisual, &mut Transform, &mut Visibility),
-        (
-            Without<BoneVisual>,
-            Without<OrganVisual>,
-            Without<WorldWeapon>,
-            Without<WorldFlash>,
-            Without<DetailVisual>,
-        ),
-    >,
-    mut organs: Query<
-        (&OrganVisual, &mut Transform, &mut Visibility),
-        (
-            Without<BoneVisual>,
-            Without<EquipmentVisual>,
-            Without<WorldWeapon>,
-            Without<WorldFlash>,
-            Without<DetailVisual>,
-        ),
-    >,
-    mut weapons: Query<
-        (
-            &WorldWeapon,
-            &mut Transform,
-            &mut Mesh3d,
-            &mut MeshMaterial3d<StandardMaterial>,
-            &mut Visibility,
-        ),
-        (
-            Without<BoneVisual>,
-            Without<EquipmentVisual>,
-            Without<OrganVisual>,
-            Without<WorldFlash>,
-            Without<DetailVisual>,
-        ),
-    >,
-    mut flashes: Query<
-        (&WorldFlash, &mut Transform, &mut Visibility),
-        (
-            Without<BoneVisual>,
-            Without<EquipmentVisual>,
-            Without<OrganVisual>,
-            Without<WorldWeapon>,
-            Without<DetailVisual>,
-        ),
-    >,
-    mut details: Query<
-        (&DetailVisual, &mut Transform, &mut Visibility),
-        (
-            Without<BoneVisual>,
-            Without<EquipmentVisual>,
-            Without<OrganVisual>,
-            Without<WorldWeapon>,
-            Without<WorldFlash>,
-        ),
-    >,
-    mut stumps: Query<
-        (&StumpVisual, &mut Transform, &mut Visibility),
-        (
-            Without<BoneVisual>,
-            Without<EquipmentVisual>,
-            Without<OrganVisual>,
-            Without<WorldWeapon>,
-            Without<WorldFlash>,
-            Without<DetailVisual>,
-        ),
-    >,
+    visuals: ActorVisuals,
 ) {
+    let ActorVisuals {
+        mut bones,
+        mut gear,
+        mut organs,
+        mut weapons,
+        mut flashes,
+        mut details,
+        mut stumps,
+    } = visuals;
     if cache.raid != session.raid.raid_id {
         cache.poses.clear();
         cache.roots.clear();
@@ -686,11 +739,10 @@ fn animate(
                 | Segment::RightForearm
                 | Segment::LeftHand
                 | Segment::RightHand
-        ) {
-            if let Some(r) = feedback.responses.get(&p.id) {
-                t.translation.z += r.recoil;
-                t.rotation *= Quat::from_rotation_x(r.recoil);
-            }
+        ) && let Some(r) = feedback.responses.get(&p.id)
+        {
+            t.translation.z += r.recoil;
+            t.rotation *= Quat::from_rotation_x(r.recoil);
         }
         mesh.0 = if bone.inner == 2 {
             let offset = t.rotation * Vec3::new(0.0, 0.0, -0.035);

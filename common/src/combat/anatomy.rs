@@ -189,19 +189,33 @@ impl Anatomy {
     }
 }
 
+/// Ballistic impact in the same actor-local space as the anatomical pose.
+#[derive(Debug, Clone, Copy)]
+pub struct AnatomyHit {
+    pub segment: Segment,
+    pub damage: f32,
+    pub penetration: f32,
+    pub origin: Vec3,
+    pub direction: Vec3,
+    pub range: f32,
+}
+
 impl BodyHealth {
     /// One impact, one armor evaluation; internal intersections are ordered along the actual ray.
     pub fn hit_anatomy(
         &mut self,
-        segment: Segment,
-        damage: f32,
-        penetration: f32,
+        hit: AnatomyHit,
         armor: &mut ArmorState,
-        origin: Vec3,
-        direction: Vec3,
-        range: f32,
         pose: &[SegmentPose; SEGMENT_COUNT],
     ) -> u32 {
+        let AnatomyHit {
+            segment,
+            damage,
+            penetration,
+            origin,
+            direction,
+            range,
+        } = hit;
         if !self.alive()
             || !damage.is_finite()
             || damage <= 0.0
@@ -303,13 +317,15 @@ mod tests {
     ) -> u32 {
         let pose = evaluate_pose(&PoseState::default(), 1.0, 1.0);
         body.hit_anatomy(
-            segment,
-            damage,
-            penetration,
+            AnatomyHit {
+                segment,
+                damage,
+                penetration,
+                origin: Vec3::new(x, y, -2.0),
+                direction: Vec3::Z,
+                range: 4.0,
+            },
             armor,
-            Vec3::new(x, y, -2.0),
-            Vec3::Z,
-            4.0,
             &pose,
         )
     }
