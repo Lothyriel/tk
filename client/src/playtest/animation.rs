@@ -163,9 +163,9 @@ pub(super) fn drive(
     let observe = sequence.control(input, local, other, &frame);
     if observe {
         let target = if peer {
-            [-7.0, 1.0, 18.0]
+            [-7.0, 1.0, 13.0]
         } else {
-            [-3.0, 1.0, 18.0]
+            [-3.0, 1.0, 14.0]
         };
         if move_toward(input, local.pos, target) < 0.4
             && let Some(other) = other
@@ -177,7 +177,7 @@ pub(super) fn drive(
             input.run = false;
             input.camera =
                 Transform::from_translation(Vec3::from(local.pos) + Vec3::Y * PLAYER_VIEW_HEIGHT)
-                    .looking_at(Vec3::from(other.pos) + Vec3::Y * 0.1, Vec3::Y)
+                    .looking_at(Vec3::from(other.pos) + Vec3::Y * 0.4, Vec3::Y)
                     .rotation
                     .into();
             let weapon_index = usize::from(other.weapon != WeaponKind::Pistol);
