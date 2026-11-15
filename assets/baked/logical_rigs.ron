@@ -82,7 +82,7 @@
             "magazine.seat": (translation: (0.0, -0.065, 0.029), rotation: (0.0, 0.0, 0.0, 1.0)),
             "muzzle_device.exit": (translation: (0.0, 0.0, -0.39565), rotation: (0.0, 0.0, 0.0, 1.0)),
             "muzzle_device.mount": (translation: (0.0, 0.0, -0.35065), rotation: (0.0, 0.0, 0.0, 1.0)),
-            "sight.eye": (translation: (0.0, 0.066, 0.24), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "sight.eye": (translation: (0.0, 0.066, 0.27), rotation: (0.0, 0.0, 0.0, 1.0)),
             "sight.front": (translation: (0.0, 0.066, -0.2), rotation: (0.0, 0.0, 0.0, 1.0)),
             "sight.rear": (translation: (0.0, 0.066, 0.142), rotation: (0.0, 0.0, 0.0, 1.0)),
             "stock.mount": (translation: (0.0, 0.0, 0.182), rotation: (0.0, 0.0, 0.0, 1.0)),

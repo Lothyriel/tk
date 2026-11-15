@@ -56,12 +56,12 @@ fn authored_rigs_match_rendered_socket_frames_and_independent_carrier_motion() {
 fn fixture() -> (App, Configuration) {
     let source = common::catalog::CATALOG_SOURCE
         .replacen(
-            "sockets: [",
+            "sockets: [(key:",
             r#"sockets: [
         (key: "grip", interface: (kind: Rail, standard: "fixture", size: 1),
             accepts: [Grip], positions: 3, pitch_m: 0.02,
-            pose: (translation: (0.0, 0.0, -0.15), rotation: (0.0, 0.0, 0.0, 1.0))),
-    "#,
+            pose: (translation: (0.0, 0.0, -0.30), rotation: (0.0, 0.0, 0.0, 1.0))),
+        (key:"#,
             1,
         )
         .replacen(
@@ -237,7 +237,7 @@ fn configured_visual_revisions_share_assets_and_replace_owned_nodes_atomically()
             .definition,
         104
     );
-    assert!(grip.pose.translation.distance(Vec3::new(0.0, 0.0, -0.11)) < 1e-6);
+    assert!(grip.pose.translation.distance(Vec3::new(0.0, 0.0, -0.26)) < 1e-6);
     let hand = app.world().get::<Transform>(model.hands[2]).unwrap();
     assert!(hand.translation.distance(first_hand.translation) > 0.1);
     assert!(
@@ -253,14 +253,16 @@ fn configured_visual_revisions_share_assets_and_replace_owned_nodes_atomically()
     // Oracle from rail placement and authored grip, independent of the resolver.
     assert!(
         hand.translation
-            .distance(root_pose.transform_point(Vec3::new(-0.04, -0.04, -0.12)))
+            .distance(root_pose.transform_point(Vec3::new(-0.04, -0.04, -0.27)))
             < 2e-6
     );
     let trigger = app.world().get::<Transform>(model.hands[5]).unwrap();
+    let trigger_contact = Vec3::new(0.0, -0.046, 0.140)
+        + Quat::from_rotation_x(-25.0_f32.to_radians()) * Vec3::new(0.0, -0.030, -0.018);
     assert!(
         trigger
             .translation
-            .distance(root_pose.transform_point(Vec3::new(0.025, -0.09, 0.035)))
+            .distance(root_pose.transform_point(trigger_contact))
             < 2e-6
     );
     for old in original {
@@ -621,29 +623,67 @@ fn configured_visual_baseline_bindings_preserve_native_geometry_and_contacts() {
                 .is_none()
         );
         let model = app.world().get::<Instance>(entity).unwrap();
-        let rig = common::weapon_animation::WeaponRig::for_weapon(
-            catalog().weapon(definition).unwrap().class,
-        );
+        let spec = catalog().weapon(definition).unwrap();
+        let rig = common::weapon_animation::WeaponRig::for_weapon(spec.class);
         let root = app
             .world()
             .get::<GlobalTransform>(model.weapon_root)
             .unwrap();
-        for (index, contact) in [(2, rig.support), (5, rig.trigger)] {
+        let authored = definition == WeaponId::M4A1;
+        let find_socket = |name: &str| {
+            descendants(app.world(), entity)
+                .into_iter()
+                .find(|&e| {
+                    app.world()
+                        .get::<Name>(e)
+                        .is_some_and(|n| n.as_str() == name)
+                })
+                .map(|e| *app.world().get::<GlobalTransform>(e).unwrap())
+                .unwrap()
+        };
+        for (index, contact) in [
+            (
+                2,
+                if authored {
+                    find_socket("grip.support").translation()
+                } else {
+                    root.transform_point(rig.support)
+                },
+            ),
+            (
+                5,
+                if authored {
+                    find_socket("grip.trigger").translation()
+                } else {
+                    root.transform_point(rig.trigger)
+                },
+            ),
+        ] {
             let hand = app
                 .world()
                 .get::<GlobalTransform>(model.hands[index])
                 .unwrap();
-            assert!(hand.translation().distance(root.transform_point(contact)) < 2e-6);
+            assert!(hand.translation().distance(contact) < 2e-6);
         }
         let magazine = &model.pieces[&1];
-        assert!(magazine.pose.translation.distance(rig.magazine) < 1e-6);
+        let expected_seat = if authored {
+            Vec3::new(0.0, -0.065, 0.029)
+        } else {
+            rig.magazine
+        };
+        assert!(magazine.pose.translation.distance(expected_seat) < 1e-6);
         let root_asset = &app.world().resource::<VoxelCache>().assets[&model.pieces[&0].asset];
         let muzzle = root_asset
             .sockets
             .iter()
-            .find(|s| s.id == "muzzle")
+            .find(|s| s.id == if authored { "bore.muzzle" } else { "muzzle" })
             .unwrap();
-        assert!(muzzle.pose.transform().translation.distance(rig.muzzle) < 1e-6);
+        let expected_bore = if authored {
+            Vec3::new(0.0, 0.0, -14.5 * 0.0254)
+        } else {
+            rig.muzzle
+        };
+        assert!(muzzle.pose.transform().translation.distance(expected_bore) < 1e-6);
         assert!(root_asset.parts.iter().any(|p| p.id == "bolt" && p.movable));
         assert!(
             root_asset
@@ -664,8 +704,9 @@ fn configured_visual_baseline_bindings_preserve_native_geometry_and_contacts() {
             }
         }
     }
-    // Six assets, each loaded once for two perspectives; four surfaces per root
-    // and one per magazine, plus three shared arm/palm meshes.
+    // Six assets shared by both perspectives: refined rifle 19 near surfaces
+    // plus one distinct far surface, two magazine surfaces, ten other baseline
+    // surfaces and three shared arm/palm meshes.
     assert_eq!(app.world().resource::<VoxelCache>().assets.len(), 6);
-    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 18);
+    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 35);
 }

@@ -3,9 +3,8 @@
 ## Dimensioned blockout
 
 `assets/voxel/m4a1_refined.json` and `m4a1_magazine_30.json` are original,
-dimensioned source assets under refinement. They are not yet the active game
-bindings. Native appearance, final detail, contact integration and artistic
-acceptance remain required by TAR-24.
+dimensioned source assets under refinement and are now the active game bindings.
+Native appearance, final detail and artistic acceptance remain required by TAR-24.
 
 Provenance follows F1/F2 in [the reference contract](../WEAPON_REFERENCES.md):
 published longitudinal dimensions are **F**, other external dimensions and
@@ -20,6 +19,7 @@ recesses below are **V** interpretations. PBR values and simplification are
 | Extended stock rear | +0.44255 m; assembled length 0.83820 m (**F**, 33 inches) |
 | Stock travel | -0.08255 m; retracted length 0.75565 m (**F**, 29.75 inches) |
 | Sight line | X=0, Y=0.066 m (**V**), continuous front/rear/eye anchors |
+| Eye position | Z=+0.270 m (**G**); rear aperture 128 mm ahead of the camera, beyond its 100 mm near plane |
 | Magazine seat | (0, -0.065, +0.029) m; magazine has its own seat-local root |
 | Ejection opening | Right upper-receiver wall; open between Z=0.012–0.084 m |
 
@@ -50,16 +50,23 @@ materials, hierarchy and the maximum 2 mm LOD solid deviation.
 ## Integration boundary
 
 The old baseline uses a presentation-space origin and an oversized envelope.
-The new breech-root asset requires an explicit transform into the existing
-presentation frame, composed once for geometry and logical anchors together.
-Muzzle clearance, sight framing and hands must be reverified at that boundary.
-Do not merely replace a visual binding while leaving the old logical contacts
-or an old offset on the authoritative barrel.
+The active breech-root asset uses an explicit hip frame from the catalogue and
+the inverse `sight.eye` socket for ADS. Geometry, logical contacts and ballistic
+bore use that frame. The device outlet remains distinct from the physical bore;
+local/remote flashes follow the last accepted outlet, including after a rejected
+revision. Hands consume source grip orientation as well as position.
 
 The pipeline now exports `logical_rigs.ron` from these source sockets and pivots.
 Catalogue geometry can reference the export by asset/socket name, with no copied
 coordinates. Headless checks compare every M4A1/magazine socket frame against the
 client's baked hierarchy, including grip orientation; moving the carrier leaves
-the charging handle and other receiver-mounted controls fixed. This establishes
-the shared coordinate contract. Active bindings, presentation bridges and
-mechanical adaptation remain the next integration step.
+the charging handle and other receiver-mounted controls fixed. Logical moving
+controls conjugate their deltas through the same authored pivot as the renderer.
+The rifle's carrier stays open when the authoritative action reports an open bolt.
+
+Source/render fixtures exercise active local/remote contacts, stock and clothing,
+reloads, ADS sight centring and independent physical-bore/device-outlet positions.
+The shorter grip spacing and tilted pistol grip also change authoritative anatomy
+and the captured ragdoll pose. The running/step regression required stronger
+passive ankle damping (4.0 N m s/rad versus 2.5 for other joints); the same eight
+floor/wall/corner/step cases retain the original 8–10 second rest limits.

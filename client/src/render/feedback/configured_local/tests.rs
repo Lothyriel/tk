@@ -75,8 +75,35 @@ fn configured_local_stock_and_clothing_keep_contacts_and_ads_sight_line() {
             assert!(contact.distance(input.stock_target.unwrap()) < 2e-6);
             assert!(
                 contact.distance(stock.translation) < 2e-6,
-                "the camera framing reference must retain the baseline sight line"
+                "the camera framing reference must retain the accepted sight line"
             );
+            if weapon == WeaponKind::Rifle {
+                let world = f.app.world();
+                let to_eye = world
+                    .get::<GlobalTransform>(f.camera)
+                    .unwrap()
+                    .to_matrix()
+                    .inverse();
+                for name in ["sight.front", "sight.rear"] {
+                    let actual = world
+                        .get::<GlobalTransform>(named(&f.app, f.root, name))
+                        .unwrap();
+                    let eye = to_eye.transform_point3(actual.translation());
+                    assert!(
+                        eye.x.abs() < 0.00025 && eye.y.abs() < 0.00025,
+                        "{name}: {eye:?}"
+                    );
+                    assert!(eye.z < -0.1);
+                }
+                let outlet = world
+                    .get::<GlobalTransform>(named(&f.app, f.root, "muzzle_device.exit"))
+                    .unwrap();
+                let muzzle = world
+                    .get::<GlobalTransform>(f.root)
+                    .unwrap()
+                    .mul_transform(pose.muzzle);
+                assert!(muzzle.translation().distance(outlet.translation()) < 2e-6);
+            }
             let depth = match armor {
                 common::combat::ArmorKind::None => 0.145,
                 common::combat::ArmorKind::Light => 0.1975,
@@ -283,19 +310,30 @@ impl Fixture {
         let control = world
             .get::<GlobalTransform>(named(&self.app, self.root, "control.grasp"))
             .unwrap();
+        let rest_support = if player.weapon == WeaponKind::Rifle {
+            world
+                .get::<GlobalTransform>(named(&self.app, self.root, "grip.support"))
+                .unwrap()
+                .translation()
+        } else {
+            root.transform_point(rig.support)
+        };
+        let rest_trigger = if player.weapon == WeaponKind::Rifle {
+            world
+                .get::<GlobalTransform>(named(&self.app, self.root, "grip.trigger"))
+                .unwrap()
+                .translation()
+        } else {
+            root.transform_point(rig.trigger)
+        };
         assert!(
             support.translation().distance(
-                root.transform_point(rig.support)
+                rest_support
                     .lerp(mag.translation(), action.magazine_grip)
                     .lerp(control.translation(), action.control_grip)
             ) < 3e-6
         );
-        assert!(
-            trigger
-                .translation()
-                .distance(root.transform_point(rig.trigger))
-                < 3e-6
-        );
+        assert!(trigger.translation().distance(rest_trigger) < 3e-6);
     }
 
     fn assert_pistol_frame(&self, aspect: f32) {
@@ -480,6 +518,37 @@ fn configured_local_native_revision_and_trauma_preserve_identity_and_visibility(
         f.app.world().get::<Visibility>(f.root),
         Some(&Visibility::Hidden)
     );
+}
+
+#[test]
+fn configured_local_rifle_open_bolt_keeps_handle_and_outlet_fixed() {
+    let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
+    for _ in 0..90 {
+        f.step();
+    }
+    let bolt = named(&f.app, f.root, "bolt");
+    let handle = named(&f.app, f.root, "charging_handle");
+    let outlet = named(&f.app, f.root, "muzzle_device.exit");
+    let rest_bolt = *f.app.world().get::<Transform>(bolt).unwrap();
+    let rest_handle = *f.app.world().get::<Transform>(handle).unwrap();
+    let rest_outlet = *f.app.world().get::<Transform>(outlet).unwrap();
+    f.app.world_mut().resource_mut::<ClientSession>().players[0]
+        .mechanics
+        .bolt_open = true;
+    for _ in 0..30 {
+        f.step();
+        f.assert_contacts();
+        let moved = f.app.world().get::<Transform>(bolt).unwrap();
+        assert!((moved.translation - rest_bolt.translation - Vec3::Z * 0.055).length() < 1e-6);
+        assert_eq!(
+            *f.app.world().get::<Transform>(handle).unwrap(),
+            rest_handle
+        );
+        assert_eq!(
+            *f.app.world().get::<Transform>(outlet).unwrap(),
+            rest_outlet
+        );
+    }
 }
 
 #[test]

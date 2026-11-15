@@ -2280,6 +2280,7 @@ dependencies = [
  "common",
  "dotenvy",
  "rand",
+ "ron",
  "serde",
  "serde_json",
 ]
@@ -5479,6 +5480,7 @@ dependencies = [
  "bevy_rapier3d",
  "bevy_renet2",
  "common",
+ "ron",
 ]
 
 [[package]]

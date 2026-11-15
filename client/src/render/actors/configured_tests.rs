@@ -166,15 +166,22 @@ fn configured_remote_stock_contacts_actual_chest_or_plate_with_rigid_arms() {
             let before = *world.get::<Transform>(surface).unwrap();
             let accepted_root = accepted.solution.root;
             let entities = descendants(world, root);
-            let source = common::catalog::CATALOG_SOURCE.replace(
-                if weapon == WeaponKind::Rifle {
-                    "(0.0, -0.005, 0.335)"
-                } else {
-                    "(0.0, -0.012, 0.3275)"
-                },
-                "(0.0, 0.0, 4.0)",
-            );
-            let custom = common::catalog::Catalog::parse("unreachable-stock", &source).unwrap();
+            let mut document: common::catalog::CatalogDocument =
+                ron::from_str(common::catalog::CATALOG_SOURCE).unwrap();
+            document
+                .weapons
+                .iter_mut()
+                .find(|w| w.class == weapon)
+                .unwrap()
+                .assembly
+                .geometry
+                .anchors
+                .iter_mut()
+                .find(|a| a.kind == common::catalog::AnchorKind::StockContact)
+                .unwrap()
+                .pose
+                .translation = [0.0, 0.0, 4.0];
+            let custom = common::catalog::Catalog::validate("unreachable-stock", document).unwrap();
             {
                 let mut session = app.world_mut().resource_mut::<ClientSession>();
                 let mut packet = session
@@ -320,15 +327,19 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
     let recoil = app.world().resource::<feedback::Feedback>().responses[&7].recoil;
     let logical = handling::configured_contacts(spec, action, recoil, &player.mechanics).unwrap();
     let logical_support = world_root.mul_transform(logical.support);
-    let actual_support = world_root.mul_transform(Transform::from_translation(rig.support));
+    let actual_support = if player.weapon == WeaponKind::Rifle {
+        socket("grip.support")
+    } else {
+        world_root.mul_transform(Transform::from_translation(rig.support))
+    };
     let expected_rotation = actual_support
         .rotation()
         .slerp(magazine.rotation(), action.magazine_grip)
         .slerp(control.rotation(), action.control_grip);
     assert!(
         logical_support.translation().distance(
-            world_root
-                .transform_point(rig.support)
+            actual_support
+                .translation()
                 .lerp(magazine.translation(), action.magazine_grip)
                 .lerp(control.translation(), action.control_grip)
         ) < 2e-6
@@ -339,8 +350,8 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
             "logical authority contact must match baked mechanism socket"
         );
     }
-    let expected = world_root
-        .transform_point(rig.support)
+    let expected = actual_support
+        .translation()
         .lerp(magazine.translation(), action.magazine_grip)
         .lerp(control.translation(), action.control_grip);
     let hand = descendants(app.world(), body)

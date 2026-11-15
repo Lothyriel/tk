@@ -42,6 +42,7 @@ impl TryFrom<GeometrySource> for Geometry {
 
     fn try_from(source: GeometrySource) -> Result<Self, Self::Error> {
         let mut geometry = Self {
+            authored_rig: None,
             center_of_mass: source.center_of_mass,
             sockets: source.sockets,
             solids: source.solids,
@@ -49,6 +50,7 @@ impl TryFrom<GeometrySource> for Geometry {
             anchors: source.anchors,
         };
         if let Some(bindings) = source.authored {
+            geometry.authored_rig = Some(bindings.asset.clone());
             let rig = authored_rig(&bindings.asset)
                 .ok_or_else(|| format!("unknown authored rig {}", bindings.asset))?;
             let socket_pose = |name: &str| {

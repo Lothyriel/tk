@@ -628,7 +628,7 @@ fn apply_configured_contacts(
             Transform::from_translation(player.pos.into())
                 .with_rotation(Quat::from_rotation_y(player.rot.yaw))
         });
-        roots.insert(player.id, pose.solution.root);
+        roots.insert(player.id, pose.muzzle);
         for (arm, shoulder, segments) in [
             (
                 pose.solution.support,
@@ -670,12 +670,8 @@ fn apply_configured_contacts(
         }
     }
     for (flash, mut transform, mut visible) in &mut flashes {
-        if let Some(root) = roots.get(&flash.0) {
-            let weapon = cache.poses[&flash.0].weapon;
-            transform.translation = root.transform_point(
-                common::weapon_animation::WeaponRig::for_weapon(weapon).muzzle - Vec3::Z * 0.05,
-            );
-            transform.rotation = root.rotation;
+        if let Some(muzzle) = roots.get(&flash.0) {
+            *transform = muzzle.mul_transform(Transform::from_translation(Vec3::NEG_Z * 0.05));
         } else {
             *visible = Visibility::Hidden;
         }

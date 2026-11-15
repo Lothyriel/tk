@@ -5,15 +5,17 @@
     weapons: [
         (id: 1, key: "m4a1", name: "M4A1", class: Rifle, profile: 301, ammo: 201,
             components: [(node: 1, definition: 101, parent: None, socket: "magazine", position: 0)],
-            assembly: (platform: "m4a1", caliber: "556x45", mass_kg: 2.88, geometry: (
-                anchors: [
-                    (kind: TriggerGrip, pose: (translation: (0.025, -0.09, 0.035), rotation: (0.0, 0.0, 0.0, 1.0))),
-                    (kind: SupportGrip, pose: (translation: (-0.025, 0.005, -0.35), rotation: (0.0, 0.0, 0.0, 1.0))),
-                    (kind: StockContact, pose: (translation: (0.0, -0.005, 0.335), rotation: (0.0, 0.0, 0.0, 1.0))),
-                    (kind: ControlGrip, pose: (translation: (-0.067, 0.055, -0.085), rotation: (-0.025693232, -0.34193385, 0.070386924, 0.93673193))),
-                ],
+            assembly: (platform: "m4a1", caliber: "556x45", mass_kg: 2.88,
+                hip_from_root: (translation: (0.17, -0.19, -0.76), rotation: (0.0, 0.0, 0.0, 1.0)),
+                ads_at_sight: true, geometry: (
+                authored: Some((asset: "m4a1_refined",
+                    anchors: [(Bore, "bore.muzzle"), (DeviceExit, "muzzle_device.exit"),
+                        (Ejection, "ejection"), (Sight, "sight.eye"),
+                        (FrontIron, "sight.front"), (RearIron, "sight.rear"),
+                        (TriggerGrip, "grip.trigger"), (SupportGrip, "grip.support"),
+                        (StockContact, "stock.shoulder"), (ControlGrip, "control.grasp")],
+                    sockets: [("magazine", "magazine.seat")])),
                 sockets: [(key: "magazine", interface: (kind: Magwell, standard: "stanag", size: 556),
-                    pose: (translation: (0.0, -0.13, -0.105), rotation: (0.0, 0.0, 0.0, 1.0)),
                     accepts: [Magazine], positions: 1, pitch_m: 0.0, required: true)],
             ))),
         (id: 2, key: "m1911", name: "Pistol", class: Pistol, profile: 302, ammo: 202,
@@ -46,7 +48,8 @@
         (id: 101, key: "m4a1_magazine_baseline", kind: Magazine, ammo: 201, capacity: 30, mass_kg: 0.11,
             assembly: (interface: (kind: Magwell, standard: "stanag", size: 556),
                 platform: Some("m4a1"), caliber: Some("556x45"), occupied_positions: 1, geometry: (
-                    anchors: [(kind: MagazineGrip, pose: (translation: (-0.045, -0.025, 0.025), rotation: (0.0, 0.0, -0.14943814, 0.98877108)))],
+                    authored: Some((asset: "m4a1_magazine_30",
+                        anchors: [(MagazineGrip, "magazine.grasp")], sockets: [])),
                 ))),
         (id: 102, key: "m1911_magazine_baseline", kind: Magazine, ammo: 202, capacity: 17, mass_kg: 0.07,
             assembly: (interface: (kind: Magwell, standard: "m1911", size: 45),

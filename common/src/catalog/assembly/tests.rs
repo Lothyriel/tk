@@ -57,6 +57,9 @@ fn component(id: u32, kind: ComponentKind, interface: Interface) -> ComponentDef
 fn document() -> CatalogDocument {
     let mut doc: CatalogDocument = ron::from_str(CATALOG_SOURCE).unwrap();
     let root = &mut doc.weapons[0].assembly;
+    // This synthetic connector matrix has its own eye/root frame.
+    root.hip_from_root = RigidPose::default();
+    root.ads_at_sight = false;
     root.mass_kg = 2.0;
     root.geometry.sockets.extend([
         socket(
@@ -209,9 +212,9 @@ fn assembly_positive_matrix_and_independent_mass_anchor_oracles() {
         );
         // 6 parts x 0.25 kg: y moment = .025+.030-.025=.030;
         // z moment = .0075+.0075+.005-.1-.1=-.180 kg*m.
-        // The baseline magazine now occupies its actual socket at (0,-.13,-.105).
-        let moment_y = 0.03_f32 - 0.13 * magazine_mass;
-        let moment_z = -0.18_f32 - 0.105 * magazine_mass;
+        // The magazine occupies the measured breech-root seat (0,-.065,+.029).
+        let moment_y = 0.03_f32 - 0.065 * magazine_mass;
+        let moment_z = -0.18_f32 + 0.029 * magazine_mass;
         assert!((resolved.assembly.center_of_mass[1] - moment_y / mass).abs() < 1e-6);
         assert!((resolved.assembly.center_of_mass[2] - moment_z / mass).abs() < 1e-6);
         assert!(
@@ -223,7 +226,7 @@ fn assembly_positive_matrix_and_independent_mass_anchor_oracles() {
     }
     let baseline = catalog.weapon(WeaponId::M4A1).unwrap();
     assert_eq!(baseline.muzzle_speed, 715.0);
-    assert_eq!(baseline.barrel_offset, [0.28, -0.15, -0.92]);
+    assert_eq!(baseline.barrel_offset, [0.0, 0.0, -0.3683]);
 }
 
 #[test]

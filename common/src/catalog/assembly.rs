@@ -130,6 +130,8 @@ pub struct Anchor {
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(try_from = "authored::GeometrySource")]
 pub struct Geometry {
+    /// Retained for shared mechanical pivots after named bindings are expanded.
+    pub authored_rig: Option<String>,
     pub center_of_mass: [f32; 3],
     pub sockets: Vec<Socket>,
     /// Conservative non-contact solids; author intentional mating areas outside
@@ -152,6 +154,9 @@ pub struct WeaponAssembly {
     pub hip_from_root: RigidPose,
     #[serde(default)]
     pub ads_from_root: RigidPose,
+    /// Use the inverse authored eye socket as the ADS camera frame.
+    #[serde(default)]
+    pub ads_at_sight: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -222,4 +227,5 @@ pub struct ResolvedAssembly {
     pub obstruction: Vec<Bounds>,
     pub hip_from_root: Transform,
     pub ads_from_root: Transform,
+    pub pivots: BTreeMap<String, Transform>,
 }

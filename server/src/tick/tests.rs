@@ -505,15 +505,23 @@ fn physical_fixture() -> (App, Entity, Entity) {
 fn normal_shot(app: &mut App, shooter: Entity, target: Vec3) {
     let t = *app.world().get::<Transform>(shooter).unwrap();
     let eye = t.translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
-    let mut rotation = Transform::from_translation(eye)
-        .looking_at(target, Vec3::Y)
-        .rotation;
-    for _ in 0..8 {
-        let muzzle = eye + rotation * Vec3::from(WeaponKind::Rifle.spec().barrel_offset);
-        rotation = Transform::from_translation(muzzle)
-            .looking_at(target, Vec3::Y)
-            .rotation;
-    }
+    // Solve the offset ray analytically. Fixed-point look_at iteration diverges
+    // when a long muzzle is over halfway from eye to a nearby target.
+    let offset = Vec3::from(WeaponKind::Rifle.spec().barrel_offset);
+    let delta = target - eye;
+    let forward = (delta.length_squared() - offset.x * offset.x - offset.y * offset.y).sqrt();
+    assert!(forward.is_finite() && forward + offset.z > 0.0);
+    let pitch = (delta.y / (forward * forward + offset.y * offset.y).sqrt()).asin()
+        - offset.y.atan2(forward);
+    let local_z = offset.y * pitch.sin() - forward * pitch.cos();
+    let yaw = (-delta.x).atan2(-delta.z) + offset.x.atan2(-local_z);
+    let rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+    let muzzle = eye + rotation * offset;
+    let ray = rotation * Vec3::NEG_Z;
+    assert!(
+        (target - muzzle).cross(ray).length() < 0.001,
+        "fixture aim missed target"
+    );
     {
         let mut input = app.world_mut().get_mut::<ClientInput>(shooter).unwrap();
         input.camera = rotation.into();
@@ -939,14 +947,10 @@ fn destroyed_trigger_arm_disables_firing_and_reload_while_actor_remains_alive() 
         29
     );
     for _ in 0..2 {
-        let t = *app.world().get::<Transform>(b).unwrap();
-        let pose = app.world().get::<PoseState>(b).unwrap();
-        let rig = evaluate_pose(pose, 1.0, 1.0);
-        normal_shot(
-            &mut app,
-            a,
-            t.translation + t.rotation * Vec3::from(rig[Segment::RightUpperArm.index()].position),
-        );
+        let target = app.world().get::<ragdoll::Motion>(b).unwrap().world
+            [Segment::RightUpperArm.index()]
+        .translation;
+        normal_shot(&mut app, a, target);
     }
     steps(&mut app, 128);
     let body = app.world().get::<BodyHealth>(b).unwrap();
