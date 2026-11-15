@@ -50,6 +50,10 @@ The displayed root/hand response remains filtered through interruption. Once
 the server commits insertion, the magazine pose is seated without filter lag;
 bolt state likewise follows the authoritative commit. Cancellation clears the
 incoming binding and displays only the committed installed location.
+During slot switch, the response retains the outgoing weapon's last known
+mechanical state and collapses its reload to the committed installed magazine.
+That state follows the lowering weapon until the displayed slot changes; the
+new pistol/rifle snapshot cannot make its predecessor's magazine reappear.
 
 Composed engine fixtures cover mixed 20/30-round pools, local/remote contacts,
 stock/grip extremes, 30/60/165 Hz updates, slowed mechanical time, lost updates,

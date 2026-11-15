@@ -964,9 +964,11 @@ fn animate(
             *visible = Visibility::Hidden;
             continue;
         };
-        if displayed == p.weapon {
-            request.magazine = entry.presented_magazine(&p.mechanics);
-        }
+        let mechanics = feedback
+            .responses
+            .get(&p.id)
+            .map_or(p.mechanics, |r| r.displayed_mechanics);
+        request.magazine = entry.presented_magazine(&mechanics);
         let Some(visual) = entry.visual(request.magazine) else {
             continue;
         };
@@ -980,7 +982,7 @@ fn animate(
         }
         let recoil = feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
         preferred.translation.z += recoil;
-        let mut input = configured::native::action(visual, action, recoil, &p.mechanics);
+        let mut input = configured::native::action(visual, action, recoil, &mechanics);
         input.preflight_error = posture_errors.get(&p.id).cloned();
         input.preferred_root = preferred;
         input.shoulders = [Segment::LeftUpperArm, Segment::RightUpperArm].map(|segment| {

@@ -618,6 +618,49 @@ fn configured_remote_mixed_reload_extremes_preserve_contacts_identity_and_cancel
                         Visibility::Hidden
                     })
                 );
+                // The entire committed hierarchy follows the owner's physical
+                // visibility. No retained/incoming child may float after a fall.
+                for mode in [
+                    PhysicalMode::Fallen,
+                    PhysicalMode::Recovering,
+                    PhysicalMode::Standing,
+                ] {
+                    app.world_mut().resource_mut::<ClientSession>().players[0]
+                        .pose
+                        .mode = mode;
+                    app.update();
+                    assert_eq!(
+                        app.world().get::<Visibility>(root),
+                        Some(&if mode == PhysicalMode::Standing {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        })
+                    );
+                    if mode != PhysicalMode::Standing {
+                        for entity in descendants(app.world(), root) {
+                            assert!(
+                                !app.world()
+                                    .get::<InheritedVisibility>(entity)
+                                    .is_some_and(|v| v.get())
+                            );
+                        }
+                    }
+                    assert_eq!(weapon.mechanics().total_rounds(), total);
+                }
+                app.world_mut().resource_mut::<ClientSession>().players[0].alive = false;
+                app.update();
+                assert_eq!(
+                    app.world().get::<Visibility>(root),
+                    Some(&Visibility::Hidden)
+                );
+                for entity in descendants(app.world(), root) {
+                    assert!(
+                        !app.world()
+                            .get::<InheritedVisibility>(entity)
+                            .is_some_and(|v| v.get())
+                    );
+                }
             }
         }
     }

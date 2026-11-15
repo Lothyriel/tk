@@ -161,6 +161,100 @@ fn configured_local_mixed_reload_uses_owned_incoming_mesh_before_insertion_witho
 }
 
 #[test]
+fn configured_local_switch_during_reload_keeps_outgoing_magazine_location() {
+    use common::catalog::{DefinitionId, EquippedWeapon, WeaponInstanceId, WeaponKit};
+    use common::replication::ConfigurationPublisher;
+    for fraction in [0.15, 0.30, 0.55, 0.75, 0.95] {
+        let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
+        let mut kit = WeaponKit::from_configuration(
+            catalog(),
+            catalog().configuration(common::WeaponId::M4A1).unwrap(),
+        )
+        .unwrap();
+        kit.reserves = vec![DefinitionId(120)];
+        let mut rifle = EquippedWeapon::from_kit(catalog(), WeaponInstanceId(77), &kit).unwrap();
+        for _ in 0..30 {
+            assert!(rifle.fire());
+        }
+        assert!(rifle.mechanics_mut().start_reload(2.4));
+        rifle.advance(2.4 * fraction);
+        let pistol = EquippedWeapon::new(
+            catalog(),
+            WeaponInstanceId(78),
+            catalog().configuration(common::WeaponId::M1911).unwrap(),
+        )
+        .unwrap();
+        let fingerprint = catalog_fingerprint(common::catalog::CATALOG_SOURCE);
+        let mut publisher = ConfigurationPublisher::new(2, fingerprint).unwrap();
+        let rifle_handle = publisher
+            .register(7, EquipmentSlot::Primary, rifle.instance())
+            .unwrap();
+        let pistol_handle = publisher
+            .register(7, EquipmentSlot::Sidearm, pistol.instance())
+            .unwrap();
+        {
+            let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+            session.configurations.cache.begin_epoch(2).unwrap();
+            for packet in publisher.entries() {
+                session
+                    .configurations
+                    .cache
+                    .apply(catalog(), fingerprint, packet.clone())
+                    .unwrap();
+            }
+            let player = &mut session.players[0];
+            player.weapon_instance = rifle.instance().id;
+            player.configuration = rifle_handle;
+            player.mechanics = rifle.mechanics().snapshot();
+        }
+        for _ in 0..30 {
+            f.step();
+        }
+        let inserted = rifle.mechanics().inserted().map(|m| m.id);
+        rifle.mechanics_mut().cancel();
+        {
+            let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+            let player = &mut session.players[0];
+            player.weapon = WeaponKind::Pistol;
+            player.weapon_id = common::WeaponId::M1911;
+            player.weapon_slot = EquipmentSlot::Sidearm;
+            player.weapon_instance = pistol.instance().id;
+            player.configuration = pistol_handle;
+            player.mechanics = pistol.mechanics().snapshot();
+            player.pose.weapon = WeaponKind::Pistol;
+        }
+        f.step();
+        let world = f.app.world();
+        assert_eq!(
+            world.resource::<Feedback>().responses[&7].displayed,
+            Some(WeaponKind::Rifle)
+        );
+        assert_eq!(
+            world.get::<ConfiguredWeapon>(f.root).unwrap().magazine,
+            inserted,
+            "lowering rifle must not borrow the pistol magazine or keep the uncommitted incoming"
+        );
+        let part = named(&f.app, f.root, "magazine");
+        assert_eq!(
+            world.get::<Visibility>(part),
+            Some(&if inserted.is_some() {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            }),
+            "switch at {fraction} revealed a detached magazine"
+        );
+        for _ in 0..30 {
+            f.step();
+        }
+        assert_eq!(
+            f.app.world().resource::<Feedback>().responses[&7].displayed,
+            Some(WeaponKind::Pistol)
+        );
+    }
+}
+
+#[test]
 fn configured_local_stock_and_clothing_keep_contacts_and_ads_sight_line() {
     for weapon in [WeaponKind::Rifle, WeaponKind::Smg] {
         for armor in [

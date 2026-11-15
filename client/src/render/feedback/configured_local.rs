@@ -71,13 +71,16 @@ pub(super) fn prepare(
         else {
             continue;
         };
-        if displayed == player.weapon {
-            request.magazine = entry.presented_magazine(&player.mechanics);
-        }
+        request.magazine = entry.presented_magazine(&response.displayed_mechanics);
         let Some(visual) = entry.visual(request.magazine) else {
             continue;
         };
-        let mut input = native::action(visual, action, response.recoil, &player.mechanics);
+        let mut input = native::action(
+            visual,
+            action,
+            response.recoil,
+            &response.displayed_mechanics,
+        );
         if let Err(error) = native::brace_view(
             &mut input,
             visual,

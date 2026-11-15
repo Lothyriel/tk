@@ -248,6 +248,9 @@ pub(super) struct Response {
     swap: f32,
     pub(super) displayed: Option<WeaponKind>,
     pub(super) action: Option<WeaponAction>,
+    /// The lowered outgoing weapon outlives the authoritative slot switch for
+    /// a few frames. Its magazine/bolt must not read the incoming slot's state.
+    pub(super) displayed_mechanics: common::catalog::MechanicalSnapshot,
     sway: Vec2,
     previous_look: Option<(Vec2, f32)>,
     look_rate: Vec2,
@@ -416,15 +419,26 @@ pub(super) fn advance(
             response.angular = Default::default();
         }
         let w = response.displayed.unwrap_or(player.weapon);
-        let fraction = if player.mechanics.reloading() && w == player.weapon {
-            player.mechanics.fraction
+        if w == player.weapon {
+            response.displayed_mechanics = player.mechanics;
+        } else {
+            let mechanics = &mut response.displayed_mechanics;
+            mechanics.magazine = mechanics.inserted_magazine().unwrap_or_default();
+            mechanics.reload_target = Default::default();
+            mechanics.kind = None;
+            mechanics.phase = None;
+            mechanics.fraction = 0.0;
+        }
+        let mechanics = response.displayed_mechanics;
+        let fraction = if mechanics.reloading() {
+            mechanics.fraction
         } else {
             0.0
         };
         let target = reload_action(
             w,
             fraction,
-            player.mechanics.kind == Some(common::catalog::ManipulationKind::EmptyReload),
+            mechanics.kind == Some(common::catalog::ManipulationKind::EmptyReload),
         );
         let alpha = 1.0 - (-time.delta_secs().min(0.05) * 32.0).exp();
         let action = response.action.get_or_insert(target);
@@ -453,17 +467,17 @@ pub(super) fn advance(
         action.bolt += (target.bolt - action.bolt) * alpha;
         action.control += (target.control - action.control) * alpha;
         action.latch += (target.latch - action.latch) * alpha;
-        if w == WeaponKind::Rifle && player.mechanics.reloading() {
+        if w == WeaponKind::Rifle && mechanics.reloading() {
             use common::catalog::ManipulationPhase;
             // The authored seat dwell lets the filter settle before insertion;
             // a committed mechanical location must never lag behind on screen.
             if matches!(
-                player.mechanics.phase,
+                mechanics.phase,
                 Some(ManipulationPhase::Feed | ManipulationPhase::Finish)
             ) {
                 action.magazine = target.magazine;
             }
-            action.bolt = if player.mechanics.bolt_open { 1.0 } else { 0.0 };
+            action.bolt = if mechanics.bolt_open { 1.0 } else { 0.0 };
         }
         let local = local_id.as_ref().is_some_and(|id| id.0 == player.id);
         let camera = if local {
