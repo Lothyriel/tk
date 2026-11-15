@@ -1,0 +1,34 @@
+{
+  "version": 1, "id": "m4a1_dd_103", "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK exterior of Daniel Defense 10.3 inch 5.56 Government/carbine barrel, selected with FSB. F: 10.3 inch bore, 0.750 inch gas journal, https://danieldefense.com/10-3-5-56mm-carbine-1-7-government-profile.html . V: stepped Government exterior from DD07-077-16176-018_2_HR product photograph hosted by Bauer Precision; not a measured engineering profile. Shared F2-interpreted front tower is a required separate child, counted inside the published 1.46 lb group mass. G: remaining exterior stations, mating depth and material response.",
+  "materials": [
+    {"id": "steel", "surface": "metal", "color": [0.09, 0.10, 0.11, 1], "roughness": 0.60, "metallic": 0.65}
+  ],
+  "parts": [{
+    "id": "barrel", "parent": null, "movable": false,
+    "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+    "boxes": [
+      {"min": [-0.0075, -0.0055, -0.187], "max": [0.0075, 0.0055, -0.040], "material": "steel"},
+      {"min": [-0.0055, -0.0075, -0.187], "max": [0.0055, 0.0075, -0.040], "material": "steel"},
+      {"min": [-0.010, -0.007, -0.040], "max": [0.010, 0.007, -0.026], "material": "steel"},
+      {"min": [-0.007, -0.010, -0.040], "max": [0.007, 0.010, -0.026], "material": "steel"},
+      {"min": [-0.012, -0.008, -0.026], "max": [0.012, 0.008, 0], "material": "steel"},
+      {"min": [-0.008, -0.012, -0.026], "max": [0.008, 0.012, 0], "material": "steel"},
+      {"min": [-0.009525, -0.0065, -0.211], "max": [0.009525, 0.0065, -0.187], "material": "steel"},
+      {"min": [-0.0065, -0.009525, -0.211], "max": [0.0065, 0.009525, -0.187], "material": "steel"},
+      {"min": [-0.0085, -0.006, -0.24397], "max": [0.0085, 0.006, -0.211], "material": "steel"},
+      {"min": [-0.006, -0.0085, -0.24397], "max": [0.006, 0.0085, -0.211], "material": "steel"},
+      {"min": [-0.00635, -0.0045, -0.26162], "max": [-0.003, 0.0045, -0.24397], "material": "steel"},
+      {"min": [0.003, -0.0045, -0.26162], "max": [0.00635, 0.0045, -0.24397], "material": "steel"},
+      {"min": [-0.0045, 0.003, -0.26162], "max": [0.0045, 0.00635, -0.24397], "material": "steel"},
+      {"min": [-0.0045, -0.00635, -0.26162], "max": [0.0045, -0.003, -0.24397], "material": "steel"}
+    ]
+  }],
+  "sockets": [
+    {"id": "bore.breech", "part": "barrel", "pose": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]}},
+    {"id": "bore.muzzle", "part": "barrel", "pose": {"translation": [0, 0, -0.26162], "rotation": [0, 0, 0, 1]}},
+    {"id": "muzzle_device.mount", "part": "barrel", "pose": {"translation": [0, 0, -0.24397], "rotation": [0, 0, 0, 1]}},
+    {"id": "front_sight.mount", "part": "barrel", "pose": {"translation": [0, 0, -0.198], "rotation": [0, 0, 0, 1]}}
+  ]
+}

@@ -45,7 +45,13 @@ def bounds(parts, part_id, box):
 
 def intersects(a, b):
     return all(min(a[1][i], b[1][i]) - max(a[0][i], b[0][i]) > 1e-8
-               for i in range(3))
+                for i in range(3))
+
+
+def asset_solids(asset, translation=(0, 0, 0)):
+    parts = {p["id"]: p for p in asset["parts"]}
+    return [[[v + t for v, t in zip(edge, translation)] for edge in bounds(parts, p["id"], b)]
+            for p in parts.values() for b in p["boxes"]]
 
 
 class M4A1AssetTests(unittest.TestCase):
@@ -149,6 +155,86 @@ class M4A1AssetTests(unittest.TestCase):
                             self.assertAlmostEqual(a, b, delta=1e-8)
         # Every surface has exactly one runtime owner, including all controls.
         self.assertCountEqual(seen, list(self.parts))
+
+    def test_devices_have_open_outlets_and_suppressor_clears_its_real_mount(self):
+        brake, can = (load(name) for name in ("m4a1_sfmb", "m4a1_rc2"))
+        for asset, length in ((brake, 2.6 * 0.0254), (can, 6.4 * 0.0254)):
+            solids = asset_solids(asset)
+            self.assertAlmostEqual(max(b[1][2] for b in solids) - min(b[0][2] for b in solids),
+                                   length, delta=1e-6)
+            bore = [[-0.0028, -0.0028, -length], [0.0028, 0.0028, 0]]
+            self.assertTrue(all(not intersects(b, bore) for b in solids))
+            outlet = next(s for s in asset["sockets"] if s["id"] == "muzzle_device.exit")
+            self.assertEqual(outlet["pose"]["translation"], [0, 0, -length])
+        can_solids = asset_solids(can)
+        for axis in (0, 1):
+            self.assertAlmostEqual(max(b[1][axis] for b in can_solids)
+                                   - min(b[0][axis] for b in can_solids),
+                                   1.5 * 0.0254, delta=1e-6)
+        mount = next(s for s in brake["sockets"] if s["id"] == "suppressor.mount")
+        installed = asset_solids(can, mount["pose"]["translation"])
+        self.assertTrue(all(not intersects(a, b) for a in installed for b in asset_solids(brake)))
+        # The can surrounds the adapter. Its published approximate added length
+        # is not the full can length added after the brake's front face.
+        self.assertAlmostEqual(-min(b[0][2] for b in installed) - 2.6 * 0.0254,
+                               3.8 * 0.0254, delta=1e-6)
+        for z0, z1 in ((-0.061, -0.051), (-0.045, -0.036)):
+            port = [[-0.012, -0.004, z0], [0.012, 0.004, z1]]
+            self.assertTrue(all(not intersects(b, port) for b in asset_solids(brake)))
+
+    def test_pro_mount_axis_open_sight_line_and_separate_surfaces(self):
+        mount, optic = (load(name) for name in ("m4a1_qrp2", "m4a1_pro"))
+        seat = next(s for s in mount["sockets"] if s["id"] == "optic.mount")["pose"]["translation"]
+        self.assertEqual(seat, [0, 0.039, 0])
+        mount_solids, optic_solids = asset_solids(mount), asset_solids(optic, seat)
+        self.assertTrue(all(not intersects(a, b) for a in mount_solids for b in optic_solids))
+        sight = [[-0.010, 0.029, -0.067], [0.010, 0.049, 0.111]]
+        self.assertTrue(all(not intersects(b, sight) for b in mount_solids + optic_solids))
+        self.assertAlmostEqual(max(b[1][2] for b in optic_solids)
+                               - min(b[0][2] for b in optic_solids), 0.132, delta=1e-6)
+        all_solids = mount_solids + optic_solids
+        self.assertAlmostEqual(max(b[1][0] for b in all_solids)
+                               - min(b[0][0] for b in all_solids), 0.072, delta=1e-6)
+
+    def test_short_barrel_keeps_carbine_front_sight_and_moves_device(self):
+        short = load("m4a1_dd_103")
+        sockets = {s["id"]: s["pose"]["translation"] for s in short["sockets"]}
+        self.assertAlmostEqual(sockets["bore.breech"][2] - sockets["bore.muzzle"][2],
+                               10.3 * 0.0254, delta=1e-6)
+        self.assertEqual(sockets["front_sight.mount"], self.sockets["front_sight.mount"])
+        self.assertAlmostEqual(sockets["muzzle_device.mount"][2]
+                               - self.sockets["muzzle_device.mount"][2], 4.2 * 0.0254, delta=1e-6)
+        # Keep the external barrel inside the authored handguard's open channel.
+        handguard = next(a for a in bake_voxels.exported_sources(self.asset) if a["id"] == "m4a1_ras")
+        shell = asset_solids(handguard, self.sockets["handguard.mount"])
+        self.assertTrue(all(not intersects(a, b) for a in shell for b in asset_solids(short)))
+
+    def test_ras_current_body_length_and_exposed_bottom_rail(self):
+        ras = next(a for a in bake_voxels.exported_sources(self.asset) if a["id"] == "m4a1_ras")
+        solids = asset_solids(ras)
+        self.assertAlmostEqual(max(b[1][2] for b in solids) - min(b[0][2] for b in solids),
+                               6.25 * 0.0254, delta=1e-6)
+        # Open slot at the bottom; a polymer panel across the rail fails.
+        slot = [[-0.010, -0.027, -0.088], [0.010, -0.023, -0.084]]
+        self.assertTrue(all(not intersects(b, slot) for b in solids))
+        # The reference has side vents above the ribbed panels.
+        vent = [[-0.028, 0.009, -0.028], [0.028, 0.015, -0.010]]
+        self.assertTrue(all(not intersects(b, vent) for b in solids))
+        for actual, expected in zip(self.sockets["grip.support"], [0, -0.027, -0.110]):
+            self.assertAlmostEqual(actual, expected, delta=1e-8)
+
+    def test_handguard_front_cap_fit_and_short_suppressed_sl_interference(self):
+        exports = {a["id"]: a for a in bake_voxels.exported_sources(self.asset)}
+        tower = asset_solids(exports["m4a1_front_iron"], self.sockets["front_sight.mount"])
+        short = load("m4a1_dd_103")
+        mount = next(s for s in short["sockets"] if s["id"] == "muzzle_device.mount")
+        can = asset_solids(load("m4a1_rc2"), mount["pose"]["translation"])
+        for guard, can_fits in ((exports["m4a1_ras"], True), (load("m4a1_moe_sl"), False)):
+            shell = asset_solids(guard, self.sockets["handguard.mount"])
+            self.assertTrue(all(not intersects(a, b) for a in shell for b in tower))
+            self.assertEqual(all(not intersects(a, b) for a in shell for b in can), can_fits)
+        # This real exterior interference must become a declarative clearance
+        # rejection in the catalog matrix, not a weapon/component deny-list.
 
     def test_furniture_published_envelopes_openings_and_contacts(self):
         # Published dimensions, independently converted from inches.

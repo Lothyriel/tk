@@ -704,9 +704,9 @@ fn configured_visual_baseline_bindings_preserve_native_geometry_and_contacts() {
             }
         }
     }
-    // Six assets shared by both perspectives: refined rifle 22 near surfaces
+    // Six assets shared by both perspectives: refined rifle 23 near surfaces
     // plus one distinct far surface, two magazine surfaces, ten other baseline
     // surfaces and three shared arm/palm meshes.
     assert_eq!(app.world().resource::<VoxelCache>().assets.len(), 6);
-    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 38);
+    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 39);
 }

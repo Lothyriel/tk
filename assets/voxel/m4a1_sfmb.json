@@ -1,0 +1,41 @@
+{
+  "version": 1, "id": "m4a1_sfmb", "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK exterior of SureFire SFMB-556-1/2-28. F: 2.6 inch length, SOCOM Fast-Attach, https://www.surefire.com/socom-muzzle-brake/ . V: twin lateral ports, open outlet, rear collar and indexing band from manufacturer SFMB-556-1-2-28-BK-isoL image. G: cuboid simplification, unmodeled internals and material response. Root is rear mounting shoulder; suppressor rear aligns here for the selected approximate added-length reference.",
+  "materials": [
+    {"id": "steel", "surface": "metal", "color": [0.095, 0.105, 0.115, 1], "roughness": 0.52, "metallic": 0.70}
+  ],
+  "parts": [{
+    "id": "muzzle_device", "parent": null, "movable": false,
+    "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+    "boxes": [
+      {"min": [-0.011, -0.007, -0.022], "max": [-0.007, 0.007, 0], "material": "steel"},
+      {"min": [0.007, -0.007, -0.022], "max": [0.011, 0.007, 0], "material": "steel"},
+      {"min": [-0.007, 0.007, -0.022], "max": [0.007, 0.011, 0], "material": "steel"},
+      {"min": [-0.007, -0.011, -0.022], "max": [0.007, -0.007, 0], "material": "steel"},
+      {"min": [-0.012, -0.008, -0.005], "max": [-0.011, 0.008, -0.002], "material": "steel"},
+      {"min": [0.011, -0.008, -0.005], "max": [0.012, 0.008, -0.002], "material": "steel"},
+      {"min": [-0.008, 0.011, -0.005], "max": [0.008, 0.012, -0.002], "material": "steel"},
+      {"min": [-0.008, -0.012, -0.005], "max": [0.008, -0.011, -0.002], "material": "steel"},
+      {"min": [-0.0115, -0.007, -0.025], "max": [-0.007, 0.007, -0.023], "material": "steel"},
+      {"min": [0.007, -0.007, -0.025], "max": [0.0115, 0.007, -0.023], "material": "steel"},
+      {"min": [-0.007, 0.007, -0.025], "max": [0.007, 0.0115, -0.023], "material": "steel"},
+      {"min": [-0.007, -0.0115, -0.025], "max": [0.007, -0.007, -0.023], "material": "steel"},
+      {"min": [-0.008, -0.010, -0.06604], "max": [0.008, -0.005, -0.020], "material": "steel"},
+      {"min": [-0.008, 0.005, -0.06604], "max": [0.008, 0.010, -0.033], "material": "steel"},
+      {"min": [-0.008, 0.005, -0.029], "max": [0.008, 0.010, -0.020], "material": "steel"},
+      {"min": [-0.008, 0.005, -0.033], "max": [-0.003, 0.010, -0.029], "material": "steel"},
+      {"min": [0.003, 0.005, -0.033], "max": [0.008, 0.010, -0.029], "material": "steel"},
+      {"min": [-0.010, -0.005, -0.035], "max": [-0.004, 0.005, -0.020], "material": "steel"},
+      {"min": [0.004, -0.005, -0.035], "max": [0.010, 0.005, -0.020], "material": "steel"},
+      {"min": [-0.010, -0.005, -0.050], "max": [-0.004, 0.005, -0.046], "material": "steel"},
+      {"min": [0.004, -0.005, -0.050], "max": [0.010, 0.005, -0.046], "material": "steel"},
+      {"min": [-0.010, -0.005, -0.06604], "max": [-0.004, 0.005, -0.062], "material": "steel"},
+      {"min": [0.004, -0.005, -0.06604], "max": [0.010, 0.005, -0.062], "material": "steel"}
+    ]
+  }],
+  "sockets": [
+    {"id": "muzzle_device.exit", "part": "muzzle_device", "pose": {"translation": [0, 0, -0.06604], "rotation": [0, 0, 0, 1]}},
+    {"id": "suppressor.mount", "part": "muzzle_device", "pose": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]}}
+  ]
+}
