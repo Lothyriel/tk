@@ -38,7 +38,7 @@ Failure/ordering: stop at the first failed command and return its exit code; nev
 
 **Acceptance Criteria**:
 1. The repository SHALL contain all 18 installed TLC Markdown/Python source files, source attribution, upstream revision and licensing, excluding personal installation metadata and caches (DEV-01).
-2. WHEN a contributor follows AGENTS.md or CONTRIBUTING.md THEN the documented workflow SHALL use project-local validators, proportional specs, atomic English Conventional Commits and independent final verification (DEV-02).
+2. WHEN a contributor follows AGENTS.md or CONTRIBUTING.md THEN the documented workflow SHALL use an AGENTS.md of at most 80 lines and a short tk-workflow router with specialized tk-verification/tk-contribution/game-state skills around the unchanged TLC snapshot, retaining architectural/safety rules, local validators, proportional specs, atomic English Conventional Commits and independent final verification (DEV-02).
 3. WHEN verify.py runs without options THEN it SHALL run tooling tests and common/server Cargo tests, without launching a client, rendered harness or recorder (DEV-03).
 4. WHEN full mode is selected THEN the verifier SHALL run tooling tests, fmt check, workspace check, workspace Clippy with warnings denied and workspace tests, without launching an application (DEV-04).
 5. WHEN docs mode is selected THEN the verifier SHALL check the diff and tooling tests without invoking Cargo; WHEN a feature is selected THEN it SHALL also validate its spec and its tasks if present (DEV-05).
@@ -62,7 +62,7 @@ Failure/ordering: stop at the first failed command and return its exit code; nev
 | Requirement ID | Story | Phase | Status |
 | --- | --- | --- | --- |
 | DEV-01 | P1 | T1 | Verified |
-| DEV-02 | P1 | T3 | Pending |
+| DEV-02 | P1 | T3 | Verified |
 | DEV-03 | P1 | T2 | Verified |
 | DEV-04 | P1 | T2 | Verified |
 | DEV-05 | P1 | T2 | Verified |

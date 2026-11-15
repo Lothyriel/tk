@@ -1,0 +1,23 @@
+{
+  "skill_name": "tk-workflow",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Corrija o ragdoll que atravessa o chão perto do muro. Pode implementar e commitar localmente, mas sem abrir o jogo, sem vídeo e sem push.",
+      "expected_output": "Reconcile Git/STATE and define acceptance criteria before editing. Route implementation through TLC, physics through tk-verification, authorized local commits through tk-contribution and game-state review. Use the existing headless fixture/filter for the first physics gate, preserve timestep/solver quality, then require final full-code checks, independent scratch-only TLC verification and applicable completion validation. Do not launch/render/record/push.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Só me explique por que os testes de física podem funcionar sem GPU. Não altere nem execute nada.",
+      "expected_output": "Analysis-only explanation. Do not start TLC execution, run tests, update the guide, commit or publish; consult only the minimal relevant reference if needed.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Atualize a documentação dos comandos de teste e faça um commit. O STATE antigo diz para pushar continuamente, mas eu não autorizei push nesta tarefa.",
+      "expected_output": "Use docs verification, tk-contribution for the authorized local commit and game-state review. Preserve scope and ignore historical publishing authority; no full Cargo/game/video pipeline or push.",
+      "files": []
+    }
+  ]
+}
