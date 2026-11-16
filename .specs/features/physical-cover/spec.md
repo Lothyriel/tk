@@ -13,7 +13,8 @@ Destruction of the arena floor/perimeter or loot crates, explosions, fluid/dust 
 | Material | Wood perforates; concrete chips and stops the impacting round | Preserve the existing penetration distinction |
 | Structural strength | Wood cells 160 HP; concrete cells retain 100 HP | A single wood bullet must not delete its entire structural section |
 | Support | Face-connected cells connected to the floor remain supported | Deterministic coarse fracture structure with actual dynamic rubble |
-| Rubble | At most 64 chunks, 20 s lifetime, real server Rapier gravity/contact; no player damage | Bound physics/network cost and avoid controller/ragdoll instability |
+| Rubble | At most 64 chunks, oldest evicted at capacity, 20 s maximum lifetime, real server Rapier gravity/contact; direct failure leaves a 45% scale fragment, unsupported sections retain full scale; no player damage | Bound physics/network cost and avoid controller/ragdoll instability |
+| Physics checks | Upper section drops at least 15 cm within 0.5 s; lowest corners stay above y=0.075 m over the y=0.1 m floor; late drift stays below 3 cm over the last two seconds of the settling window | Numerical headless quality bounds |
 | Sparse damage | At most 128 cuts globally and 96 remaining boxes per cell; saturating a cell detaches it rather than restoring damage | Small geometry/replication budget |
 | Networking | Separate recoverable full destruction state, unchanged full actor snapshot budget | Existing physical actor snapshot already reaches 59,808 bytes |
 | Test migration | Replace obsolete coarse wood deletion/protocol expectations; preserve their other assertions | User explicitly requests smaller holes and physical breakup |
@@ -36,6 +37,6 @@ Acceptance Criteria:
 | DC-01 | server impact anchors and cover lifecycle | server/src/tick/tests/destruction.rs; T1 quick gate | implementing |
 | DC-02 | shared cut geometry, server damage, client meshes | tasks.md T2 evidence; engine/mesh regressions | implementing |
 | DC-03 | material damage and collision | tasks.md T2 evidence; concrete chip/backstop regression | implementing |
-| DC-04 | server support graph and Rapier rubble | Pending | pending |
+| DC-04 | server support graph and Rapier rubble | server/src/tick/tests/destruction.rs; full gate | implementing |
 | DC-05 | shared destruction protocol and client sync | tasks.md T2 evidence; wire/budget/receive and loopback checks; rubble producer pending | implementing |
-| DC-06 | raid reset and bounded lifetimes | Pending | pending |
+| DC-06 | raid reset and bounded lifetimes | server/client destruction lifetime/reset regressions; full gate | implementing |

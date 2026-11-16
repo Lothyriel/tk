@@ -70,6 +70,7 @@ fn main() {
                 cell: n as u16,
                 position: [1.0, 0.4, 2.0],
                 rotation: Quat::IDENTITY.to_array(),
+                scale: 1.0,
             })
             .collect(),
     };

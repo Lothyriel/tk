@@ -18,7 +18,7 @@ Derived from AGENTS.md and existing common map/data, server engine fixture and c
 | --- | --- | --- |
 | Quick | Focused iteration | python scripts/verify.py --package server --filter destruction |
 | Full | Integration unit | cargo test --workspace -j 4 -- --test-threads=1 |
-| Build | Final delivery | python scripts/verify.py --mode full --feature physical-cover |
+| Build | Final delivery | python scripts/verify.py --mode full |
 
 The known preexisting Clippy blocker must be reported if still present, never hidden by a weakened lint/test command. Supplemental tests complete coverage when the entry point stops before tests.
 
@@ -64,9 +64,9 @@ T1 -> T2 -> T3
 **Tests**: unit/integration
 **Gate**: Build
 **Done when**:
-- [ ] DC-04 supported/unsupported separation, stable IDs, falling/floor contact/late drift and controller exclusions pass.
-- [ ] DC-05 rubble late-arrival/sequence assertions and DC-06 count/lifetime/reset assertions pass.
-- [ ] Full gate result and unexecuted rendered/transport criteria are recorded honestly.
+- [x] DC-04 supported/unsupported separation, stable IDs, falling/floor contact/late drift and controller exclusions pass.
+- [x] DC-05 rubble late-arrival/sequence assertions and DC-06 count/lifetime/reset assertions pass.
+- [x] Full gate result and unexecuted rendered/transport criteria are recorded honestly.
 **Commit**: feat(destruction): simulate and replicate unsupported cover rubble
 
 ## Cross-checks
@@ -101,3 +101,23 @@ Concurrent workspace note: while T1 was being staged, the 60 Hz session committe
 | DC-05 state and budget | common/src/map/destruction.rs:253 `<16_000` and lines255-260 exact wire fields; client/src/sync/cover.rs:76-87 exact accepted phase/mask/cuts/rubble despite old/duplicate sequences | DC-05 |
 
 Reverse mapping: all three shared geometry/wire tests, two new engine tests, client mesh and client receive tests map to DC-02/03/05; migrated coarse tests retain ammo/penetration/controller/reset/late-arrival assertions. No unrelated coverage was removed. T2 workspace gate: 151 Rust tests passed (51 client,47 common,53 server), zero ignored. A focused real loopback UDP example also delivered authoritative input and the maximum 5,688-byte cover message under protocol9. Existing worst physical actor snapshot remained below60,000 bytes. Logs: `/tmp/tk-destruction-t2-workspace.log`, `/tmp/tk-destruction-udp.log`. Adequacy: all T2 outcomes have exact independent values and sufficient meaningful assertions.
+
+## T3 engineering result
+
+The final full gate passed 286 Rust tests (94 client,119 common,73 server) and41 Python tooling tests, including strict Clippy, with no test changes that weaken outcomes. The preexisting opt-in real-UDP test stays separately invoked; it is the sole ignored default case. New engine cases exercise 32 unsupported cells, stable IDs, actual falling, floor-corner bounds, late drift, controller exclusion, maximum64 rubble,20-second expiry, shared producer poses/rotations/scales after lost updates, reset and sparse-geometry saturation. The new client fixture proves exact first pose/scale, gradual motion, identity across debrief, and mesh removal on lobby/expiry. The old static-layer fixture explicitly removes rubble to isolate its unchanged next-layer assertion; a new test separately proves concrete rubble stops that shot until cleared.
+
+No new rendered review, video or artistic acceptance is asserted. The remaining independent closing review audits the exact AC/line mapping and isolated discrimination evidence. This historical artifact retains task traceability through the integration; it does not recreate the removed STATE workflow.
+
+| T3 criterion | Exact assertion evidence | Spec-defined outcome | Reverse mapping |
+| --- | --- | --- | --- |
+| Support and real falling | server/src/tick/tests/destruction.rs:159 `assert_eq!(pieces.len(), 32)`; line173 asserts upper y < start_y-0.15 after64 ticks; lines165/169 assert other panel health160 and enabled collider | 32 released, >15 cm fall within0.5 s, neighboring panel static | DC-04 |
+| Contact, identity and settling | server/src/tick/tests/destruction.rs:196 checks unchanged entity per cell; line206 asserts corner y>0.075; line220 asserts maximum_late_drift<0.03 | Stable IDs, no floor escape, <3 cm late drift | DC-04 |
+| Controller support | server/src/tick/tests/destruction.rs:197/198 assert group4 and no group3 filter; line237 asserts root height in0.95..1.08 after placing player above the settled pile | Debris does not raise the controller | DC-04 |
+| Bounds and expiry | server/src/tick/tests/destruction.rs:259 asserts64; line268 asserts <=64 each tick; line276 asserts0 after2561 ticks; line283 asserts176 cells remain removed | At most64; expire by20s, no regrowth | DC-06 |
+| Replicated actual pose | server/src/tick/tests/destruction.rs:340/341/342 assert exact position/rotation/scale versus current ECS bodies after discarded packets; line347 requires at least3 recovered full updates | Matching authoritative full state after loss/late arrival | DC-05 |
+| Reset | server/src/tick/tests/destruction.rs:355 requires0 rubble; lines362/363 require empty cuts/removals; lines374-376 require max health, released=false and enabled colliders | Full original cover reset | DC-06 |
+| Client state and cleanup | client/src/render/destruction.rs:260-262 assert literal pose/scale; line278 requires x strictly between4 and6; lines282/291 preserve Entity; lines307/348 require zero owned mesh assets after removal | Identity, gradual presentation, correct scale and no leaked mesh | DC-05/DC-06 |
+| Rubble ballistic support | server/src/tick/tests/destruction.rs:389 neighbor health100 and line393 projectile count0 while rubble remains; line413 neighbor health60 after explicit rubble removal | Real concrete fragment remains bullet-stopping, no floating mark | DC-03/DC-04 |
+| Sparse saturation | server/src/tick/tests/destruction.rs:470 health0; line477 solids<=96; line501 unchanged128 cuts and502 next cell removed | Bounded geometry fractures without restoring prior holes | DC-02/DC-06 bounds |
+
+Every new T3 test maps to the criteria above, and every T3 outcome has independent literal/state assertions. The actual mesh-triangle test and serialized producer comparisons avoid a shared-helper-only oracle. Final real UDP gates also passed: protocol15 input plus5,944-byte maximum cover state, and the existing solo/dual/late-join weapon test without loss and with20% loss. Logs: `/tmp/tk-rubble-cover-udp.log`, `/tmp/tk-rubble-weapon-udp.log`. No existing deadline or assertion was weakened. T3 is implemented and verified; independent final review follows its commit.

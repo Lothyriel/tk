@@ -25,6 +25,7 @@ pub struct RubblePose {
     pub cell: u16,
     pub position: [f32; 3],
     pub rotation: [f32; 4],
+    pub scale: f32,
 }
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
@@ -246,6 +247,7 @@ mod tests {
                     cell: n as u16,
                     position: [1.0, 0.2, 3.0],
                     rotation: Quat::IDENTITY.to_array(),
+                    scale: 1.0,
                 })
                 .collect(),
         };

@@ -25,6 +25,7 @@ impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Time::<Fixed>::from_hz(128.0))
             .init_resource::<WorldState>()
+            .init_resource::<destruction::Structure>()
             .init_resource::<RaidState>()
             .init_resource::<crate::kit_fixture::KitFixture>()
             .init_resource::<replication::Replication>()
@@ -59,10 +60,12 @@ impl bevy::prelude::Plugin for Plugin {
                     locomotion::advance,
                     ragdoll::capture,
                     projectiles_tick,
+                    destruction::release,
                     physical::spawn_dead,
                     objectives_tick,
                     sync_ground_state,
                     physical::expire_pieces,
+                    destruction::expire,
                     destruction::broadcast,
                     send_world_snapshot,
                 )
@@ -81,6 +84,7 @@ struct WorldState {
     cover_refresh: f32,
     cover_sequence: u64,
     cover_dirty: bool,
+    support_dirty: bool,
     next_projectile_id: u64,
     // Only 256 marks are retained, so wrapping 32-bit IDs stay unique in a snapshot.
     next_mark_id: u32,
@@ -150,6 +154,7 @@ struct BarrierVoxel {
     health: f32,
     max_health: f32,
     shape: Collider,
+    released: bool,
 }
 
 impl BarrierVoxel {
@@ -159,6 +164,7 @@ impl BarrierVoxel {
             health: cell.health(),
             max_health: cell.health(),
             shape: Collider::cuboid(cell.half_size[0], cell.half_size[1], cell.half_size[2]),
+            released: false,
         }
     }
 }

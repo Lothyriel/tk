@@ -2554,7 +2554,18 @@ fn voxel_barriers_damage_neighbors_concrete_stopping_and_raid_reset() {
         vec![cell.id]
     );
     steps(&mut app, 2);
-    // A fresh shot crosses the removed cell and hits the next depth layer.
+    // Isolate the remaining static layer. Physical rubble now blocks shots too;
+    // destruction_physical_rubble_stops_rounds checks that path separately.
+    let rubble: Vec<_> = app
+        .world_mut()
+        .query_filtered::<Entity, With<super::destruction::Rubble>>()
+        .iter(app.world())
+        .collect();
+    for piece in rubble {
+        app.world_mut().despawn(piece);
+    }
+    steps(&mut app, 2);
+    // A fresh shot crosses the removed static cell and hits the next depth layer.
     voxel_shot(&mut app, owner, &cell, 40.0);
     steps(&mut app, 2);
     assert_eq!(

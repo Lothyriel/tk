@@ -10,6 +10,22 @@ pub(crate) struct State {
     pub snapshot: Option<CoverSnapshot>,
 }
 
+impl State {
+    pub(crate) fn current(&self, raid: &common::raid::RaidState) -> Option<&CoverSnapshot> {
+        self.snapshot.as_ref().filter(|snapshot| {
+            snapshot.raid_id == raid.raid_id
+                && (snapshot.phase == raid.phase
+                    || matches!(
+                        (snapshot.phase, raid.phase),
+                        (
+                            common::raid::RaidPhase::Active,
+                            common::raid::RaidPhase::Debrief
+                        )
+                    ))
+        })
+    }
+}
+
 pub(super) fn receive(mut client: ResMut<RenetClient>, mut state: ResMut<State>) {
     while let Some(bytes) = client.receive_message(destruction::CHANNEL) {
         let Ok(snapshot) = data::try_decode::<CoverSnapshot>(&bytes) else {
@@ -63,6 +79,7 @@ mod tests {
                     cell,
                     position: [1.0, 0.4, 2.0],
                     rotation: Quat::IDENTITY.to_array(),
+                    scale: 1.0,
                 }],
             };
             server.broadcast_message(destruction::CHANNEL, data::encode(&snapshot));
@@ -89,7 +106,8 @@ mod tests {
                 vec![RubblePose {
                     cell: expected,
                     position: [1.0, 0.4, 2.0],
-                    rotation: Quat::IDENTITY.to_array()
+                    rotation: Quat::IDENTITY.to_array(),
+                    scale: 1.0,
                 }]
             );
         }

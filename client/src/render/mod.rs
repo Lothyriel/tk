@@ -115,11 +115,9 @@ fn sync_barrier_visuals(
     for (cell, mut visibility) in &mut cells {
         let removed = cover
             .as_ref()
-            .and_then(|state| state.snapshot.as_ref())
+            .and_then(|state| state.current(&session.raid))
             .is_some_and(|state| {
-                state.raid_id == session.raid.raid_id
-                    && state.phase == session.raid.phase
-                    && state.removed[cell.0 as usize / 8] & (1 << (cell.0 as usize % 8)) != 0
+                state.removed[cell.0 as usize / 8] & (1 << (cell.0 as usize % 8)) != 0
             });
         *visibility = if session.destroyed_cells.contains(&cell.0) || removed {
             Visibility::Hidden

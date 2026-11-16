@@ -8,7 +8,9 @@ input/connectivity channels remain independent.
 Shots additionally use server-to-client reliable ordered channel 4 (2 MiB,
 100 ms retransmission). This channel does not block configuration or input.
 
-Sparse cover state uses its own server-to-client unreliable channel 5. Control
+Sparse cover state uses its own server-to-client unreliable channel 5, including
+remaining cuts and rubble position/orientation/scale. Moving rubble sends up to
+30 updates/s; quiet cover uses a half-second full-state refresh for loss/late join. Control
 replies and shot commits are scheduled before replaceable cover/world updates;
 client configuration commands are scheduled before an input backlog. The combined
 per-tick transport budget is 80,000 bytes, while actor snapshots remain below

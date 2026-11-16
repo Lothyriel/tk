@@ -254,6 +254,7 @@ pub(super) struct ProjectileEnvironment<'w, 's> {
         Without<Projectile>,
     >,
     physics_pieces: Query<'w, 's, (Entity, &'static mut super::physical::PhysicsPiece)>,
+    rubble: Query<'w, 's, (), With<super::destruction::Rubble>>,
     voxels: Query<
         'w,
         's,
@@ -295,6 +296,7 @@ pub(super) fn projectiles_tick(
     let ProjectileEnvironment {
         surfaces,
         mut physics_pieces,
+        rubble,
         mut voxels,
     } = environment;
     let Ok(context) = context.single() else {
@@ -490,7 +492,7 @@ pub(super) fn projectiles_tick(
                     );
                 }
                 let cell_id = voxels.get(hit_entity).ok().map(|(_, cell, _)| cell.id);
-                if cell_id.is_none() {
+                if cell_id.is_none() && !rubble.contains(hit_entity) {
                     world_state.impact_on_cell(
                         hit.point,
                         hit.normal,
@@ -542,7 +544,7 @@ pub(super) fn projectiles_tick(
                 projectile.damage *= energy / projectile.penetration;
                 projectile.penetration = energy;
                 projectile.penetrated.push(hit_entity);
-                if cell_id.is_none() {
+                if cell_id.is_none() && !rubble.contains(hit_entity) {
                     world_state.impact_on_cell(
                         exit.point,
                         exit.normal,

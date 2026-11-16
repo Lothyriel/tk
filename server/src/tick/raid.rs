@@ -9,6 +9,7 @@ pub(super) struct RaidResetEntities<'w, 's> {
     bots: Query<'w, 's, Entity, With<Bot>>,
     projectiles: Query<'w, 's, Entity, With<Projectile>>,
     pieces: Query<'w, 's, Entity, With<super::physical::PhysicsPiece>>,
+    rubble: Query<'w, 's, Entity, With<super::destruction::Rubble>>,
     poses: Query<'w, 's, (Entity, &'static mut common::humanoid::PoseState)>,
     voxels: Query<'w, 's, (Entity, &'static mut super::BarrierVoxel)>,
 }
@@ -39,6 +40,7 @@ pub(super) fn lobby_tick(
         bots,
         projectiles,
         pieces,
+        rubble,
         mut poses,
         mut voxels,
     } = reset_entities;
@@ -138,6 +140,9 @@ pub(super) fn lobby_tick(
         for entity in &pieces {
             commands.entity(entity).despawn();
         }
+        for entity in &rubble {
+            commands.entity(entity).despawn();
+        }
         for (entity, mut pose) in &mut poses {
             *pose = default();
             commands.entity(entity).remove::<super::physical::Corpsed>();
@@ -162,6 +167,7 @@ pub(super) fn lobby_tick(
         world_state.destroyed_cells.clear();
         world_state.cover_cuts.clear();
         world_state.cover_dirty = true;
+        world_state.support_dirty = false;
         world_state.impact_marks.clear();
         world_state.impact_cells.clear();
         world_state.fired_projectiles.clear();
