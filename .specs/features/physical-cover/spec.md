@@ -16,7 +16,7 @@ Destruction of the arena floor/perimeter or loot crates, explosions, fluid/dust 
 | Rubble | At most 64 chunks, oldest evicted at capacity, 20 s maximum lifetime, real server Rapier gravity/contact; direct failure leaves a 45% scale fragment, unsupported sections retain full scale; no player damage | Bound physics/network cost and avoid controller/ragdoll instability |
 | Physics checks | Upper section drops at least 15 cm within 0.5 s; lowest corners stay above y=0.075 m over the y=0.1 m floor; late drift stays below 3 cm over the last two seconds of the settling window | Numerical headless quality bounds |
 | Sparse damage | At most 128 cuts globally and 96 remaining boxes per cell; saturating a cell detaches it rather than restoring damage | Small geometry/replication budget |
-| Networking | Separate recoverable full destruction state, unchanged full actor snapshot budget | Existing physical actor snapshot already reaches 59,808 bytes |
+| Networking | Separate recoverable full destruction state, unchanged full actor snapshot budget | Current configured-weapon actor projection reaches 59,960 bytes; cover state is separate |
 | Test migration | Replace obsolete coarse wood deletion/protocol expectations; preserve their other assertions | User explicitly requests smaller holes and physical breakup |
 Open questions: none. Art and visible motion require a later rendered review.
 
@@ -34,9 +34,11 @@ Acceptance Criteria:
 ## Requirement Traceability
 | ID | Implementation | Evidence | Status |
 | --- | --- | --- | --- |
-| DC-01 | server impact anchors and cover lifecycle | server/src/tick/tests/destruction.rs; T1 quick gate | implementing |
-| DC-02 | shared cut geometry, server damage, client meshes | tasks.md T2 evidence; engine/mesh regressions | implementing |
-| DC-03 | material damage and collision | tasks.md T2 evidence; concrete chip/backstop regression | implementing |
-| DC-04 | server support graph and Rapier rubble | server/src/tick/tests/destruction.rs; full gate | implementing |
-| DC-05 | shared destruction protocol and client sync | tasks.md T2 evidence; wire/budget/receive and loopback checks; rubble producer pending | implementing |
-| DC-06 | raid reset and bounded lifetimes | server/client destruction lifetime/reset regressions; full gate | implementing |
+| DC-01 | server impact anchors and cover lifecycle | server/src/tick/tests/destruction.rs; T1 quick gate | verified |
+| DC-02 | shared cut geometry, server damage, client meshes | tasks.md T2 evidence; engine/mesh regressions | verified |
+| DC-03 | material damage and collision | tasks.md T2 evidence; concrete chip/backstop regression | verified |
+| DC-04 | server support graph and Rapier rubble | server/src/tick/tests/destruction.rs; full gate | verified |
+| DC-05 | shared destruction protocol and client sync | tasks.md T2 evidence; wire/budget/receive and loopback checks; rubble producer pending | verified |
+| DC-06 | raid reset and bounded lifetimes | server/client destruction lifetime/reset regressions; full gate | verified |
+
+Independent engineering acceptance: PASS for DC-01 through DC-06; see [validation.md](validation.md). The final full gate passes, including strict Clippy. Rendered/artistic acceptance is still unverified and is not included in this verdict.
