@@ -201,7 +201,7 @@ mod tests {
             Vec3::Z,
             WeaponKind::Rifle,
         );
-        let pieces = solids(&cell, &[cut.clone()]);
+        let pieces = solids(&cell, std::slice::from_ref(&cut));
         let shape = collider(&pieces);
         let hit = shape
             .cast_ray(

@@ -254,7 +254,12 @@ pub(super) struct ProjectileEnvironment<'w, 's> {
         Without<Projectile>,
     >,
     physics_pieces: Query<'w, 's, (Entity, &'static mut super::physical::PhysicsPiece)>,
-    voxels: Query<'w, 's, (Entity, &'static mut super::BarrierVoxel, &'static Transform), Without<Projectile>>,
+    voxels: Query<
+        'w,
+        's,
+        (Entity, &'static mut super::BarrierVoxel, &'static Transform),
+        Without<Projectile>,
+    >,
 }
 
 pub(super) fn projectiles_tick(

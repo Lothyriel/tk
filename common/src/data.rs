@@ -36,6 +36,26 @@ pub fn renet_config() -> ConnectionConfig {
     // Independent bounded cover state must fit beside the existing <60 kB actor
     // snapshot without starving either channel in the worst physical scene.
     config.available_bytes_per_tick = 80_000;
+    // Send control and shot commits ahead of replaceable presentation state.
+    // The additional cover queue and 60 Hz snapshots must not delay reliable
+    // configuration replies under packet loss.
+    config
+        .server_channels_config
+        .sort_by_key(|channel| match channel.channel_id {
+            2 => 0,
+            crate::replication::CONFIGURATION_CHANNEL => 1,
+            crate::replication::shots::SHOT_CHANNEL => 2,
+            crate::map::destruction::CHANNEL => 3,
+            0 => 4,
+            _ => 5,
+        });
+    config
+        .client_channels_config
+        .sort_by_key(|channel| match channel.channel_id {
+            crate::replication::CONFIGURATION_CHANNEL => 0,
+            2 => 1,
+            _ => 2,
+        });
     config
 }
 
@@ -70,6 +90,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_replies_arrive_under_snapshot_cover_and_input_queue_pressure() {
+        use bevy_renet2::prelude::{DefaultChannel, RenetClient, RenetServer};
+        let mut config = renet_config();
+        config.available_bytes_per_tick = 1024;
+        let mut server = RenetServer::new(config.clone());
+        let mut client = RenetClient::new(config, false);
+        server.add_connection(7, false);
+        client.set_connected();
+        server.send_message(7, DefaultChannel::Unreliable, vec![0; 4096]);
+        server.send_message(7, crate::map::destruction::CHANNEL, vec![0; 4096]);
+        server.send_message(
+            7,
+            crate::replication::CONFIGURATION_CHANNEL,
+            encode(&77_u64),
+        );
+        for packet in server.get_packets_to_send(7).unwrap() {
+            client.process_packet(packet);
+        }
+        let reply = client
+            .receive_message(crate::replication::CONFIGURATION_CHANNEL)
+            .expect("reliable control reply must arrive in the first budgeted update");
+        assert_eq!(decode::<u64>(&reply), 77);
+
+        client.send_message(DefaultChannel::ReliableOrdered, vec![0; 4096]);
+        client.send_message(crate::replication::CONFIGURATION_CHANNEL, encode(&88_u64));
+        for packet in client.get_packets_to_send() {
+            server.process_packet_from(packet, 7).unwrap();
+        }
+        let request = server
+            .receive_message(7, crate::replication::CONFIGURATION_CHANNEL)
+            .expect("configuration request must not wait behind the input backlog");
+        assert_eq!(decode::<u64>(&request), 88);
+    }
 
     #[test]
     fn network_archive_decodes_from_an_unaligned_transport_slice() {

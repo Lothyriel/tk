@@ -1,12 +1,18 @@
 # Weapon configuration replication
 
-Protocol 11 integrates `common::replication` with both endpoints. Rebuild client
+Protocol 15 retains `common::replication` and the current mechanical/reload contracts at both endpoints. Rebuild client
 and server together. Weapon configuration uses reliable ordered channel 3 in
 each direction, with a 2 MiB queue and 100 ms retransmission. Existing continuous
 input/connectivity channels remain independent.
 
 Shots additionally use server-to-client reliable ordered channel 4 (2 MiB,
 100 ms retransmission). This channel does not block configuration or input.
+
+Sparse cover state uses its own server-to-client unreliable channel 5. Control
+replies and shot commits are scheduled before replaceable cover/world updates;
+client configuration commands are scheduled before an input backlog. The combined
+per-tick transport budget is 80,000 bytes, while actor snapshots remain below
+60,000 bytes and cover messages below 16,000 bytes.
 
 ## Identity and bounded publication
 
