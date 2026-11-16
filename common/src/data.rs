@@ -29,6 +29,13 @@ pub fn renet_config() -> ConnectionConfig {
             resend_time: std::time::Duration::from_millis(100),
         },
     });
+    let mut destruction = config.server_channels_config[0].clone();
+    destruction.channel_id = crate::map::destruction::CHANNEL;
+    destruction.max_memory_usage_bytes = 512 * 1024;
+    config.server_channels_config.insert(0, destruction);
+    // Independent bounded cover state must fit beside the existing <60 kB actor
+    // snapshot without starving either channel in the worst physical scene.
+    config.available_bytes_per_tick = 80_000;
     config
 }
 

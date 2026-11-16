@@ -34,8 +34,8 @@ Acceptance Criteria:
 | ID | Implementation | Evidence | Status |
 | --- | --- | --- | --- |
 | DC-01 | server impact anchors and cover lifecycle | server/src/tick/tests/destruction.rs; T1 quick gate | implementing |
-| DC-02 | shared cut geometry, server damage, client meshes | Pending | pending |
-| DC-03 | material damage and collision | Pending | pending |
+| DC-02 | shared cut geometry, server damage, client meshes | tasks.md T2 evidence; engine/mesh regressions | implementing |
+| DC-03 | material damage and collision | tasks.md T2 evidence; concrete chip/backstop regression | implementing |
 | DC-04 | server support graph and Rapier rubble | Pending | pending |
-| DC-05 | shared destruction protocol and client sync | Pending | pending |
+| DC-05 | shared destruction protocol and client sync | tasks.md T2 evidence; wire/budget/receive and loopback checks; rubble producer pending | implementing |
 | DC-06 | raid reset and bounded lifetimes | Pending | pending |

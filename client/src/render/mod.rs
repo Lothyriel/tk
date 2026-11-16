@@ -9,6 +9,7 @@ use common::{
 use common::{combat::SurfaceKind, map::*, raid::EXTRACTION_RADIUS};
 pub(crate) mod actors;
 mod blood;
+mod destruction;
 pub(crate) mod feedback;
 pub(crate) mod voxel;
 mod weapons;
@@ -20,6 +21,7 @@ impl bevy::prelude::Plugin for Plugin {
         app.init_resource::<ViewSettings>();
         app.add_plugins(actors::Plugin);
         app.add_plugins(blood::Plugin);
+        app.add_plugins(destruction::Plugin);
         app.add_plugins(feedback::Plugin);
         app.add_plugins((voxel::Plugin, voxel::debug::Plugin));
         let startup_systems = (
@@ -104,13 +106,22 @@ struct BarrierVisual(u16);
 
 fn sync_barrier_visuals(
     session: Res<ClientSession>,
+    cover: Option<Res<crate::sync::cover::State>>,
     mut cells: Query<(&BarrierVisual, &mut Visibility)>,
 ) {
-    if !session.is_changed() {
+    if !session.is_changed() && cover.as_ref().is_none_or(|state| !state.is_changed()) {
         return;
     }
     for (cell, mut visibility) in &mut cells {
-        *visibility = if session.destroyed_cells.contains(&cell.0) {
+        let removed = cover
+            .as_ref()
+            .and_then(|state| state.snapshot.as_ref())
+            .is_some_and(|state| {
+                state.raid_id == session.raid.raid_id
+                    && state.phase == session.raid.phase
+                    && state.removed[cell.0 as usize / 8] & (1 << (cell.0 as usize % 8)) != 0
+            });
+        *visibility = if session.destroyed_cells.contains(&cell.0) || removed {
             Visibility::Hidden
         } else {
             Visibility::Inherited

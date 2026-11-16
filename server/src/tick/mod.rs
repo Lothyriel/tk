@@ -6,6 +6,7 @@ use bevy_renet2::prelude::{DefaultChannel, RenetServer, ServerEvent};
 use common::{combat::*, raid::*, *};
 
 mod bots;
+mod destruction;
 mod live_body;
 mod locomotion;
 mod metrics;
@@ -62,6 +63,7 @@ impl bevy::prelude::Plugin for Plugin {
                     objectives_tick,
                     sync_ground_state,
                     physical::expire_pieces,
+                    destruction::broadcast,
                     send_world_snapshot,
                 )
                     .chain()
@@ -74,6 +76,11 @@ impl bevy::prelude::Plugin for Plugin {
 struct WorldState {
     destroyed_cells: Vec<u16>,
     impact_cells: std::collections::BTreeMap<u32, u16>,
+    cover_cuts: Vec<common::map::destruction::Cut>,
+    cover_elapsed: f32,
+    cover_refresh: f32,
+    cover_sequence: u64,
+    cover_dirty: bool,
     next_projectile_id: u64,
     // Only 256 marks are retained, so wrapping 32-bit IDs stay unique in a snapshot.
     next_mark_id: u32,
@@ -142,16 +149,24 @@ struct BarrierVoxel {
     id: u16,
     health: f32,
     max_health: f32,
+    shape: Collider,
+}
+
+impl BarrierVoxel {
+    fn new(cell: &common::map::BarrierCell) -> Self {
+        Self {
+            id: cell.id,
+            health: cell.health(),
+            max_health: cell.health(),
+            shape: Collider::cuboid(cell.half_size[0], cell.half_size[1], cell.half_size[2]),
+        }
+    }
 }
 
 fn spawn_world_colliders(mut commands: Commands) {
     for cell in common::map::barrier_cells() {
         commands.spawn((
-            BarrierVoxel {
-                id: cell.id,
-                health: cell.health(),
-                max_health: cell.health(),
-            },
+            BarrierVoxel::new(&cell),
             cell.surface,
             Collider::cuboid(cell.half_size[0], cell.half_size[1], cell.half_size[2]),
             Transform::from_translation(Vec3::from(cell.center)),

@@ -1,6 +1,8 @@
 //! One map definition for authoritative colliders and client presentation.
 use crate::combat::SurfaceKind;
 
+pub mod destruction;
+
 pub const SPAWN_CENTER: [f32; 3] = [0.0, 1.05, 10.0];
 pub const EXTRACTION_CENTER: [f32; 3] = [0.0, 0.12, 15.0];
 pub const LOOT_POSITIONS: [[f32; 3]; 3] =
@@ -99,7 +101,7 @@ pub struct BarrierCell {
 impl BarrierCell {
     pub fn health(&self) -> f32 {
         match self.surface {
-            SurfaceKind::Wood => 20.0,
+            SurfaceKind::Wood => 160.0,
             SurfaceKind::Concrete => 100.0,
         }
     }

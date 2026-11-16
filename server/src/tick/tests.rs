@@ -2635,11 +2635,15 @@ fn voxel_barriers_wood_penetration_same_tick_holes_and_movement() {
         energies[1], 30.0,
         "second shot in same tick must cross the hole freely"
     );
-    assert_eq!(app.world().get::<BarrierVoxel>(entity).unwrap().health, 0.0);
+    assert_eq!(
+        app.world().get::<BarrierVoxel>(entity).unwrap().health,
+        130.0
+    );
     assert_eq!(
         app.world().resource::<WorldState>().destroyed_cells,
-        vec![cell.id]
+        Vec::<u16>::new()
     );
+    assert_eq!(app.world().resource::<WorldState>().cover_cuts.len(), 1);
     // Existing solid panel blocks the production character controller.
     app.world_mut()
         .get_mut::<Transform>(owner)
@@ -2651,8 +2655,10 @@ fn voxel_barriers_wood_penetration_same_tick_holes_and_movement() {
         .forward = true;
     held_steps(&mut app, owner, 70);
     assert!(app.world().get::<Transform>(owner).unwrap().translation.z > -4.6);
-    for cell in &cells[1..] {
-        voxel_shot(&mut app, owner, cell, 30.0);
+    for cell in &cells {
+        let mut beside_bore = cell.clone();
+        beside_bore.center[0] += 0.03;
+        voxel_shot(&mut app, owner, &beside_bore, 1000.0);
     }
     steps(&mut app, 3);
     assert_eq!(
@@ -2667,7 +2673,7 @@ fn voxel_barriers_wood_penetration_same_tick_holes_and_movement() {
 }
 
 #[test]
-fn voxel_barriers_normal_weapon_input_breaks_wood_with_one_round() {
+fn voxel_barriers_normal_weapon_input_perforates_wood_without_deleting_its_section() {
     let (mut app, owner, _) = physical_fixture();
     app.world_mut()
         .get_mut::<Transform>(owner)
@@ -2690,11 +2696,16 @@ fn voxel_barriers_normal_weapon_input_breaks_wood_with_one_round() {
         before - 1
     );
     let removed = &app.world().resource::<WorldState>().destroyed_cells;
-    assert_eq!(removed.len(), 1);
-    let id = removed[0];
+    assert!(removed.is_empty());
+    let cuts = &app.world().resource::<WorldState>().cover_cuts;
+    assert_eq!(cuts.len(), 1);
+    let id = cuts[0].cell;
     let entity = voxel_entity(&mut app, id);
-    assert_eq!(app.world().get::<BarrierVoxel>(entity).unwrap().health, 0.0);
-    assert!(app.world().get::<ColliderDisabled>(entity).is_some());
+    assert_eq!(
+        app.world().get::<BarrierVoxel>(entity).unwrap().health,
+        126.0
+    );
+    assert!(app.world().get::<ColliderDisabled>(entity).is_none());
 }
 
 #[test]
@@ -2718,7 +2729,7 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
         .resource_mut::<RenetServer>()
         .get_packets_to_send(999)
         .unwrap();
-    steps(&mut app, 5);
+    steps(&mut app, 70);
     {
         let mut server = app.world_mut().resource_mut::<RenetServer>();
         for packet in server.get_packets_to_send(999).unwrap() {
@@ -2731,7 +2742,14 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
     let snapshot = data::decode::<WorldSnapshot>(&bytes);
     assert_eq!(
         common::map::destroyed_ids(&snapshot.destroyed_cells),
-        vec![cell.id]
+        Vec::<u16>::new()
     );
-    assert_eq!(PROTOCOL_ID, 14);
+    let cover_bytes = peer
+        .receive_message(common::map::destruction::CHANNEL)
+        .expect("late-join cover refresh");
+    let cover = data::decode::<common::map::destruction::CoverSnapshot>(&cover_bytes);
+    assert_eq!(cover.cuts.len(), 1);
+    assert_eq!(cover.cuts[0].cell, cell.id);
+    assert_eq!(cover.raid_id, snapshot.raid.raid_id);
+    assert_eq!(PROTOCOL_ID, 15);
 }

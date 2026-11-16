@@ -254,7 +254,7 @@ pub(super) struct ProjectileEnvironment<'w, 's> {
         Without<Projectile>,
     >,
     physics_pieces: Query<'w, 's, (Entity, &'static mut super::physical::PhysicsPiece)>,
-    voxels: Query<'w, 's, &'static mut super::BarrierVoxel>,
+    voxels: Query<'w, 's, (Entity, &'static mut super::BarrierVoxel, &'static Transform), Without<Projectile>>,
 }
 
 pub(super) fn projectiles_tick(
@@ -324,7 +324,7 @@ pub(super) fn projectiles_tick(
                 }
                 let predicate = |hit_entity, _: &_| {
                     !projectile.penetrated.contains(&hit_entity)
-                        && !voxels.get(hit_entity).is_ok_and(|cell| cell.health <= 0.0)
+                        && voxels.get(hit_entity).is_err()
                         && players.get(hit_entity).is_err()
                         && physics_pieces.get(hit_entity).is_err()
                 };
@@ -332,8 +332,28 @@ pub(super) fn projectiles_tick(
                     .exclude_collider(projectile.owner_entity)
                     .exclude_sensors()
                     .predicate(&predicate);
-                let wall =
+                let mut wall =
                     context.cast_ray_and_get_normal(start, direction, remaining, true, filter);
+                // Use current sparse shapes, including holes carved by another
+                // projectile in this same tick before Rapier's next backend sync.
+                for (cell_entity, cell, cell_transform) in &voxels {
+                    if cell.health <= 0.0 || projectile.penetrated.contains(&cell_entity) {
+                        continue;
+                    }
+                    if let Some(hit) = cell.shape.cast_ray_and_get_normal(
+                        cell_transform.translation,
+                        cell_transform.rotation,
+                        start,
+                        direction,
+                        remaining,
+                        true,
+                    ) && wall
+                        .as_ref()
+                        .is_none_or(|(_, previous)| hit.time_of_impact < previous.time_of_impact)
+                    {
+                        wall = Some((cell_entity, hit));
+                    }
+                }
                 let max = wall.as_ref().map_or(remaining, |(_, h)| h.time_of_impact);
                 let mut nearest = None;
                 for (target, body, _, movement, t, p, pose, _, _, _, _, motion) in &players {
@@ -464,24 +484,34 @@ pub(super) fn projectiles_tick(
                         projectile.id, hit.time_of_impact, hit.point
                     );
                 }
-                let cell_id = voxels.get(hit_entity).ok().map(|cell| cell.id);
-                world_state.impact_on_cell(
-                    hit.point,
-                    hit.normal,
-                    impact_mark_size_mm(projectile.weapon),
-                    cell_id,
-                );
+                let cell_id = voxels.get(hit_entity).ok().map(|(_, cell, _)| cell.id);
+                if cell_id.is_none() {
+                    world_state.impact_on_cell(
+                        hit.point,
+                        hit.normal,
+                        impact_mark_size_mm(projectile.weapon),
+                        None,
+                    );
+                }
                 let Ok((surface, collider, surface_transform)) = surfaces.get(hit_entity) else {
                     stopped = true;
                     break;
                 };
-                if let Ok(mut voxel) = voxels.get_mut(hit_entity) {
-                    voxel.health = (voxel.health - projectile.damage).max(0.0);
-                    if voxel.health == 0.0 {
-                        world_state.destroyed_cells.push(voxel.id);
-                        world_state.remove_cell_marks(voxel.id);
-                        commands.entity(hit_entity).insert(ColliderDisabled);
-                    }
+                let collider = voxels
+                    .get(hit_entity)
+                    .map_or_else(|_| collider.clone(), |(_, cell, _)| cell.shape.clone());
+                if let Ok((_, mut voxel, _)) = voxels.get_mut(hit_entity) {
+                    super::destruction::damage(
+                        &mut commands,
+                        &mut world_state,
+                        &mut voxel,
+                        super::destruction::Hit {
+                            entity: hit_entity,
+                            point: hit.point,
+                            normal: hit.normal,
+                        },
+                        &projectile,
+                    );
                 }
                 if matches!(surface, SurfaceKind::Concrete) {
                     stopped = true;
@@ -507,12 +537,12 @@ pub(super) fn projectiles_tick(
                 projectile.damage *= energy / projectile.penetration;
                 projectile.penetration = energy;
                 projectile.penetrated.push(hit_entity);
-                if !voxels.get(hit_entity).is_ok_and(|cell| cell.health <= 0.0) {
+                if cell_id.is_none() {
                     world_state.impact_on_cell(
                         exit.point,
                         exit.normal,
                         impact_mark_size_mm(projectile.weapon),
-                        cell_id,
+                        None,
                     );
                 }
                 let traveled = hit.time_of_impact + 0.002;
