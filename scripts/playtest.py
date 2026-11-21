@@ -100,12 +100,13 @@ def main():
     parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
                         help="Explicit LOD inspection override (requires --weapon-debug)")
     parser.add_argument("--pov", choices=POV_CAPTURES, help="Run only the named POV bench after deploy")
-    parser.add_argument("--viewport", type=parse_viewport, help="Require this exact POV framebuffer (WIDTHxHEIGHT)")
+    parser.add_argument("--viewport", type=parse_viewport,
+                        help="Require this exact POV or clean-art framebuffer (WIDTHxHEIGHT)")
     parser.add_argument("--pov-hz", type=int, choices=range(15, 241), metavar="HZ",
                         help="Cap the stop-lean client update rate and write the actual camera trace")
     args = parser.parse_args()
-    if args.viewport and not args.pov:
-        parser.error("--viewport requires --pov")
+    if args.viewport and not (args.pov or args.clean_art):
+        parser.error("--viewport requires --pov or --clean-art")
     if args.pov_hz and args.pov != "stop-lean":
         parser.error("--pov-hz requires --pov stop-lean")
     if args.pov and (args.animation_review or args.configure_weapons
@@ -337,6 +338,7 @@ def main():
         assert data[:8] == b"\x89PNG\r\n\x1a\n", f"Not a real PNG: {path}"
         width, height = struct.unpack(">II", data[16:24])
         assert width >= 600 and height >= 400 and len(data) > 5000, f"Invalid capture: {path}"
+        assert args.viewport is None or (width, height) == args.viewport, f"Unexpected viewport: {path}"
         if resolution is None:
             resolution = [width, height]
         assert [width, height] == resolution, f"Native viewport changed during the run: {path}"
@@ -353,6 +355,9 @@ def main():
                     path = directory / f"asset-{label}.png"
                     data = path.read_bytes()
                     assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing live asset view: {path}"
+                    assert args.viewport is None or struct.unpack(">II", data[16:24]) == args.viewport, (
+                        f"Unexpected viewport: {path}"
+                    )
             for name in names:
                 path = directory / f"{name}.png"
                 data = path.read_bytes()
