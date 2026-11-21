@@ -294,6 +294,9 @@ pub(super) fn weapons_tick(
                 pose.ads,
             )
             .map(|offset| (eye + rotation * offset).into()),
+            audio_signature: FiredProjectileData::encode_audio_signature(
+                arsenal.current().spec().assembly.signature_multiplier,
+            ),
         });
         // The current projectile uses the pre-impulse bore. Reaction changes
         // subsequent aim, once per authorized shot, independently of rendering.

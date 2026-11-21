@@ -130,6 +130,7 @@ fn inject_shots(app: &mut App, count: u64) -> std::ops::Range<u64> {
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
             ejection: None,
+            audio_signature: 100,
         });
     }
     state.next_projectile_id += count;

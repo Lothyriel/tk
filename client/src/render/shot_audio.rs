@@ -79,7 +79,7 @@ impl Decodable for SynthShot {
     }
 }
 
-fn synth(weapon: WeaponKind) -> SynthShot {
+fn synth(weapon: WeaponKind, softened: bool) -> SynthShot {
     let (tone, decay) = match weapon {
         WeaponKind::Rifle => (106.0, 34.0),
         WeaponKind::Pistol => (160.0, 46.0),
@@ -97,8 +97,12 @@ fn synth(weapon: WeaponKind) -> SynthShot {
                 let attack = (t * 1_400.0).min(1.0);
                 let tail = ((0.2 - t) * 100.0).clamp(0.0, 1.0);
                 let body = (t * tone * std::f32::consts::TAU).sin();
-                (0.58 * noise * (-t * 135.0).exp()
-                    + (0.28 * body + 0.22 * low) * (-t * decay).exp())
+                let transient = if softened {
+                    0.18 * noise + 0.32 * low
+                } else {
+                    0.58 * noise
+                };
+                (transient * (-t * 135.0).exp() + (0.28 * body + 0.22 * low) * (-t * decay).exp())
                     * attack
                     * tail
             })
@@ -107,7 +111,7 @@ fn synth(weapon: WeaponKind) -> SynthShot {
 }
 
 #[derive(Resource)]
-struct Cues([Handle<SynthShot>; 6]);
+struct Cues([Handle<SynthShot>; 9]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReloadCue {
@@ -153,12 +157,15 @@ fn synth_contact(tone: f32, decay: f32) -> SynthShot {
 
 fn prepare(mut commands: Commands, mut assets: ResMut<Assets<SynthShot>>) {
     commands.insert_resource(Cues([
-        assets.add(synth(WeaponKind::Rifle)),
-        assets.add(synth(WeaponKind::Pistol)),
-        assets.add(synth(WeaponKind::Smg)),
+        assets.add(synth(WeaponKind::Rifle, false)),
+        assets.add(synth(WeaponKind::Pistol, false)),
+        assets.add(synth(WeaponKind::Smg, false)),
         assets.add(synth_contact(320.0, 180.0)),
         assets.add(synth_contact(510.0, 130.0)),
         assets.add(synth_contact(780.0, 105.0)),
+        assets.add(synth(WeaponKind::Rifle, true)),
+        assets.add(synth(WeaponKind::Pistol, true)),
+        assets.add(synth(WeaponKind::Smg, true)),
     ]));
 }
 
@@ -214,17 +221,19 @@ fn present(
         if !history.shots.observe(shot.id) {
             continue;
         }
-        let cue = match shot.weapon.class() {
-            WeaponKind::Rifle => &cues.0[0],
-            WeaponKind::Pistol => &cues.0[1],
-            WeaponKind::Smg => &cues.0[2],
+        let class = match shot.weapon.class() {
+            WeaponKind::Rifle => 0,
+            WeaponKind::Pistol => 1,
+            WeaponKind::Smg => 2,
         };
+        let cue = &cues.0[class + if shot.audio_signature < 100 { 6 } else { 0 }];
+        let gain = (f32::from(shot.audio_signature) / 100.0).clamp(0.15, 1.25);
         let remote = shot.shooter != local.0;
         play(
             cue,
             Vec3::from(shot.muzzle),
             remote,
-            if remote { 0.45 } else { 0.25 },
+            gain * if remote { 0.45 } else { 0.25 },
         );
     }
     history
@@ -317,6 +326,7 @@ mod tests {
             muzzle: [1.0, 2.0, 3.0],
             direction: [0.0, 0.0, -1.0],
             ejection: None,
+            audio_signature: 100,
         };
         app.world_mut().resource_mut::<ClientSession>().shots = vec![shot(1), shot(1)];
         app.update();
@@ -337,7 +347,8 @@ mod tests {
 
     #[test]
     fn shot_audio_sources_are_finite_distinct_and_fade_to_zero() {
-        let sounds = [WeaponKind::Rifle, WeaponKind::Pistol, WeaponKind::Smg].map(synth);
+        let sounds =
+            [WeaponKind::Rifle, WeaponKind::Pistol, WeaponKind::Smg].map(|kind| synth(kind, false));
         for sound in &sounds {
             assert_eq!(sound.decoder().count(), RATE as usize / 5);
             assert!(sound.0.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
@@ -347,5 +358,8 @@ mod tests {
         }
         assert_ne!(sounds[0].0, sounds[1].0);
         assert_ne!(sounds[1].0, sounds[2].0);
+        let softened = synth(WeaponKind::Rifle, true);
+        assert_ne!(sounds[0].0, softened.0);
+        assert!(softened.0.iter().any(|sample| sample.abs() > 0.05));
     }
 }

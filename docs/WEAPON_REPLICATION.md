@@ -1,6 +1,6 @@
 # Weapon configuration replication
 
-Protocol 16 adds an optional shot-time ejection origin for cosmetic casings, retaining the mechanical/reload contracts at both endpoints. Rebuild client
+Protocol 17 adds the configuration's game-audio signature to confirmed shot events, retaining the optional shot-time ejection origin and mechanical/reload contracts. Rebuild client
 and server together. Weapon configuration uses reliable ordered channel 3 in
 each direction, with a 2 MiB queue and 100 ms retransmission. Existing continuous
 input/connectivity channels remain independent.

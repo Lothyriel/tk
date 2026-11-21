@@ -8,8 +8,8 @@ use crate::{data, FiredProjectileData, WorldSnapshot};
 
 pub const SHOT_CHANNEL: u8 = 4;
 pub const MAX_SNAPSHOT_BYTES: usize = 60_000;
-// Leave room for the archived message header and optional ejection origins.
-pub const MAX_SHOT_BATCH: usize = 120;
+// Leave room for the archived header with 72-byte protocol 17 shot records.
+pub const MAX_SHOT_BATCH: usize = 112;
 pub const MAX_SHOT_MESSAGE_BYTES: usize = 8_192;
 pub const SHOT_WINDOW: u64 = 8_192;
 pub const MAX_PENDING_SHOTS: usize = 8_192;

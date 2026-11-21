@@ -1373,6 +1373,7 @@ mod tests {
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
             ejection: None,
+            audio_signature: 100,
         });
         assert!((response.recoil - 0.010).abs() < f32::EPSILON);
         assert_eq!(response.angular.angles(0.1), Vec2::ZERO);
@@ -2061,6 +2062,7 @@ mod tests {
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
             ejection: None,
+            audio_signature: 100,
         };
         r.shot(&shot);
         let v = r.velocity;
@@ -2124,6 +2126,7 @@ mod tests {
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
             ejection: None,
+            audio_signature: 100,
         });
         app.init_resource::<Time>()
             .init_resource::<Feedback>()

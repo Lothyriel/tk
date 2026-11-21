@@ -348,6 +348,7 @@ mod tests {
                 muzzle: [0.0; 3],
                 direction: [0.0, 0.0, -1.0],
                 ejection: None,
+                audio_signature: 100,
             })
             .collect();
         use common::replication::shots::*;
@@ -378,6 +379,7 @@ mod tests {
                 muzzle: [0.0; 3],
                 direction: [0.0, 0.0, -1.0],
                 ejection: None,
+                audio_signature: 100,
             })
             .collect();
         use common::replication::shots::*;
@@ -608,6 +610,7 @@ mod barrier_snapshot_tests {
                     muzzle: [0.0; 3],
                     direction: [0.0, 0.0, -1.0],
                     ejection: Some([0.25, 1.5, -0.15]),
+                    audio_signature: 55,
                 }],
             }),
         );
@@ -623,6 +626,7 @@ mod barrier_snapshot_tests {
             [2]
         );
         assert_eq!(session.casing_shots[0].ejection, Some([0.25, 1.5, -0.15]));
+        assert_eq!(session.casing_shots[0].audio_signature, 55);
         app.update();
         assert!(
             app.world()
@@ -644,6 +648,7 @@ mod barrier_snapshot_tests {
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
             ejection: None,
+            audio_signature: 100,
         }];
         server.send_message(7, DefaultChannel::Unreliable, data::encode(&delayed));
         server.send_message(
