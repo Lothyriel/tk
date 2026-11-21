@@ -28,18 +28,28 @@ def main():
     output = args.output.resolve()
     source = output / "source"
     source.mkdir(parents=True, exist_ok=False)
-    revision = subprocess.check_output(["git", "rev-parse", args.revision], cwd=root, text=True).strip()
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD" if args.current_source else args.revision],
+        cwd=root, text=True,
+    ).strip()
+    overlay_recorder = not args.prepare_only and not args.current_source
     if args.current_source:
         for name in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml"):
             shutil.copy2(root / name, source / name)
         for name in (".cargo", "common", "client", "server", "assets"):
             shutil.copytree(root / name, source / name, dirs_exist_ok=True)
+        # The configured rig build validates authored and baked assets offline.
+        (source / "scripts").mkdir()
+        shutil.copy2(root / "scripts/bake_voxels.py", source / "scripts/bake_voxels.py")
     else:
         archive = subprocess.check_output(["git", "archive", revision, "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo", "common", "client", "server", "assets"], cwd=root)
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
             tar.extractall(source, filter="data")
-    shutil.copy2(root / "client/src/playtest.rs", source / "client/src/playtest.rs")
-    shutil.copytree(root / "client/src/playtest", source / "client/src/playtest", dirs_exist_ok=True)
+    # Historical preparation keeps the driver compiled against its own protocol.
+    # The current driver refers to game types that older revisions do not have.
+    if overlay_recorder:
+        shutil.copy2(root / "client/src/playtest.rs", source / "client/src/playtest.rs")
+        shutil.copytree(root / "client/src/playtest", source / "client/src/playtest", dirs_exist_ok=True)
     if not args.current_source:
         if args.match_current_camera:
             camera = source / "client/src/render/mod.rs"
@@ -52,6 +62,7 @@ def main():
             assert text.count(original) == 1, "Original weapon camera synchronization changed"
             text = text.replace(original, "view_model_perspective.fov = 65.0_f32.to_radians();")
             camera.write_text(text, encoding="utf-8")
+    if overlay_recorder:
         driver = source / "client/src/playtest.rs"
         text = driver.read_text(encoding="utf-8")
         # Original presentation/protocol has no packed physical rig. Keep its
@@ -76,11 +87,12 @@ def main():
         text = path.read_text().replace(f'name = "{crate}"', f'name = "{label}-{crate}"')
         text = text.replace('common = { path = "../common" }', f'common = {{ package = "{label}-common", path = "../common" }}')
         path.write_text(text, encoding="utf-8")
-    files = sorted([*source.glob("**/*.rs"), *source.glob("**/Cargo.toml")])
+    files = sorted(p for p in source.rglob("*") if p.is_file())
     (output / "baseline-source.json").write_text(json.dumps({
         "revision": revision, "presentation_changes": args.current_source,
         "original_runner_sha256": hashlib.sha256(original_runner).hexdigest() if original_runner else None,
-        "overlays": ["ordinary-input playtest driver", "native framebuffer video recorder", "unique Cargo package names"]
+        "overlays": ["unique Cargo package names"]
+                    + (["ordinary-input playtest driver", "native framebuffer video recorder"] if overlay_recorder else [])
                     + (["matched camera projections only: world 70 / weapon 65 vertical degrees"] if args.match_current_camera else []),
         "sha256": {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
     }, indent=2), encoding="utf-8")
