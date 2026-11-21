@@ -817,9 +817,11 @@ pub(super) fn animate_local(
             && let Some(physical) = &p.pose.physical
         {
             let head = physical.unpack()[common::humanoid::Segment::Head.index()];
-            let offset =
-                Quat::from_rotation_y(p.rot.yaw - input.camera.yaw) * Vec3::from(head.position);
-            t.translation = offset - Vec3::Y * 0.10;
+            let to_local = Quat::from_rotation_y(p.rot.yaw - input.camera.yaw);
+            t.translation = super::humanoid_eye(
+                to_local * Vec3::from(head.position),
+                to_local * Quat::from_array(head.rotation),
+            );
             t.translation.y = t.translation.y.max(0.18 - p.pos[1]);
         }
         let (l, r) = p.body.anatomy.leg_support();

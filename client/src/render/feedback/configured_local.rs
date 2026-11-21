@@ -206,7 +206,15 @@ pub(super) fn prepare(
             response.frame_offset *= (-time.delta_secs() * 14.0).exp();
             view.translation += eye.rotation * response.frame_offset;
         }
-        commands.entity(entity).insert((request, input));
+        let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
+        commands.entity(entity).insert((
+            request,
+            input,
+            super::super::voxel::configured::ViewSleeveClearance {
+                to_eye,
+                near: projection.near,
+            },
+        ));
     }
 }
 

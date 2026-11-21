@@ -1,4 +1,31 @@
 use super::*;
+
+#[test]
+fn view_sleeve_shortens_only_the_end_that_crosses_the_eye_clearance() {
+    let plane = ViewSleeveClearance {
+        to_eye: Mat4::IDENTITY,
+        near: 0.1,
+    };
+    let length = handling::FOREARM_METRES;
+    let mut sleeve = Transform::from_xyz(0.0, 0.0, -0.17)
+        .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_4));
+    let wrist = sleeve.transform_point(Vec3::NEG_Y * length * 0.5);
+    assert!(plane.trim(&mut sleeve, length, 0.0325, 0.030));
+    assert!(sleeve.scale.y < 1.0);
+    assert!(
+        sleeve
+            .transform_point(Vec3::NEG_Y * length * 0.5)
+            .distance(wrist)
+            < 1e-6
+    );
+    for y in [-0.5, 0.5] {
+        for z in [-0.030, 0.030] {
+            assert!(sleeve.transform_point(Vec3::new(0.0, y * length, z)).z <= -0.15999);
+        }
+    }
+    sleeve.translation.z = 0.2;
+    assert!(!plane.trim(&mut sleeve, length, 0.0325, 0.030));
+}
 use common::{
     catalog::Catalog,
     replication::{Configuration, catalog_fingerprint},

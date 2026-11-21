@@ -801,34 +801,60 @@ impl Fixture {
         );
         let solution = world.get::<ConfiguredPose>(self.root).unwrap();
         let global = world.get::<GlobalTransform>(self.root).unwrap();
-        for (side, shoulder) in ["support", "trigger"].into_iter().zip(solution.shoulders) {
-            let poses = ["upper", "forearm", "palm"].map(|segment| {
-                *world
-                    .get::<GlobalTransform>(named(
-                        &self.app,
-                        self.root,
-                        &format!("configured-{side}-{segment}"),
-                    ))
+        let to_eye = world
+            .get::<GlobalTransform>(self.camera)
+            .unwrap()
+            .to_matrix()
+            .inverse();
+        let Projection::Perspective(lens) = world.get::<Projection>(self.camera).unwrap() else {
+            panic!("perspective");
+        };
+        for (i, (side, arm)) in [
+            ("support", solution.solution.support),
+            ("trigger", solution.solution.trigger),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let shoulder = global.transform_point(solution.shoulders[i]);
+            let elbow = global.transform_point(arm.elbow);
+            let wrist = global.transform_point(arm.wrist.translation);
+            let palm = named(&self.app, self.root, &format!("configured-{side}-palm"));
+            assert!(
+                world
+                    .get::<GlobalTransform>(palm)
                     .unwrap()
-            });
-            assert!(
-                poses[0]
-                    .transform_point(Vec3::Y * 0.15)
-                    .distance(global.transform_point(shoulder))
+                    .translation()
+                    .distance(wrist)
                     < 3e-6
             );
-            assert!(
-                poses[0]
-                    .transform_point(Vec3::NEG_Y * 0.15)
-                    .distance(poses[1].transform_point(Vec3::Y * 0.14))
-                    < 3e-6
-            );
-            assert!(
-                poses[1]
-                    .transform_point(Vec3::NEG_Y * 0.14)
-                    .distance(poses[2].translation())
-                    < 3e-6
-            );
+            for (name, a, b, half) in [
+                ("upper", elbow, shoulder, Vec3::new(0.035, 0.15, 0.0325)),
+                ("forearm", wrist, elbow, Vec3::new(0.0325, 0.14, 0.030)),
+            ] {
+                assert!(((b - a).length() - 2.0 * half.y).abs() < 3e-6);
+                let sleeve = named(&self.app, self.root, &format!("configured-{side}-{name}"));
+                if *world.get::<Visibility>(sleeve).unwrap() == Visibility::Hidden {
+                    continue;
+                }
+                let pose = world.get::<GlobalTransform>(sleeve).unwrap();
+                let axis = (b - a).normalize();
+                for y in [-1.0, 1.0] {
+                    let offset = pose.transform_point(Vec3::Y * y * half.y) - a;
+                    let distance = offset.dot(axis);
+                    assert!((offset - axis * distance).length() < 3e-6);
+                    assert!((-3e-6..=2.0 * half.y + 3e-6).contains(&distance));
+                    for x in [-1.0, 1.0] {
+                        for z in [-1.0, 1.0] {
+                            let corner = pose.transform_point(half * Vec3::new(x, y, z));
+                            assert!(
+                                to_eye.transform_point3(corner).z
+                                    <= -(lens.near + 0.01).max(0.16) + 3e-6
+                            );
+                        }
+                    }
+                }
+            }
         }
         let action = world.resource::<Feedback>().responses[&7].action.unwrap();
         let player = &world.resource::<ClientSession>().players[0];

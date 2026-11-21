@@ -673,13 +673,22 @@ fn sync_local_view(
     let lean = motion.map_or(player_input.camera.roll, |pose| pose.roll);
     let recoil_roll = camera.roll - player_input.camera.roll;
     let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, lean + recoil_roll);
+    let head_rotation = Quat::from_euler(EulerRot::YXZ, 0.0, player_input.camera.pitch, lean);
+    let eye = humanoid_eye(
+        common::humanoid::aim_lean_offset(lean)
+            + Vec3::Y * (PLAYER_VIEW_HEIGHT + 0.10 + vertical_offset + bob),
+        head_rotation,
+    );
 
     for (base_offset, mut transform) in query.iter_mut() {
         transform.rotation = rotation;
-        transform.translation = base_offset.0
-            + common::humanoid::aim_lean_offset(lean)
-            + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset + bob);
+        transform.translation = base_offset.0 + eye;
     }
+}
+
+/// Cyclopean eye on the front of the voxel head, relative to its central pivot.
+fn humanoid_eye(head_center: Vec3, head_rotation: Quat) -> Vec3 {
+    head_center + head_rotation * Vec3::new(0.0, 0.025, -0.125)
 }
 
 fn sync_local_player_rotation(
@@ -920,8 +929,12 @@ mod view_tests {
 
         for camera in [world_camera, viewmodel_camera] {
             let translation = app.world().get::<Transform>(camera).unwrap().translation;
-            assert!((translation.x + 0.21).abs() < 0.001);
-            assert!((translation.y - PLAYER_VIEW_HEIGHT).abs() < 0.001);
+            let expected = Vec3::new(
+                -0.21 - 0.025 * 0.3_f32.sin(),
+                PLAYER_VIEW_HEIGHT + 0.10 + 0.025 * 0.3_f32.cos(),
+                -0.125,
+            );
+            assert!(translation.distance(expected) < 0.001);
         }
     }
 
@@ -977,7 +990,12 @@ mod view_tests {
             app.update();
             let expected = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.22);
             let eye = Quat::from_rotation_y(yaw)
-                * Vec3::new(-0.154, PLAYER_VIEW_HEIGHT + PLAYER_CROUCH_VIEW_OFFSET, 0.0);
+                * Vec3::new(
+                    -0.154,
+                    PLAYER_VIEW_HEIGHT + 0.10 + PLAYER_CROUCH_VIEW_OFFSET,
+                    0.0,
+                )
+                + expected * Vec3::new(0.0, 0.025, -0.125);
             for camera in cameras {
                 let transform = app.world().get::<GlobalTransform>(camera).unwrap();
                 assert!(transform.rotation().dot(expected).abs() > 0.99999);
@@ -1106,7 +1124,7 @@ mod view_tests {
                 Visibility::Hidden
             );
             if mode == PhysicalMode::Fallen {
-                let mut previous = PLAYER_VIEW_HEIGHT;
+                let mut previous = PLAYER_VIEW_HEIGHT + 0.125;
                 for t in [0.0, 0.05, 0.10, 0.15, 0.20] {
                     app.world_mut().resource_mut::<ClientSession>().players[0]
                         .pose
@@ -1119,9 +1137,9 @@ mod view_tests {
                     );
                     previous = y;
                 }
-                assert!((previous - (PLAYER_VIEW_HEIGHT - 0.34)).abs() < 0.0001);
+                assert!((previous - (PLAYER_VIEW_HEIGHT + 0.125 - 0.34)).abs() < 0.0001);
             } else {
-                let mut previous = PLAYER_VIEW_HEIGHT - 0.34;
+                let mut previous = PLAYER_VIEW_HEIGHT + 0.125 - 0.34;
                 for t in [0.0, 0.50, 0.75, 0.80, 0.85, 0.90, 0.95, 1.0] {
                     app.world_mut().resource_mut::<ClientSession>().players[0]
                         .pose
@@ -1142,7 +1160,7 @@ mod view_tests {
                     );
                     previous = y;
                 }
-                assert!((previous - PLAYER_VIEW_HEIGHT).abs() < 0.0001);
+                assert!((previous - (PLAYER_VIEW_HEIGHT + 0.125)).abs() < 0.0001);
             }
         }
     }
