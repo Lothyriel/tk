@@ -6,11 +6,14 @@ use bevy::{platform::collections::HashMap, prelude::*};
 use common::weapon_animation::WeaponRig;
 use common::weapon_animation::{WeaponAction, reload_action};
 use common::{humanoid::PhysicalMode, *};
+use std::collections::VecDeque;
 
 mod configured_local;
 mod recoil;
 
-const CASING_LIFETIME: f32 = 60.0;
+// Cosmetic only. Bound the render/update cost across all shooters in the raid.
+const CASING_LIFETIME: f32 = 20.0;
+const MAX_ACTIVE_CASINGS: usize = 128;
 const CASING_GROUND_HEIGHT: f32 = 0.105;
 
 #[derive(Debug, Clone, Copy)]
@@ -132,7 +135,7 @@ struct EjectedCasing {
 struct CasingState {
     raid: Option<u32>,
     shots_by_shooter: HashMap<u64, common::replication::shots::ShotWindow>,
-    active: Vec<Entity>,
+    active: VecDeque<Entity>,
 }
 
 impl CasingState {
@@ -143,8 +146,14 @@ impl CasingState {
             .observe(shot_id)
     }
 
-    fn track(&mut self, entity: Entity) {
-        self.active.push(entity);
+    fn track(&mut self, entity: Entity) -> Option<Entity> {
+        let evicted = if self.active.len() == MAX_ACTIVE_CASINGS {
+            self.active.pop_front()
+        } else {
+            None
+        };
+        self.active.push_back(entity);
+        evicted
     }
 }
 
@@ -234,7 +243,9 @@ fn update_casings(
                 },
             ))
             .id();
-        state.track(entity);
+        if let Some(oldest) = state.track(entity) {
+            commands.entity(oldest).despawn();
+        }
     }
 }
 #[derive(Default)]
@@ -1111,17 +1122,25 @@ mod tests {
     }
 
     #[test]
-    fn shell_casing_tracking_has_no_cap_and_lifetime_expires() {
+    fn shell_casing_tracking_evicts_oldest_and_lifetime_expires() {
         let mut world = World::new();
         let mut state = CasingState::default();
-        let entities: Vec<_> = (0..96).map(|_| world.spawn_empty().id()).collect();
-        for entity in &entities {
-            state.track(*entity);
+        let entities: Vec<_> = (0..MAX_ACTIVE_CASINGS * 2)
+            .map(|_| world.spawn_empty().id())
+            .collect();
+        for (i, &entity) in entities.iter().enumerate() {
+            assert_eq!(
+                state.track(entity),
+                i.checked_sub(MAX_ACTIVE_CASINGS).map(|old| entities[old])
+            );
+            assert!(state.active.len() <= MAX_ACTIVE_CASINGS);
         }
-        assert_eq!(state.active.len(), entities.len());
-        assert_eq!(state.active.first(), entities.first());
-        assert_eq!(state.active.last(), entities.last());
-        assert_eq!(CASING_LIFETIME, 60.0);
+        assert!(
+            state
+                .active
+                .into_iter()
+                .eq(entities[MAX_ACTIVE_CASINGS..].iter().copied())
+        );
 
         let mut casing = EjectedCasing {
             velocity: Vec3::ZERO,
@@ -1129,7 +1148,11 @@ mod tests {
             lifetime: CASING_LIFETIME,
         };
         let mut transform = Transform::from_xyz(0.0, 1.0, 0.0);
-        assert!(!step_casing(&mut casing, &mut transform, 59.9));
+        assert!(!step_casing(
+            &mut casing,
+            &mut transform,
+            CASING_LIFETIME - 0.1
+        ));
         assert!((casing.lifetime - 0.1).abs() < 0.001);
         assert!(step_casing(&mut casing, &mut transform, 0.2));
     }
