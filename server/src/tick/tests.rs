@@ -1325,6 +1325,60 @@ fn next_deploy_restores_separated_anatomy_and_clears_fragments_corpses_and_effec
 }
 
 #[test]
+fn stance_contact_survives_a_midstep_strafe_reversal() {
+    use common::humanoid::{PoseState, Segment, evaluate_pose};
+    let (mut app, player, _) = physical_fixture();
+    app.world_mut()
+        .get_mut::<ClientInput>(player)
+        .unwrap()
+        .right = true;
+    held_steps(&mut app, player, 64);
+
+    let sample = |app: &App| {
+        let root = app.world().get::<Transform>(player).unwrap();
+        let pose = app.world().get::<PoseState>(player).unwrap();
+        let rig = evaluate_pose(pose, 1.0, 1.0);
+        [Segment::LeftFoot, Segment::RightFoot].map(|segment| {
+            let i = usize::from(segment == Segment::RightFoot);
+            (
+                pose.foot_weight[i],
+                root.transform_point(rig[segment.index()].position.into()),
+            )
+        })
+    };
+    let mut previous = sample(&app);
+    {
+        let mut input = app.world_mut().get_mut::<ClientInput>(player).unwrap();
+        input.right = false;
+        input.left = true;
+    }
+    let mut checked = 0;
+    let mut reversed = false;
+    let mut max_drift = 0.0_f32;
+    for _ in 0..80 {
+        held_steps(&mut app, player, 1);
+        let current = sample(&app);
+        reversed |= app.world().get::<PoseState>(player).unwrap().velocity[0] < -1.0;
+        for ((old_weight, old_foot), (weight, foot)) in previous.into_iter().zip(current) {
+            assert!(foot.is_finite());
+            if old_weight > 0.95 && weight > 0.95 {
+                checked += 1;
+                max_drift = max_drift.max(old_foot.distance(foot));
+            }
+        }
+        previous = current;
+    }
+    assert!(
+        reversed && checked > 10,
+        "must exercise loaded contacts and reverse direction"
+    );
+    assert!(
+        max_drift < 0.01,
+        "loaded foot moved {max_drift:.4} m in a tick"
+    );
+}
+
+#[test]
 fn stance_contact_survives_actual_running_braking_and_turning() {
     use common::humanoid::*;
     let (mut app, _, b) = physical_fixture();
