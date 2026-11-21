@@ -15,7 +15,7 @@ pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 16;
+pub const PROTOCOL_ID: u64 = 17;
 pub const SNAPSHOT_INTERVAL: f32 = 1.0 / 60.0;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
@@ -227,6 +227,14 @@ pub struct FiredProjectileData {
     pub direction: [f32; 3],
     /// Cosmetic casing origin sampled at the shot, if the assembly defines one.
     pub ejection: Option<[f32; 3]>,
+    /// Game-audio signature from the assembly at the instant of the shot.
+    pub audio_signature: u8,
+}
+
+impl FiredProjectileData {
+    pub fn encode_audio_signature(multiplier: f32) -> u8 {
+        (multiplier * 100.0).round().clamp(1.0, 255.0) as u8
+    }
 }
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]

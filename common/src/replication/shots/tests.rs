@@ -10,6 +10,7 @@ fn shot(id: u64, time: f32) -> FiredProjectileData {
         muzzle: [0.0; 3],
         direction: [0.0, 0.0, -1.0],
         ejection: None,
+        audio_signature: 100,
     }
 }
 
@@ -117,7 +118,13 @@ fn shots_wire_and_queue_limits_fail_explicitly() {
     let batch = ShotMessage::Batch {
         raid: 2,
         time: 1.0,
-        shots: (0..MAX_SHOT_BATCH as u64).map(|id| shot(id, 1.0)).collect(),
+        shots: (0..MAX_SHOT_BATCH as u64)
+            .map(|id| FiredProjectileData {
+                ejection: Some([0.25, 1.5, -0.15]),
+                audio_signature: 55,
+                ..shot(id, 1.0)
+            })
+            .collect(),
     };
     let bytes = data::encode(&batch);
     println!(
