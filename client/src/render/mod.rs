@@ -10,6 +10,7 @@ use common::{combat::SurfaceKind, map::*, raid::EXTRACTION_RADIUS};
 pub(crate) mod actors;
 mod blood;
 mod destruction;
+mod dot_sight;
 pub(crate) mod feedback;
 pub(crate) mod shot_audio;
 pub(crate) mod voxel;
@@ -23,6 +24,7 @@ impl bevy::prelude::Plugin for Plugin {
         app.add_plugins(actors::Plugin);
         app.add_plugins(blood::Plugin);
         app.add_plugins(destruction::Plugin);
+        app.add_plugins(dot_sight::Plugin);
         app.add_plugins(feedback::Plugin);
         app.add_plugins(shot_audio::Plugin);
         app.add_plugins((voxel::Plugin, voxel::debug::Plugin));
