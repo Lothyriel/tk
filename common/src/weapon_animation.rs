@@ -77,21 +77,34 @@ pub fn barrel_offset(weapon: WeaponKind, ads: f32) -> Vec3 {
 
 pub fn resolved_barrel_offset(spec: &crate::catalog::ResolvedWeapon, ads: f32) -> Vec3 {
     if let Some(bore) = spec.assembly.anchors.get(&crate::catalog::AnchorKind::Bore) {
-        let hip = spec
-            .assembly
-            .hip_from_root
-            .transform_point(bore.translation);
-        let aimed = spec
-            .assembly
-            .ads_from_root
-            .transform_point(bore.translation);
-        return hip.lerp(aimed, ease(ads));
+        return configured_offset(spec, bore.translation, ads);
     }
     let weapon = spec.class;
     Vec3::from(spec.barrel_offset).lerp(
         ads_offset(weapon) + WeaponRig::for_weapon(weapon).muzzle,
         ease(ads),
     )
+}
+
+/// Flight starts at the installed device outlet, or at the bare bore if there
+/// is no authored outlet. Clearance still covers the entire eye-to-outlet path.
+pub fn resolved_muzzle_offset(spec: &crate::catalog::ResolvedWeapon, ads: f32) -> Vec3 {
+    match spec
+        .assembly
+        .anchors
+        .get(&crate::catalog::AnchorKind::DeviceExit)
+    {
+        Some(exit) => configured_offset(spec, exit.translation, ads),
+        None => resolved_barrel_offset(spec, ads),
+    }
+}
+
+fn configured_offset(spec: &crate::catalog::ResolvedWeapon, point: Vec3, ads: f32) -> Vec3 {
+    let assembly = &spec.assembly;
+    assembly
+        .hip_from_root
+        .transform_point(point)
+        .lerp(assembly.ads_from_root.transform_point(point), ease(ads))
 }
 
 pub fn resolved_ejection_offset(spec: &crate::catalog::ResolvedWeapon, ads: f32) -> Option<Vec3> {
@@ -341,6 +354,12 @@ mod tests {
                 ads_offset(weapon) + WeaponRig::for_weapon(weapon).muzzle
             );
             assert!(barrel_offset(weapon, 1.0).x.abs() < 0.0001);
+            for ads in [0.0, 0.5, 1.0] {
+                assert_eq!(
+                    resolved_muzzle_offset(weapon.spec(), ads),
+                    barrel_offset(weapon, ads)
+                );
+            }
         }
         let rifle = WeaponKind::Rifle.spec();
         let aimed = rifle.assembly.ads_from_root;

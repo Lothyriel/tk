@@ -23,7 +23,7 @@ impl KitFixture {
         }
     }
 
-    fn named(name: &str) -> Self {
+    pub(crate) fn named(name: &str) -> Self {
         assert!(
             matches!(name, "compact" | "suppressed" | "afg"),
             "Unknown weapon kit {name}"

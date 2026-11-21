@@ -2343,7 +2343,7 @@ fn authoritative_ads_preserves_ammo_and_cadence_centres_barrel_and_cancels_for_r
     let expected = root.translation
         + Vec3::Y * PLAYER_VIEW_HEIGHT
         + Quat::from(&app.world().get::<ClientInput>(a).unwrap().camera)
-            * common::weapon_animation::barrel_offset(WeaponKind::Rifle, pose.ads);
+            * common::weapon_animation::resolved_muzzle_offset(WeaponKind::Rifle.spec(), pose.ads);
     let shot = app
         .world()
         .resource::<WorldState>()
@@ -2417,7 +2417,7 @@ fn lean_moves_the_authoritative_eye_and_muzzle_sideways() {
         + Vec3::Y * PLAYER_VIEW_HEIGHT;
     let expected_muzzle = expected_eye
         + Quat::from(&input.camera)
-            * common::weapon_animation::barrel_offset(WeaponKind::Rifle, pose.ads);
+            * common::weapon_animation::resolved_muzzle_offset(WeaponKind::Rifle.spec(), pose.ads);
     let shot = app
         .world()
         .resource::<WorldState>()
@@ -2578,7 +2578,7 @@ fn close_hip_and_ads_muzzle_rays_hit_actual_heads_without_capsule_redirection() 
                 let rig = evaluate_pose(app.world().get::<PoseState>(b).unwrap(), 1.0, 1.0);
                 let target = root.transform_point(rig[Segment::Head.index()].position.into());
                 let ads = app.world().get::<PoseState>(a).unwrap().ads;
-                let barrel = common::weapon_animation::barrel_offset(weapon, ads);
+                let barrel = common::weapon_animation::resolved_muzzle_offset(weapon.spec(), ads);
                 let camera = aim_offset_ray(eye, target, barrel);
                 let expected = eye + Quat::from(&camera) * barrel;
                 {
@@ -2634,8 +2634,8 @@ fn muzzle_beyond_a_close_actor_cannot_skip_its_actual_anatomy_in_hip_or_ads() {
         held_steps(&mut app, a, 64);
         let eye =
             app.world().get::<Transform>(a).unwrap().translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
-        let barrel = common::weapon_animation::barrel_offset(
-            WeaponKind::Rifle,
+        let barrel = common::weapon_animation::resolved_muzzle_offset(
+            WeaponKind::Rifle.spec(),
             app.world().get::<PoseState>(a).unwrap().ads,
         );
         let root = *app.world().get::<Transform>(b).unwrap();
@@ -2675,8 +2675,8 @@ fn narrow_concrete_on_eye_to_muzzle_path_stops_hip_and_ads_without_parallel_eye_
         held_steps(&mut app, a, 64);
         let eye =
             app.world().get::<Transform>(a).unwrap().translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
-        let barrel = common::weapon_animation::barrel_offset(
-            WeaponKind::Rifle,
+        let barrel = common::weapon_animation::resolved_muzzle_offset(
+            WeaponKind::Rifle.spec(),
             app.world()
                 .get::<common::humanoid::PoseState>(a)
                 .unwrap()
@@ -2714,6 +2714,73 @@ fn narrow_concrete_on_eye_to_muzzle_path_stops_hip_and_ads_without_parallel_eye_
         assert_eq!(
             app.world().get::<Arsenal>(a).unwrap().current().rounds(),
             29
+        );
+    }
+}
+
+#[test]
+fn suppressed_device_outlet_keeps_cover_between_bore_and_exit_in_clearance() {
+    use common::catalog::AnchorKind;
+    for roll in [-0.3, 0.3] {
+        let (mut app, shooter, _) = physical_fixture();
+        *app.world_mut().get_mut::<Arsenal>(shooter).unwrap() =
+            crate::kit_fixture::KitFixture::named("suppressed").arsenal(Loadout::default());
+        {
+            let mut input = app.world_mut().get_mut::<ClientInput>(shooter).unwrap();
+            input.aim = true;
+            input.camera.roll = roll;
+        }
+        held_steps(&mut app, shooter, 64);
+        let world = app.world();
+        let root = world.get::<Transform>(shooter).unwrap();
+        let pose = world.get::<common::humanoid::PoseState>(shooter).unwrap();
+        assert!(pose.ads > 0.999 && (pose.aim_roll - roll).abs() < 0.001);
+        let camera = world.get::<ClientInput>(shooter).unwrap().camera;
+        let eye = root.translation
+            + Vec3::Y * PLAYER_VIEW_HEIGHT
+            + root.rotation * common::humanoid::aim_lean_offset(pose.aim_roll);
+        let assembly = &world
+            .get::<Arsenal>(shooter)
+            .unwrap()
+            .current()
+            .spec()
+            .assembly;
+        let point = |kind| {
+            eye + Quat::from(&camera)
+                * assembly
+                    .ads_from_root
+                    .transform_point(assembly.anchors[&kind].translation)
+        };
+        let bore = point(AnchorKind::Bore);
+        let exit = point(AnchorKind::DeviceExit);
+        assert!(bore.z - exit.z > 0.10);
+        let depth = (bore.z + exit.z) * 0.5;
+        let centre = eye.lerp(exit, (depth - eye.z) / (exit.z - eye.z));
+        app.world_mut().spawn((
+            SurfaceKind::Concrete,
+            Collider::cuboid(0.002, 0.002, 0.005),
+            Transform::from_translation(centre),
+        ));
+        held_steps(&mut app, shooter, 3);
+        app.world_mut()
+            .get_mut::<ClientInput>(shooter)
+            .unwrap()
+            .fire = true;
+        held_steps(&mut app, shooter, 1);
+        app.world_mut()
+            .get_mut::<ClientInput>(shooter)
+            .unwrap()
+            .fire = false;
+        held_steps(&mut app, shooter, 3);
+        let state = app.world().resource::<WorldState>();
+        let shot = state.fired_projectiles.last().unwrap();
+        assert!(Vec3::from(shot.muzzle).distance(exit) < 0.001);
+        assert!(
+            state
+                .impact_marks
+                .iter()
+                .any(|mark| Vec3::from(mark.pos).distance(centre) < 0.01),
+            "lean {roll}: concrete before the outlet did not stop the shot"
         );
     }
 }
