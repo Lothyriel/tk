@@ -64,6 +64,28 @@ Testes headless não substituem aceite perceptual ou transporte real. Consulte `
 Os scripts de playtest coordenam processos reais e preservam evidências. `validate_humanoids.py` reutiliza o gate central antes dos cenários solo/dual; as regras de fmt/check/Clippy/testes ficam apenas em `verify.py`.
 Scripts de baseline e comparação preservam proveniência e verificações específicas de formatos históricos. Use-os quando o aceite exigir comparação, não como etapas obrigatórias de toda tarefa.
 
+### Bancada curta de POV
+
+```sh
+cargo build --locked -p client -p server
+python scripts/playtest.py --no-build --weapon-kit compact --pov stop-lean --output target/pov-stop-lean
+python scripts/verify.py --package client --filter playtest::pov
+```
+
+Use `--pov ads` para mirar e soltar, ou `--pov inspect` para confirmar início e
+retorno da inspeção. O preset `stop-lean` caminha, corre e freia diante da
+barreira baixa de concreto, agacha e inclina para ambos os lados. Os comandos
+passam pelo cliente e servidor UDP normais. A bancada solo não substitui o
+observador remoto nem o gate de rede. Os NPCs da raid continuam ativos.
+
+Compare capturas de diretórios separados com o mesmo kit e viewport. Confira
+`run-settings.json` para hashes dos binários e projeções e `client.log` para
+estado confirmado por captura. Se a revisão não tiver animação de inspeção,
+o preset ainda verifica o estado, não a pose. Para medir tempo de iteração,
+alterne três execuções quentes com e sem `--pov`, mantendo os mesmos binários
+e medindo o tempo de parede até o processo terminar. Isso não é benchmark
+de frame time nem valida naturalidade em movimento.
+
 `docs/GAME_STATE.md` é o guia do jogador: só muda quando execução, controles, gameplay ou limitações relevantes mudam.
 
 ## Referências dos harnesses
