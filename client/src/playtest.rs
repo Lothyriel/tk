@@ -48,6 +48,11 @@ impl bevy::prelude::Plugin for Plugin {
             )
             .add_systems(PostUpdate, video::record);
         if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("stop-lean")
+            && std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1")
+        {
+            app.add_systems(PostUpdate, pov::trace_observer);
+        }
+        if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("stop-lean")
             && let Ok(value) = std::env::var("TK_PLAYTEST_POV_HZ")
         {
             let hz = value.parse::<u32>().expect("POV cadence in Hz");

@@ -1,9 +1,70 @@
 //! Short POV route driven by confirmed raid state, not animation timers.
 use bevy::prelude::*;
+use common::humanoid::Segment;
 use std::{
     io::{BufWriter, Write},
     time::{Duration, Instant},
 };
+
+pub(super) fn trace_observer(
+    driver: Res<super::Driver>,
+    time: Res<Time<Real>>,
+    session: Res<crate::sync::ClientSession>,
+    id: Res<common::PlayerId>,
+    poses: Res<crate::render::actors::PoseCache>,
+    mut file: Local<Option<BufWriter<std::fs::File>>>,
+) {
+    if driver.step != super::Step::Pov {
+        return;
+    }
+    let Some(actor) = session.players.iter().find(|p| p.id != id.0 && !p.bot) else {
+        return;
+    };
+    let Some((phase, weights)) = poses.presented_support(actor.id) else {
+        return;
+    };
+    let [Some(left), Some(right), Some(pelvis), Some(chest)] = [
+        Segment::LeftFoot,
+        Segment::RightFoot,
+        Segment::Pelvis,
+        Segment::Thorax,
+    ]
+    .map(|bone| poses.presented_bone(actor.id, bone)) else {
+        return;
+    };
+    let out = file.get_or_insert_with(|| {
+        let root = std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").expect("playtest dir"));
+        let mut out = BufWriter::new(std::fs::File::create(root.join("gait-trace.csv")).unwrap());
+        writeln!(out, "seconds,snapshot,phase,roll,speed,left_weight,right_weight,left_x,left_y,left_z,right_x,right_y,right_z,pelvis_x,pelvis_y,pelvis_z,chest_qx,chest_qy,chest_qz,chest_qw").unwrap();
+        out
+    });
+    let [vx, _, vz] = actor.pose.velocity;
+    write!(
+        out,
+        "{:.6},{},{phase:.6},{:.6},{:.6},{:.6},{:.6}",
+        time.elapsed_secs_f64() - driver.since,
+        session.last_sequence,
+        actor.pose.aim_roll,
+        vx.hypot(vz),
+        weights[0],
+        weights[1]
+    )
+    .unwrap();
+    for value in left
+        .translation
+        .to_array()
+        .into_iter()
+        .chain(right.translation.to_array())
+        .chain(pelvis.translation.to_array())
+        .chain(chest.rotation.to_array())
+    {
+        write!(out, ",{value:.6}").unwrap();
+    }
+    writeln!(out).unwrap();
+    if driver.pov_observed == 3 {
+        out.flush().unwrap();
+    }
+}
 
 #[derive(Resource)]
 pub(super) struct Cadence(Duration);
