@@ -196,12 +196,15 @@ fn spawn_world_colliders(mut commands: Commands) {
             Transform::from_translation(Vec3::from(position)),
         ));
     }
-    if common::map::pov_fixture() {
-        let step = common::map::POV_STEP;
+    for block in common::map::pov_fixture()
+        .then_some(common::map::POV_STEP)
+        .into_iter()
+        .chain(common::map::pov_side_cover())
+    {
         commands.spawn((
-            step.surface,
-            Collider::cuboid(step.half_size[0], step.half_size[1], step.half_size[2]),
-            Transform::from_translation(Vec3::from(step.center)),
+            block.surface,
+            Collider::cuboid(block.half_size[0], block.half_size[1], block.half_size[2]),
+            Transform::from_translation(Vec3::from(block.center)),
         ));
     }
 }

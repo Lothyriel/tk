@@ -91,6 +91,7 @@ impl StopLean {
         elapsed: f64,
         ready: bool,
         player: &common::ClientData,
+        side_cover: bool,
     ) -> Result<Option<&'static str>, &'static str> {
         if elapsed >= 15.0 {
             return Err("POV stop/lean did not reach its confirmed state before timeout");
@@ -101,6 +102,13 @@ impl StopLean {
         let pose = &player.pose;
         let [x, _, z] = pose.velocity;
         let speed = x.hypot(z);
+        let settled_lean = |roll: f32| {
+            if side_cover {
+                (0.20..0.29).contains(&roll)
+            } else {
+                roll > 0.29
+            }
+        };
         let (next, capture) = match self {
             Self::Rest => (Self::Walk, "pov-rest"),
             Self::Walk if speed >= 2.5 && player.pos[2] < 8.0 => (Self::Run, "pov-walk"),
@@ -108,8 +116,8 @@ impl StopLean {
             Self::Run if speed >= 4.5 && player.pos[2] < -0.7 => (Self::Brake, "pov-run"),
             Self::Brake if speed < 0.08 => (Self::Crouch, "pov-stop"),
             Self::Crouch if pose.crouch > 0.95 => (Self::Left, "pov-crouch"),
-            Self::Left if pose.aim_roll < -0.29 => (Self::Right, "pov-left"),
-            Self::Right if pose.aim_roll > 0.29 => (Self::Neutral, "pov-right"),
+            Self::Left if settled_lean(-pose.aim_roll) => (Self::Right, "pov-left"),
+            Self::Right if settled_lean(pose.aim_roll) => (Self::Neutral, "pov-right"),
             Self::Neutral if pose.aim_roll.abs() < 0.001 => (Self::Finish, "pov-return"),
             _ => return Ok(None),
         };
@@ -205,19 +213,37 @@ mod tests {
             ..Default::default()
         };
         player.pose.velocity[2] = -5.0;
-        assert_eq!(route.advance(2.0, true, &player), Ok(Some("pov-run")));
-        assert_eq!(route.advance(2.1, true, &player), Ok(None));
+        assert_eq!(
+            route.advance(2.0, true, &player, false),
+            Ok(Some("pov-run"))
+        );
+        assert_eq!(route.advance(2.1, true, &player, false), Ok(None));
         player.pose.velocity[2] = 0.0;
-        assert_eq!(route.advance(2.4, true, &player), Ok(Some("pov-stop")));
+        assert_eq!(
+            route.advance(2.4, true, &player, false),
+            Ok(Some("pov-stop"))
+        );
         player.pose.crouch = 1.0;
-        assert_eq!(route.advance(2.8, true, &player), Ok(Some("pov-crouch")));
+        assert_eq!(
+            route.advance(2.8, true, &player, false),
+            Ok(Some("pov-crouch"))
+        );
         player.pose.aim_roll = -0.3;
-        assert_eq!(route.advance(3.0, true, &player), Ok(Some("pov-left")));
-        assert_eq!(route.advance(3.1, true, &player), Ok(None));
+        assert_eq!(
+            route.advance(3.0, true, &player, false),
+            Ok(Some("pov-left"))
+        );
+        assert_eq!(route.advance(3.1, true, &player, false), Ok(None));
         player.pose.aim_roll = 0.3;
-        assert_eq!(route.advance(3.2, true, &player), Ok(Some("pov-right")));
+        assert_eq!(
+            route.advance(3.2, true, &player, false),
+            Ok(Some("pov-right"))
+        );
         player.pose.aim_roll = 0.0;
-        assert_eq!(route.advance(3.4, true, &player), Ok(Some("pov-return")));
+        assert_eq!(
+            route.advance(3.4, true, &player, false),
+            Ok(Some("pov-return"))
+        );
     }
 
     #[test]

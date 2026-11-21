@@ -19,6 +19,7 @@ POV_CAPTURES = {
     "ads": ("rest", "ads", "return"),
     "inspect": ("rest", "inspect", "return"),
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
+    "side-cover": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
 }
 
 

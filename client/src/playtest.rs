@@ -420,7 +420,7 @@ fn drive(
             let name = match preset.as_str() {
                 "ads" => driver.pov_ads.advance(elapsed, ready, ads, world_fov),
                 "inspect" => driver.pov_inspect.advance(elapsed, ready, local.mechanics),
-                "stop-lean" => {
+                "stop-lean" | "side-cover" => {
                     // The capture runs after Present; allow the interpolation
                     // buffer to catch up before taking a static stance/roll cue.
                     let settled = session.local_motion.sample(now).is_some_and(|pose| {
@@ -432,7 +432,11 @@ fn drive(
                         roll_settled
                             && (pose.crouch - f32::from(u8::from(local.crouched))).abs() < 0.01
                     });
-                    driver.pov_stop_lean.advance(elapsed, ready && settled, local)
+                    let side_cover = preset == "side-cover";
+                    let at_limit = !side_cover
+                        || !matches!(driver.pov_stop_lean, pov::StopLean::Left | pov::StopLean::Right)
+                        || previous_lean.abs() >= 0.299;
+                    driver.pov_stop_lean.advance(elapsed, ready && settled && at_limit, local, side_cover)
                 }
                 _ => panic!("Unknown POV preset: {preset}"),
             }
@@ -459,7 +463,7 @@ fn drive(
             if preset == "inspect" && name == Some("pov-rest") {
                 input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
             }
-            if preset == "stop-lean" {
+            if matches!(preset.as_str(), "stop-lean" | "side-cover") {
                 driver
                     .pov_stop_lean
                     .input(&mut input, previous_lean, time.delta_secs());
