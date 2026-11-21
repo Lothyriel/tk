@@ -767,7 +767,12 @@ fn sync_barrel_laser(
     id: Res<PlayerId>,
     feedback: Res<feedback::Feedback>,
     session: Res<ClientSession>,
+    mut clean_art: Local<Option<bool>>,
 ) {
+    let clean_art = *clean_art.get_or_insert_with(|| {
+        std::env::args().any(|arg| arg == "--playtest")
+            && std::env::var_os("TK_PLAYTEST_CLEAN_ART").is_some()
+    });
     for (parent, mut transform, mut visibility) in lasers.iter_mut() {
         let Ok(weapon_view) = weapon_views.get(parent.0) else {
             continue;
@@ -776,7 +781,8 @@ fn sync_barrel_laser(
         let ads = feedback.responses.get(&id.0).map_or(0.0, |r| r.ads);
         transform.translation = common::weapon_animation::barrel_offset(weapon_view.weapon, ads)
             + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5);
-        *visibility = if player_state.alive
+        *visibility = if !clean_art
+            && player_state.alive
             && player_state.weapon == weapon_view.weapon
             && ads < 0.1
             && session
