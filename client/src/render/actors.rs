@@ -67,6 +67,12 @@ impl PoseCache {
     pub(crate) fn presented_roll(&self, id: u64) -> Option<f32> {
         self.poses.get(&id).map(|pose| pose.aim_roll)
     }
+
+    pub(crate) fn presented_support(&self, id: u64) -> Option<(f32, [f32; 2])> {
+        self.poses
+            .get(&id)
+            .map(|pose| (pose.phase, pose.foot_weight))
+    }
 }
 #[derive(Component)]
 struct WorldWeapon {

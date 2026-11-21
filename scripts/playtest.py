@@ -73,7 +73,7 @@ def main():
             (output / f"pov-{name}.png").unlink(missing_ok=True)
         (output / "pov-trace.csv").unlink(missing_ok=True)
         if args.clients == 2:
-            for name in ("left", "right", "return"):
+            for name in ("run", "left", "right", "return"):
                 (output / "peer" / f"pov-{name}.png").unlink(missing_ok=True)
     if args.video:
         assert not (output / "frame-times.csv").exists(), "Use a fresh output directory for video evidence"
@@ -195,7 +195,7 @@ def main():
             peer_text = re.sub(r"\x1b\[[0-9;]*m", "", peer_text)
             assert "POV OBSERVER PASS" in peer_text and "panicked at" not in peer_text
             assert " ERROR " not in peer_text, f"Runtime/render error in observer log: {peer}"
-            for name in ("left", "right", "return"):
+            for name in ("run", "left", "right", "return"):
                 assert f"POV OBSERVER {name} " in peer_text
                 data = (peer / f"pov-{name}.png").read_bytes()
                 assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000

@@ -1934,6 +1934,41 @@ fn surviving_getup_by_a_wall_keeps_the_articulated_body_on_the_clear_side() {
     assert!(
         app.world().get::<Transform>(b).unwrap().translation.x < wall_face - PLAYER_COLLIDER_RADIUS
     );
+
+    // Resume away from the wall using the ordinary controller, then check
+    // rendered foot centers rather than just the cached contact coordinates.
+    let recovered_x = app.world().get::<Transform>(b).unwrap().translation.x;
+    app.world_mut().get_mut::<ClientInput>(b).unwrap().left = true;
+    let mut previous = [(0.0, Vec3::ZERO); 2];
+    let mut planted_ticks = 0;
+    for _ in 0..96 {
+        held_steps(&mut app, b, 1);
+        let root = app.world().get::<Transform>(b).unwrap();
+        let pose = app.world().get::<PoseState>(b).unwrap();
+        assert_eq!(pose.mode, PhysicalMode::Standing);
+        let rig = evaluate_pose(pose, 1.0, 1.0);
+        for (i, segment) in [Segment::LeftFoot, Segment::RightFoot]
+            .into_iter()
+            .enumerate()
+        {
+            let foot = root.transform_point(rig[segment.index()].position.into());
+            let weight = pose.foot_weight[i];
+            assert!(foot.is_finite());
+            if weight > 0.95 && previous[i].0 > 0.95 {
+                assert!(
+                    foot.distance(previous[i].1) < 0.01,
+                    "foot slipped after recovery"
+                );
+                planted_ticks += 1;
+            }
+            previous[i] = (weight, foot);
+        }
+    }
+    assert!(
+        planted_ticks > 10,
+        "must observe sustained support after recovery"
+    );
+    assert!(app.world().get::<Transform>(b).unwrap().translation.x < recovered_x - 0.5);
 }
 
 #[test]
