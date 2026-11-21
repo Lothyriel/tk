@@ -58,8 +58,9 @@ def main():
         parser.error("--viewport requires --pov")
     if args.pov_hz and args.pov != "stop-lean":
         parser.error("--pov-hz requires --pov stop-lean")
-    if args.pov and (args.clients != 1 or args.animation_review or args.configure_weapons or args.video):
-        parser.error("--pov requires one client and no other review, configurator or video mode")
+    if args.pov and (args.animation_review or args.configure_weapons or args.video
+                     or (args.clients == 2 and args.pov != "stop-lean")):
+        parser.error("--pov is standalone; only stop-lean supports a second client")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
     assert args.weapon_debug or args.weapon_lod == "auto", "--weapon-lod requires --weapon-debug"
     assert not (args.configure_weapons and args.weapon_kit), "Panel acceptance must not seed server fixtures"
@@ -70,6 +71,9 @@ def main():
         for name in POV_CAPTURES[args.pov]:
             (output / f"pov-{name}.png").unlink(missing_ok=True)
         (output / "pov-trace.csv").unlink(missing_ok=True)
+        if args.clients == 2:
+            for name in ("left", "right", "return"):
+                (output / "peer" / f"pov-{name}.png").unlink(missing_ok=True)
     if args.video:
         assert not (output / "frame-times.csv").exists(), "Use a fresh output directory for video evidence"
     # Old screenshots must never satisfy evidence checks for a new run.
@@ -184,6 +188,18 @@ def main():
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
     if args.pov:
+        if args.clients == 2:
+            peer = output / "peer"
+            peer_text = (peer / "client.log").read_text(encoding="utf-8", errors="replace")
+            peer_text = re.sub(r"\x1b\[[0-9;]*m", "", peer_text)
+            assert "POV OBSERVER PASS" in peer_text and "panicked at" not in peer_text
+            assert " ERROR " not in peer_text, f"Runtime/render error in observer log: {peer}"
+            for name in ("left", "right", "return"):
+                assert f"POV OBSERVER {name} " in peer_text
+                data = (peer / f"pov-{name}.png").read_bytes()
+                assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
+                if args.viewport:
+                    assert struct.unpack(">II", data[16:24]) == args.viewport
         if args.pov_hz:
             trace = output / "pov-trace.csv"
             assert trace.is_file() and trace.stat().st_size > 500, f"Missing camera cadence trace: {trace}"
