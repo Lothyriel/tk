@@ -442,7 +442,7 @@ fn drive(
                 }
                 input.camera = CameraInput {
                     yaw: (-delta.x).atan2(-delta.z),
-                    pitch: delta.y.atan2(delta.x.hypot(delta.z)),
+                    pitch: (delta.y - 0.65).atan2(delta.x.hypot(delta.z)),
                     ..default()
                 };
                 if let Some(roll) = projections.poses.presented_roll(actor.id) {
