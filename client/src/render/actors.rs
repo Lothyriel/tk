@@ -111,6 +111,47 @@ struct VoxelAssets {
     cube: Handle<Mesh>,
 }
 
+// Overextended gait targets keep their planted ankle; close the resulting
+// knee seam on the live meshes only. Rig positions, contacts and colliders
+// remain unchanged, and articulated bodies retain their original meshes.
+fn gait_knee_scale(rig: &[SegmentPose; SEGMENT_COUNT], segment: Segment) -> f32 {
+    use Segment::*;
+    let (thigh, shin) = match segment {
+        LeftThigh | LeftShin => (LeftThigh, LeftShin),
+        RightThigh | RightShin => (RightThigh, RightShin),
+        _ => return 1.0,
+    };
+    let a = Vec3::from(rig[thigh.index()].position);
+    let b = Vec3::from(rig[shin.index()].position);
+    let span = thigh.half_size().y + shin.half_size().y;
+    ((a.distance(b) + 0.004) / span).clamp(1.0, 1.35)
+}
+
+#[cfg(test)]
+#[test]
+fn gait_knee_scale_closes_overextended_meshes_without_moving_contacts() {
+    let state = PoseState {
+        grounded: true,
+        velocity: [0.0, 0.0, -5.5],
+        feet: [[-0.13, -0.845, 0.49], [0.13, -0.845, -0.06]],
+        foot_weight: [0.98, 0.02],
+        phase: 2.61,
+        ..default()
+    };
+    let rig = evaluate_pose(&state, 1.0, 1.0);
+    let (thigh, shin) = (Segment::LeftThigh, Segment::LeftShin);
+    let end = |segment: Segment, sign: f32, scale: f32| {
+        rig[segment.index()]
+            .transform()
+            .transform_point(Vec3::Y * sign * segment.half_size().y * scale)
+    };
+    assert!(end(thigh, -1.0, 1.0).distance(end(shin, 1.0, 1.0)) > 0.045);
+    let a = end(thigh, -1.0, gait_knee_scale(&rig, thigh));
+    let b = end(shin, 1.0, gait_knee_scale(&rig, shin));
+    assert!(a.distance(b) < 0.005);
+    assert_eq!(gait_knee_scale(&rig, Segment::LeftFoot), 1.0);
+}
+
 /// Stepped silhouettes and a carved entry cavity. Geometry is generated once per segment/state.
 fn voxel_mesh(segment: Segment, wounded: bool, interior: bool) -> Mesh {
     let half = segment.half_size();
@@ -849,6 +890,15 @@ fn animate(
             Visibility::Hidden
         };
         *t = rigs[&p.id][bone.segment.index()].transform();
+        if present
+            && p.pose.grounded
+            && matches!(
+                p.pose.mode,
+                PhysicalMode::Standing | PhysicalMode::Stumbling
+            )
+        {
+            t.scale.y = gait_knee_scale(&rigs[&p.id], bone.segment);
+        }
         if matches!(
             bone.segment,
             Segment::Thorax
