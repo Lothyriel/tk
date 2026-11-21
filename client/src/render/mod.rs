@@ -141,14 +141,33 @@ const BARREL_LASER_LENGTH: f32 = 25.0;
 struct ViewSettings {
     world_fov: f32,
     current_fov: f32,
+    bob_strength: f32,
 }
 impl Default for ViewSettings {
     fn default() -> Self {
         Self {
             world_fov: 70.0_f32.to_radians(),
             current_fov: 70.0_f32.to_radians(),
+            bob_strength: std::env::var("TK_CAMERA_BOB")
+                .ok()
+                .as_deref()
+                .map_or(1.0, camera_bob_strength),
         }
     }
+}
+
+fn camera_bob_strength(value: &str) -> f32 {
+    match value {
+        "off" => 0.0,
+        "reduced" => 0.35,
+        _ => 1.0,
+    }
+}
+
+fn stride_bob(phase: f32, speed: f32, ads: f32, strength: f32) -> f32 {
+    // Cosmetic translation only; fade to zero at rest and scale down in ADS.
+    let amplitude = 0.012 * ((speed - 0.08) / (5.5 - 0.08)).clamp(0.0, 1.0);
+    (2.0 * phase).cos() * amplitude * (1.0 - 0.8 * ads.clamp(0.0, 1.0)) * strength
 }
 
 fn aimed_fov(base: f32, weapon: WeaponKind, ads: f32) -> f32 {
@@ -605,6 +624,7 @@ fn sync_local_view(
     id: Option<Res<PlayerId>>,
     session: Option<Res<ClientSession>>,
     time: Option<Res<Time<Real>>>,
+    view_settings: Option<Res<ViewSettings>>,
     player_visual_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     mut query: Query<(&BaseLocalOffset, &mut Transform), With<LocalView>>,
 ) {
@@ -614,13 +634,21 @@ fn sync_local_view(
     };
     // Match the timestamps and endpoints used by the local root. The latest
     // stance alone would switch the lens height before the root moves.
-    let crouch = session
+    let motion = session
         .zip(time)
-        .and_then(|(session, time)| session.local_motion.sample(time.elapsed_secs_f64()))
-        .map_or_else(
-            || f32::from(u8::from(player_visual_state.crouched)),
-            |pose| pose.crouch,
-        );
+        .and_then(|(session, time)| session.local_motion.sample(time.elapsed_secs_f64()));
+    let crouch = motion.map_or_else(
+        || f32::from(u8::from(player_visual_state.crouched)),
+        |pose| pose.crouch,
+    );
+    let bob = motion.zip(view_settings).map_or(0.0, |(pose, settings)| {
+        stride_bob(
+            pose.stride_phase,
+            pose.stride_speed,
+            pose.ads,
+            settings.bob_strength,
+        )
+    });
     let vertical_offset = crouch * PLAYER_CROUCH_VIEW_OFFSET;
     let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, camera.roll);
 
@@ -628,7 +656,7 @@ fn sync_local_view(
         transform.rotation = rotation;
         transform.translation = base_offset.0
             + common::humanoid::aim_lean_offset(player_input.camera.roll)
-            + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset);
+            + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset + bob);
     }
 }
 
@@ -821,6 +849,21 @@ mod view_tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn local_camera_stride_bob_is_bounded_and_zero_at_rest_or_when_disabled() {
+        use std::f32::consts::FRAC_PI_2;
+        let hip = stride_bob(0.0, 5.5, 0.0, 1.0);
+        assert!((hip - 0.012).abs() < 0.00001);
+        assert!((stride_bob(FRAC_PI_2, 5.5, 0.0, 1.0) + hip).abs() < 0.00001);
+        assert!(stride_bob(0.0, 3.25, 0.0, 1.0) < hip);
+        assert!(stride_bob(0.0, 5.5, 1.0, 1.0) < hip * 0.21);
+        assert!(stride_bob(0.0, 5.5, 0.0, camera_bob_strength("reduced")) < hip * 0.36);
+        assert_eq!(stride_bob(0.0, 5.5, 0.0, camera_bob_strength("off")), 0.0);
+        for phase in [0.0, FRAC_PI_2] {
+            assert_eq!(stride_bob(phase, 0.0, 0.0, 1.0), 0.0);
+        }
     }
 
     #[test]
