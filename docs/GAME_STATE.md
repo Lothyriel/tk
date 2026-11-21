@@ -93,7 +93,7 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | Mouse | Look |
 | Left Shift / Left Ctrl | Run / crouch |
 | Space | Jump while active; never respawn during the current raid |
-| Hold Q / E | Gradually lean the view, upper body and firing origin left / right; remote players see the body move with it; release to hold the current angle |
+| Hold Q / E | Gradually lean left / right; release both keys (or hold both) to return to neutral |
 | Tap the opposite tilt key | Ease the view and upper body back to center |
 | 1 / 2 | Equip your selected primary / pistol |
 | Left mouse button | Hold for rifle/SMG automatic fire; click for pistol semi-automatic fire |
