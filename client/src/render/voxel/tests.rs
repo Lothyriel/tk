@@ -371,6 +371,67 @@ fn voxel_lod_switches_cached_geometry_with_hysteresis_and_keeps_anchors() {
 }
 
 #[test]
+fn m4a1_base_lod_keeps_baked_mounts_and_shared_surfaces() {
+    let mut app = app();
+    let roots = [false, true].map(|view_model| {
+        app.world_mut()
+            .spawn((
+                VoxelModel {
+                    asset: "m4a1_refined".into(),
+                    view_model,
+                },
+                Transform::default(),
+                Visibility::Inherited,
+            ))
+            .id()
+    });
+    let [remote, view] = roots;
+    let camera = lod_camera(&mut app, 1.0);
+    app.update();
+
+    let children = descendants(app.world(), remote);
+    let anchors: Vec<_> = children
+        .iter()
+        .filter_map(|&entity| {
+            app.world().get::<VoxelSocket>(entity)?;
+            Some((entity, *app.world().get::<GlobalTransform>(entity)?))
+        })
+        .collect();
+    assert!(!anchors.is_empty(), "must inspect real baked mounts");
+    let surfaces = |app: &App, root| {
+        descendants(app.world(), root)
+            .into_iter()
+            .filter_map(|entity| app.world().get::<Mesh3d>(entity).map(|mesh| mesh.0.id()))
+            .collect::<Vec<_>>()
+    };
+    let near = surfaces(&app, remote);
+    assert_eq!(near.len(), 23);
+    assert_eq!(near, surfaces(&app, view));
+    let cache_size = app.world().resource::<Assets<Mesh>>().len();
+    for (distance, triangles) in [(1.0, 2540), (100.0, 2302), (1.0, 2540)] {
+        app.world_mut()
+            .get_mut::<Transform>(camera)
+            .unwrap()
+            .translation
+            .z = distance;
+        app.update();
+        assert_eq!(active_triangles(&app, remote), triangles);
+        assert_eq!(surfaces(&app, view), near);
+        assert_eq!(descendants(app.world(), remote), children);
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), cache_size);
+        for (entity, pose) in &anchors {
+            assert_eq!(app.world().get::<GlobalTransform>(*entity), Some(pose));
+        }
+        let changed = surfaces(&app, remote)
+            .iter()
+            .zip(&near)
+            .filter(|(current, original)| current != original)
+            .count();
+        assert_eq!(changed, usize::from(triangles == 2302));
+    }
+}
+
+#[test]
 fn voxel_lod_respects_zoom_viewport_multiple_cameras_and_invalid_projection() {
     let mut app = app();
     let root = spawn(&mut app, false);
