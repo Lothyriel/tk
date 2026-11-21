@@ -2719,6 +2719,88 @@ fn narrow_concrete_on_eye_to_muzzle_path_stops_hip_and_ads_without_parallel_eye_
 }
 
 #[test]
+fn m4a1_game_zero_hits_calibration_planes_without_moving_the_outlet() {
+    use common::catalog::AnchorKind;
+    for kit in ["compact", "suppressed"] {
+        for (distance, roll) in [(2.0, 0.0), (20.0, -0.3), (20.0, 0.3), (30.0, 0.0)] {
+            let (mut app, shooter, other) = physical_fixture();
+            app.world_mut()
+                .get_mut::<Transform>(other)
+                .unwrap()
+                .translation
+                .x = -14.0;
+            let loadout = Loadout {
+                ammo: if roll < 0.0 {
+                    AmmoKind::Ap
+                } else {
+                    AmmoKind::Ball
+                },
+                ..default()
+            };
+            *app.world_mut().get_mut::<Arsenal>(shooter).unwrap() =
+                crate::kit_fixture::KitFixture::named(kit).arsenal(loadout);
+            {
+                let mut input = app.world_mut().get_mut::<ClientInput>(shooter).unwrap();
+                input.aim = true;
+                input.camera.roll = roll;
+            }
+            held_steps(&mut app, shooter, 64);
+            let world = app.world();
+            let root = world.get::<Transform>(shooter).unwrap();
+            let pose = world.get::<common::humanoid::PoseState>(shooter).unwrap();
+            assert!(pose.ads > 0.999 && (pose.aim_roll - roll).abs() < 0.001);
+            let camera = world.get::<ClientInput>(shooter).unwrap().camera;
+            let eye = root.translation
+                + Vec3::Y * PLAYER_VIEW_HEIGHT
+                + root.rotation * common::humanoid::aim_lean_offset(pose.aim_roll);
+            let assembly = &world
+                .get::<Arsenal>(shooter)
+                .unwrap()
+                .current()
+                .spec()
+                .assembly;
+            let exit = eye
+                + Quat::from(&camera)
+                    * assembly
+                        .ads_from_root
+                        .transform_point(assembly.anchors[&AnchorKind::DeviceExit].translation);
+            let target = eye - Vec3::Z * distance;
+            app.world_mut().spawn((
+                SurfaceKind::Concrete,
+                Collider::cuboid(0.2, 0.2, 0.01),
+                Transform::from_translation(target - Vec3::Z * 0.01),
+            ));
+            held_steps(&mut app, shooter, 3);
+            app.world_mut()
+                .get_mut::<ClientInput>(shooter)
+                .unwrap()
+                .fire = true;
+            held_steps(&mut app, shooter, 1);
+            app.world_mut()
+                .get_mut::<ClientInput>(shooter)
+                .unwrap()
+                .fire = false;
+            held_steps(&mut app, shooter, 12);
+            let state = app.world().resource::<WorldState>();
+            let shot = state.fired_projectiles.last().unwrap();
+            assert!(Vec3::from(shot.muzzle).distance(exit) < 0.001);
+            let impact = state
+                .impact_marks
+                .iter()
+                .map(|m| Vec3::from(m.pos))
+                .find(|p| (p.z - target.z).abs() < 0.003)
+                .unwrap_or_else(|| panic!("{kit}: no calibration impact at {distance} m"));
+            let error = impact - target;
+            match distance {
+                2.0 => assert!((-0.08..-0.05).contains(&error.y), "{kit}: {error:?}"),
+                20.0 => assert!(error.length() < 0.003, "{kit}: {error:?}"),
+                _ => assert!((0.015..0.045).contains(&error.y), "{kit}: {error:?}"),
+            }
+        }
+    }
+}
+
+#[test]
 fn suppressed_device_outlet_keeps_cover_between_bore_and_exit_in_clearance() {
     use common::catalog::AnchorKind;
     for roll in [-0.3, 0.3] {
