@@ -43,6 +43,110 @@ struct Fixture {
 }
 
 #[test]
+fn configured_local_first_person_pistol_arms_extend_from_behind_the_grips() {
+    for aspect in [9.0 / 16.0, 1.6, 21.0 / 9.0] {
+        let mut f = Fixture::new(WeaponKind::Pistol, aspect);
+        for aim in [false, true] {
+            f.app.world_mut().resource_mut::<LocalInput>().aim = aim;
+            for _ in 0..90 {
+                f.step();
+            }
+            f.assert_contacts();
+            f.assert_pistol_frame(aspect);
+            let world = f.app.world();
+            let to_eye = world
+                .get::<GlobalTransform>(f.camera)
+                .unwrap()
+                .to_matrix()
+                .inverse();
+            for side in ["support", "trigger"] {
+                let forearm = world
+                    .get::<GlobalTransform>(named(
+                        &f.app,
+                        f.root,
+                        &format!("configured-{side}-forearm"),
+                    ))
+                    .unwrap();
+                let elbow = to_eye.transform_point3(forearm.transform_point(Vec3::Y * 0.14));
+                let wrist = to_eye.transform_point3(forearm.transform_point(Vec3::NEG_Y * 0.14));
+                assert!(
+                    elbow.z > wrist.z + 0.10,
+                    "{side} forearm must extend toward the gun, aim={aim}: elbow={elbow:?}, wrist={wrist:?}"
+                );
+                assert!(elbow.y < wrist.y, "{side} elbow must stay below its grip");
+            }
+        }
+    }
+}
+
+#[test]
+fn configured_local_first_person_rifle_receiver_clears_near_plane_through_recoil() {
+    use bevy::mesh::VertexAttributeValues;
+    let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
+    for pitch in [-1.2, 0.0, 1.2] {
+        f.base.rotation = Quat::from_euler(EulerRot::YXZ, 0.2, pitch, -0.18);
+        for aim in [false, true] {
+            f.app.world_mut().resource_mut::<LocalInput>().aim = aim;
+            for _ in 0..90 {
+                f.step();
+            }
+            for recoil in [0.0, 0.025, 0.055, 0.11] {
+                f.app
+                    .world_mut()
+                    .resource_mut::<Feedback>()
+                    .responses
+                    .get_mut(&7)
+                    .unwrap()
+                    .recoil = recoil;
+                f.step();
+                f.assert_contacts();
+                let world = f.app.world();
+                let to_eye = world
+                    .get::<GlobalTransform>(f.camera)
+                    .unwrap()
+                    .to_matrix()
+                    .inverse();
+                let Projection::Perspective(projection) =
+                    world.get::<Projection>(f.camera).unwrap()
+                else {
+                    panic!("perspective");
+                };
+                let meshes = world.resource::<Assets<Mesh>>();
+                let mut count = 0;
+                for name in ["receiver", "rail", "bolt", "charging_handle", "rear_sight"] {
+                    let part = named(&f.app, f.root, name);
+                    // Mesh surfaces are direct children; nested part pivots
+                    // include the stock extension, which belongs behind the eye.
+                    for entity in world.get::<Children>(part).unwrap().iter() {
+                        let Some(mesh) = world.get::<Mesh3d>(entity) else {
+                            continue;
+                        };
+                        let Some(VertexAttributeValues::Float32x3(vertices)) = meshes
+                            .get(&mesh.0)
+                            .unwrap()
+                            .attribute(Mesh::ATTRIBUTE_POSITION)
+                        else {
+                            panic!("positions");
+                        };
+                        let pose =
+                            to_eye * world.get::<GlobalTransform>(entity).unwrap().to_matrix();
+                        for vertex in vertices {
+                            let point = pose.transform_point3(Vec3::from(*vertex));
+                            assert!(
+                                point.z <= -projection.near - 0.009,
+                                "{name} clipped during recoil={recoil}, aim={aim}, pitch={pitch}: {point:?}"
+                            );
+                            count += 1;
+                        }
+                    }
+                }
+                assert!(count > 100, "actual receiver, action and rear sight meshes");
+            }
+        }
+    }
+}
+
+#[test]
 fn configured_local_mixed_reload_uses_owned_incoming_mesh_before_insertion_without_duplicates() {
     use common::catalog::{DefinitionId, EquippedWeapon, WeaponInstanceId, WeaponKit};
     use common::replication::ConfigurationPublisher;

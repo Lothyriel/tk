@@ -10,12 +10,18 @@ pub(crate) struct ViewAssets<'w> {
     bindings: Res<'w, VisualBindings>,
 }
 
+pub(crate) struct ViewPreview {
+    pub points: Vec<Vec3>,
+    pub near_points: Vec<Vec3>,
+    pub root: Transform,
+}
+
 impl ViewAssets<'_> {
     pub(crate) fn preview(
         &mut self,
         spec: &ResolvedWeapon,
         input: &ConfiguredHandling,
-    ) -> Result<(Vec<Vec3>, Transform), String> {
+    ) -> Result<ViewPreview, String> {
         let pieces = self.bindings.pieces(spec)?;
         for (_, _, asset, _) in &pieces {
             self.assets
@@ -33,7 +39,13 @@ impl ViewAssets<'_> {
                 .map(|(node, _, asset, pose)| (*node, asset.as_str(), *pose)),
         )?;
         let mut points = Vec::new();
+        let mut near_points = Vec::new();
         for (node, _, asset, placement) in pieces {
+            // The stock and its extension intentionally pass behind the ADS
+            // eye. Receiver, sights and moving mechanisms must stay in front.
+            let stock = spec.assembly.parts.iter().any(|part| {
+                part.node == node && part.kind == common::catalog::ComponentKind::Stock
+            });
             let asset = &self.assets.cache.assets[&asset];
             let poses = part_poses(asset, node, &input.motions)?;
             for part in &asset.parts {
@@ -44,7 +56,11 @@ impl ViewAssets<'_> {
                     .root
                     .mul_transform(placement)
                     .mul_transform(poses[&part.id].1);
-                points.extend(corners(&part.bounds).map(|p| pose.transform_point(p)));
+                let bounds = corners(&part.bounds).map(|p| pose.transform_point(p));
+                points.extend(bounds);
+                if !stock && !(node == 0 && part.id == "buffer_tube") {
+                    near_points.extend(bounds);
+                }
             }
         }
         let handles = self
@@ -81,7 +97,11 @@ impl ViewAssets<'_> {
                 }));
             }
         }
-        Ok((points, solution.root))
+        Ok(ViewPreview {
+            points,
+            near_points,
+            root: solution.root,
+        })
     }
 }
 

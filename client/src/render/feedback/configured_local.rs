@@ -81,6 +81,14 @@ pub(super) fn prepare(
             response.recoil,
             &response.displayed_mechanics,
         );
+        if displayed == WeaponKind::Pistol {
+            // The pistol has no stock to locate the torso. Put the shoulders
+            // behind and below the grips so the arms extend forward instead
+            // of folding vertically beside the receiver.
+            for shoulder in &mut input.shoulders {
+                *shoulder += Vec3::new(0.0, -0.18, 0.40);
+            }
+        }
         if let Err(error) = native::brace_view(
             &mut input,
             visual,
@@ -115,32 +123,47 @@ pub(super) fn prepare(
         // Preview and publication share the solver and cached assets. A failed
         // preview still publishes the request so the assembler reports the
         // rejection and retains its previously accepted hierarchy/pose.
-        if (displayed == WeaponKind::Pistol
+        if (matches!(displayed, WeaponKind::Pistol | WeaponKind::Rifle)
             || (response.ads > 0.0
                 && visual
                     .assembly
                     .anchors
                     .contains_key(&common::catalog::AnchorKind::Sight)))
-            && let Ok((points, solved_root)) = assets.preview(visual, &input)
+            && let Ok(preview) = assets.preview(visual, &input)
         {
             if displayed != WeaponKind::Pistol {
                 // A shorter stock moves the solved weapon relative to its fixed
                 // shoulder pocket. Frame the entire rigid rig from that accepted
                 // pose, otherwise the receiver/rear iron crosses the near plane.
                 // This preserves all palm/stock contacts and authored eye relief.
-                let sight = visual.assembly.anchors[&common::catalog::AnchorKind::Sight];
-                let offset = input.preferred_root.transform_point(sight.translation)
-                    - solved_root.transform_point(sight.translation);
-                let correction = view.rotation
-                    * root.rotation
-                    * offset
-                    * common::weapon_animation::ease(response.ads);
-                view.translation += correction;
+                if let Some(sight) = visual
+                    .assembly
+                    .anchors
+                    .get(&common::catalog::AnchorKind::Sight)
+                {
+                    let offset = input.preferred_root.transform_point(sight.translation)
+                        - preview.root.transform_point(sight.translation);
+                    let correction = view.rotation
+                        * root.rotation
+                        * offset
+                        * common::weapon_animation::ease(response.ads);
+                    view.translation += correction;
+                }
+                if displayed == WeaponKind::Rifle {
+                    let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
+                    let retreat = preview.near_points.iter().fold(0.0_f32, |depth, point| {
+                        depth.max(to_eye.transform_point3(*point).z + projection.near + 0.01)
+                    });
+                    // Move the complete rig down the sight line, preserving
+                    // rigid contacts, while recoil/mechanisms approach the eye.
+                    view.translation -= eye.rotation * Vec3::Z * retreat;
+                }
                 commands.entity(entity).insert((request, input));
                 continue;
             }
             let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
-            let points: Vec<_> = points
+            let points: Vec<_> = preview
+                .points
                 .into_iter()
                 .map(|p| to_eye.transform_point3(p))
                 .collect();
