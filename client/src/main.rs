@@ -19,6 +19,8 @@ mod render;
 mod sync;
 
 fn main() {
+    let playtest = std::env::args().any(|argument| argument == "--playtest");
+    let viewport = playtest.then(playtest::requested_viewport).flatten();
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
@@ -29,7 +31,14 @@ fn main() {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "TK | Extraction Alpha".into(),
-                    resolution: (1280, 800).into(),
+                    resolution: viewport.map_or_else(
+                        || (1280, 800).into(),
+                        |(width, height)| {
+                            bevy::window::WindowResolution::new(width, height)
+                                .with_scale_factor_override(1.0)
+                        },
+                    ),
+                    resizable: viewport.is_none(),
                     ..default()
                 }),
                 ..default()
@@ -47,7 +56,7 @@ fn main() {
     )
     .add_plugins(ClientPlugin)
     .add_plugins(hud::Plugin);
-    if std::env::args().any(|argument| argument == "--playtest") {
+    if playtest {
         app.add_plugins(playtest::Plugin);
     }
     app.run();
