@@ -120,6 +120,7 @@ pub struct MechanicalState {
     automatic: bool,
     action: Option<Manipulation>,
     action_sequence: u64,
+    dry_cue_sequence: u8,
 }
 
 /// Index into the configuration's immutable physical pool, plus current rounds.
@@ -167,6 +168,8 @@ pub struct MechanicalSnapshot {
     pub magazine_inserted: bool,
     pub mode: FireMode,
     pub equipped: bool,
+    /// Cosmetic acknowledgment; never used to authorize a shot.
+    pub dry_cue_sequence: u8,
 }
 
 impl Default for MechanicalSnapshot {
@@ -184,6 +187,7 @@ impl Default for MechanicalSnapshot {
             magazine_inserted: true,
             mode: FireMode::Auto,
             equipped: true,
+            dry_cue_sequence: 0,
         }
     }
 }
@@ -243,6 +247,7 @@ impl MechanicalState {
             magazine_inserted: self.inserted.is_some(),
             mode: self.mode,
             equipped: self.equipped,
+            dry_cue_sequence: self.dry_cue_sequence,
         }
     }
 
@@ -305,6 +310,7 @@ impl MechanicalState {
             automatic: spec.automatic,
             action: None,
             action_sequence: 0,
+            dry_cue_sequence: 0,
         };
         state.validate(catalog, spec)?;
         Ok(state)
@@ -745,6 +751,17 @@ impl MechanicalState {
             self.bolt_open = false;
         } else {
             self.bolt_open = true;
+        }
+    }
+
+    /// Called only for a fresh press that passed Arsenal's cadence and slot gates.
+    pub(crate) fn acknowledge_empty_press(&mut self) {
+        if self.equipped
+            && self.mode != FireMode::Safe
+            && self.action.is_none()
+            && self.chamber.is_none()
+        {
+            self.dry_cue_sequence = self.dry_cue_sequence.wrapping_add(1);
         }
     }
 

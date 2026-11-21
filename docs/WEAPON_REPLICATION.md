@@ -1,6 +1,6 @@
 # Weapon configuration replication
 
-Protocol 17 adds the configuration's game-audio signature to confirmed shot events, retaining the optional shot-time ejection origin and mechanical/reload contracts. Rebuild client
+Protocol 18 adds a wrapping cosmetic dry-fire counter to mechanical snapshots. It does not create a shot event or projectile. Rebuild client
 and server together. Weapon configuration uses reliable ordered channel 3 in
 each direction, with a 2 MiB queue and 100 ms retransmission. Existing continuous
 input/connectivity channels remain independent.
