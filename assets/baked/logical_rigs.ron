@@ -126,6 +126,8 @@
             "optic": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
         },
         sockets: {
+            "sight.aperture_max": (translation: (0.01, 0.01, 0.066), rotation: (0.0, 0.0, 0.0, 1.0)),
+            "sight.aperture_min": (translation: (-0.01, -0.01, -0.065), rotation: (0.0, 0.0, 0.0, 1.0)),
             "sight.axis": (translation: (0.0, 0.0, 0.0), rotation: (0.0, 0.0, 0.0, 1.0)),
             "sight.eye": (translation: (0.0, 0.0, 0.21), rotation: (0.0, 0.0, 0.0, 1.0)),
         },

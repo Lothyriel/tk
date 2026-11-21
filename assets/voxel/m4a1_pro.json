@@ -51,6 +51,8 @@
   }],
   "sockets": [
     {"id": "sight.eye", "part": "optic", "pose": {"translation": [0, 0, 0.210], "rotation": [0, 0, 0, 1]}},
-    {"id": "sight.axis", "part": "optic", "pose": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]}}
+    {"id": "sight.axis", "part": "optic", "pose": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]}},
+    {"id": "sight.aperture_min", "part": "optic", "pose": {"translation": [-0.010, -0.010, -0.065], "rotation": [0, 0, 0, 1]}},
+    {"id": "sight.aperture_max", "part": "optic", "pose": {"translation": [0.010, 0.010, 0.066], "rotation": [0, 0, 0, 1]}}
   ]
 }
