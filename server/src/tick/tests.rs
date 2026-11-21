@@ -1378,27 +1378,35 @@ fn walk_sprint_walk_keeps_loaded_feet_stable() {
         .unwrap()
         .forward = true;
     held_steps(&mut app, player, 48);
-    let feet = |app: &App| {
+    let sample = |app: &App| {
         let root = app.world().get::<Transform>(player).unwrap();
         let pose = app.world().get::<PoseState>(player).unwrap();
         let rig = evaluate_pose(pose, 1.0, 1.0);
-        [Segment::LeftFoot, Segment::RightFoot].map(|segment| {
+        let feet = [Segment::LeftFoot, Segment::RightFoot].map(|segment| {
             let i = usize::from(segment == Segment::RightFoot);
             (
                 pose.foot_weight[i],
                 root.transform_point(rig[segment.index()].position.into()),
             )
-        })
+        });
+        let upper = [Segment::Pelvis, Segment::Thorax, Segment::Head]
+            .map(|segment| root.rotation * rig[segment.index()].transform().rotation);
+        (feet, upper)
     };
-    let mut previous = feet(&app);
+    let mut previous = sample(&app);
     for run in [true, false] {
         app.world_mut().get_mut::<ClientInput>(player).unwrap().run = run;
         let mut checked = 0;
         let mut maximum = 0.0_f32;
         for _ in 0..64 {
             held_steps(&mut app, player, 1);
-            let next = feet(&app);
-            for ((old_weight, old_foot), (weight, foot)) in previous.into_iter().zip(next) {
+            let next = sample(&app);
+            for (before, after) in previous.1.into_iter().zip(next.1) {
+                // About one centimetre of arc at a 25 cm torso radius.
+                let delta = before.angle_between(after);
+                assert!(delta < 0.04, "run={run}: torso stepped {delta:.4} rad");
+            }
+            for ((old_weight, old_foot), (weight, foot)) in previous.0.into_iter().zip(next.0) {
                 if old_weight > 0.95 && weight > 0.95 {
                     checked += 1;
                     maximum = maximum.max(old_foot.distance(foot));
