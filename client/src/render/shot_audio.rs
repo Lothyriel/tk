@@ -6,7 +6,7 @@ use bevy::{
 };
 use common::{
     PlayerId, WeaponInstanceId, WeaponKind,
-    catalog::{ManipulationPhase, MechanicalSnapshot},
+    catalog::{ManipulationKind, ManipulationPhase, MechanicalSnapshot},
     replication::shots::ShotWindow,
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -111,17 +111,41 @@ fn synth(weapon: WeaponKind, softened: bool) -> SynthShot {
 }
 
 #[derive(Resource)]
-struct Cues([Handle<SynthShot>; 9]);
+struct Cues([Handle<SynthShot>; 13]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReloadCue {
+enum HandlingCue {
     Removed = 3,
     Inserted = 4,
     Fed = 5,
+    Selector = 9,
+    Equipped = 10,
+    Lowering = 11,
+    Inspect = 12,
 }
 
-fn reload_cue(before: MechanicalSnapshot, after: MechanicalSnapshot) -> Option<ReloadCue> {
-    use ManipulationPhase::*;
+fn handling_cue(before: MechanicalSnapshot, after: MechanicalSnapshot) -> Option<HandlingCue> {
+    use ManipulationKind::{EmptyReload, Inspect, Unequip};
+    use ManipulationPhase::{Equip, Feed, Finish, Insert, Remove};
+    if after.action_id < before.action_id {
+        return None;
+    }
+    if before.action_id != after.action_id {
+        return (after.kind == Some(Unequip)).then_some(HandlingCue::Lowering);
+    }
+    if before.phase == Some(Equip) && !before.equipped && after.equipped && after.kind.is_none() {
+        return Some(HandlingCue::Equipped);
+    }
+    if before.kind == Some(Inspect)
+        && after.kind == before.kind
+        && before.fraction < 0.30
+        && (0.30..0.45).contains(&after.fraction)
+    {
+        return Some(HandlingCue::Inspect);
+    }
+    if before.mode != after.mode {
+        return Some(HandlingCue::Selector);
+    }
     if before.action_id != after.action_id
         || before.kind != after.kind
         || !after.reloading()
@@ -130,14 +154,12 @@ fn reload_cue(before: MechanicalSnapshot, after: MechanicalSnapshot) -> Option<R
         return None;
     }
     match (before.phase?, after.phase?) {
-        (Remove, Insert) => Some(ReloadCue::Removed),
-        (Remove | Insert, Feed) => Some(ReloadCue::Inserted),
-        (Remove | Insert | Feed, Finish)
-            if after.kind == Some(common::catalog::ManipulationKind::EmptyReload) =>
-        {
-            Some(ReloadCue::Fed)
+        (Remove, Insert) => Some(HandlingCue::Removed),
+        (Remove | Insert, Feed) => Some(HandlingCue::Inserted),
+        (Remove | Insert | Feed, Finish) if after.kind == Some(EmptyReload) => {
+            Some(HandlingCue::Fed)
         }
-        (Remove | Insert, Finish) => Some(ReloadCue::Inserted),
+        (Remove | Insert, Finish) => Some(HandlingCue::Inserted),
         _ => None,
     }
 }
@@ -166,6 +188,10 @@ fn prepare(mut commands: Commands, mut assets: ResMut<Assets<SynthShot>>) {
         assets.add(synth(WeaponKind::Rifle, true)),
         assets.add(synth(WeaponKind::Pistol, true)),
         assets.add(synth(WeaponKind::Smg, true)),
+        assets.add(synth_contact(920.0, 195.0)),
+        assets.add(synth_contact(385.0, 125.0)),
+        assets.add(synth_contact(255.0, 150.0)),
+        assets.add(synth_contact(610.0, 210.0)),
     ]));
 }
 
@@ -245,7 +271,7 @@ fn present(
             .insert(actor.id, (actor.weapon_instance, actor.mechanics));
         if let Some((instance, before)) = previous
             && instance == actor.weapon_instance
-            && let Some(cue) = reload_cue(before, actor.mechanics)
+            && let Some(cue) = handling_cue(before, actor.mechanics)
         {
             let remote = actor.id != local.0;
             play(
@@ -277,15 +303,15 @@ mod tests {
         let inserted = state(EmptyReload, Feed, 0.65);
         let finished = state(EmptyReload, Finish, 0.92);
         let started = state(EmptyReload, Remove, 0.15);
-        assert_eq!(reload_cue(started, removed), Some(ReloadCue::Removed));
-        assert_eq!(reload_cue(removed, inserted), Some(ReloadCue::Inserted));
-        assert_eq!(reload_cue(inserted, finished), Some(ReloadCue::Fed));
-        assert_eq!(reload_cue(started, finished), Some(ReloadCue::Fed));
-        assert_eq!(reload_cue(finished, finished), None);
-        assert_eq!(reload_cue(finished, inserted), None);
-        assert_eq!(reload_cue(removed, MechanicalSnapshot::default()), None);
+        assert_eq!(handling_cue(started, removed), Some(HandlingCue::Removed));
+        assert_eq!(handling_cue(removed, inserted), Some(HandlingCue::Inserted));
+        assert_eq!(handling_cue(inserted, finished), Some(HandlingCue::Fed));
+        assert_eq!(handling_cue(started, finished), Some(HandlingCue::Fed));
+        assert_eq!(handling_cue(finished, finished), None);
+        assert_eq!(handling_cue(finished, inserted), None);
+        assert_eq!(handling_cue(removed, MechanicalSnapshot::default()), None);
         assert_eq!(
-            reload_cue(
+            handling_cue(
                 started,
                 MechanicalSnapshot {
                     action_id: 8,
@@ -295,11 +321,79 @@ mod tests {
             None
         );
         assert_eq!(
-            reload_cue(
+            handling_cue(
                 state(TacticalReload, Insert, 0.45),
                 state(TacticalReload, Finish, 0.72)
             ),
-            Some(ReloadCue::Inserted)
+            Some(HandlingCue::Inserted)
+        );
+    }
+
+    #[test]
+    fn shot_audio_handling_distinguishes_contacts_from_cancel_and_repeated_state() {
+        let idle = MechanicalSnapshot::default();
+        let lower = MechanicalSnapshot {
+            action_id: 1,
+            kind: Some(ManipulationKind::Unequip),
+            phase: Some(ManipulationPhase::Unequip),
+            ..idle
+        };
+        assert_eq!(handling_cue(idle, lower), Some(HandlingCue::Lowering));
+        assert_eq!(handling_cue(lower, lower), None);
+        let equip = MechanicalSnapshot {
+            kind: Some(ManipulationKind::Equip),
+            phase: Some(ManipulationPhase::Equip),
+            equipped: false,
+            ..lower
+        };
+        let cancelled = MechanicalSnapshot {
+            action_id: 1,
+            equipped: false,
+            ..idle
+        };
+        assert_eq!(handling_cue(equip, cancelled), None);
+        assert_eq!(
+            handling_cue(
+                equip,
+                MechanicalSnapshot {
+                    equipped: true,
+                    ..cancelled
+                }
+            ),
+            Some(HandlingCue::Equipped)
+        );
+        let inspect = MechanicalSnapshot {
+            action_id: 2,
+            kind: Some(ManipulationKind::Inspect),
+            phase: Some(ManipulationPhase::Inspect),
+            fraction: 0.29,
+            ..idle
+        };
+        let contact = MechanicalSnapshot {
+            fraction: 0.31,
+            ..inspect
+        };
+        assert_eq!(handling_cue(inspect, contact), Some(HandlingCue::Inspect));
+        assert_eq!(handling_cue(contact, contact), None);
+        assert_eq!(
+            handling_cue(
+                inspect,
+                MechanicalSnapshot {
+                    fraction: 0.8,
+                    ..inspect
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            handling_cue(
+                idle,
+                MechanicalSnapshot {
+                    mode: common::catalog::FireMode::Semi,
+                    ..idle
+                }
+            ),
+            Some(HandlingCue::Selector)
         );
     }
 
