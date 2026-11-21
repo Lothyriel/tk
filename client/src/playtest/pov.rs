@@ -12,6 +12,104 @@ pub(super) enum Ads {
 /// ready assembly a short, bounded warm-up before sampling the first pose.
 pub(super) const VIEW_WARMUP_SECONDS: f64 = 1.0;
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) enum StopLean {
+    #[default]
+    Rest,
+    Walk,
+    Run,
+    Brake,
+    Crouch,
+    Left,
+    Right,
+    Neutral,
+    Finish,
+}
+
+impl StopLean {
+    pub(super) fn advance(
+        &mut self,
+        elapsed: f64,
+        ready: bool,
+        player: &common::ClientData,
+    ) -> Result<Option<&'static str>, &'static str> {
+        if elapsed >= 15.0 {
+            return Err("POV stop/lean did not reach its confirmed state before timeout");
+        }
+        if !ready {
+            return Ok(None);
+        }
+        let pose = &player.pose;
+        let [x, _, z] = pose.velocity;
+        let speed = x.hypot(z);
+        let (next, capture) = match self {
+            Self::Rest => (Self::Walk, "pov-rest"),
+            Self::Walk if speed >= 2.5 && player.pos[2] < 8.0 => (Self::Run, "pov-walk"),
+            // Brake just before the near face of the low concrete wall at z=-2.4.
+            Self::Run if speed >= 4.5 && player.pos[2] < -0.7 => (Self::Brake, "pov-run"),
+            Self::Brake if speed < 0.08 => (Self::Crouch, "pov-stop"),
+            Self::Crouch if pose.crouch > 0.95 => (Self::Left, "pov-crouch"),
+            Self::Left if pose.aim_roll < -0.24 => (Self::Right, "pov-left"),
+            Self::Right if pose.aim_roll > 0.24 => (Self::Neutral, "pov-right"),
+            Self::Neutral if pose.aim_roll.abs() < 0.02 => (Self::Finish, "pov-return"),
+            _ => return Ok(None),
+        };
+        *self = next;
+        Ok(Some(capture))
+    }
+
+    pub(super) fn input(&self, input: &mut common::ClientInput) {
+        input.forward = matches!(self, Self::Walk | Self::Run);
+        input.run = *self == Self::Run;
+        input.crouch = matches!(
+            self,
+            Self::Crouch | Self::Left | Self::Right | Self::Neutral | Self::Finish
+        );
+        input.camera.roll = match self {
+            Self::Left => -0.3,
+            Self::Right => 0.3,
+            _ => 0.0,
+        };
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) enum Inspect {
+    #[default]
+    Rest,
+    Start,
+    Return,
+    Finish,
+}
+
+impl Inspect {
+    pub(super) fn advance(
+        &mut self,
+        elapsed: f64,
+        ready: bool,
+        snapshot: common::catalog::MechanicalSnapshot,
+    ) -> Result<Option<&'static str>, &'static str> {
+        use common::catalog::ManipulationKind;
+        if elapsed >= 8.0 {
+            return Err("POV inspect did not reach its confirmed state before timeout");
+        }
+        let (next, capture) = match self {
+            Self::Rest if ready && snapshot.kind.is_none() => (Self::Start, "pov-rest"),
+            Self::Start
+                if ready
+                    && snapshot.kind == Some(ManipulationKind::Inspect)
+                    && snapshot.fraction >= 0.35 =>
+            {
+                (Self::Return, "pov-inspect")
+            }
+            Self::Return if ready && snapshot.kind.is_none() => (Self::Finish, "pov-return"),
+            _ => return Ok(None),
+        };
+        *self = next;
+        Ok(Some(capture))
+    }
+}
+
 impl Ads {
     pub(super) fn advance(
         &mut self,
@@ -42,6 +140,46 @@ impl Ads {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pov_stop_lean_requires_braking_and_both_confirmed_roll_signs() {
+        let mut route = StopLean::Run;
+        let mut player = common::ClientData {
+            pos: [0.0, 1.0, -0.8],
+            ..Default::default()
+        };
+        player.pose.velocity[2] = -5.0;
+        assert_eq!(route.advance(2.0, true, &player), Ok(Some("pov-run")));
+        assert_eq!(route.advance(2.1, true, &player), Ok(None));
+        player.pose.velocity[2] = 0.0;
+        assert_eq!(route.advance(2.4, true, &player), Ok(Some("pov-stop")));
+        player.pose.crouch = 1.0;
+        assert_eq!(route.advance(2.8, true, &player), Ok(Some("pov-crouch")));
+        player.pose.aim_roll = -0.3;
+        assert_eq!(route.advance(3.0, true, &player), Ok(Some("pov-left")));
+        assert_eq!(route.advance(3.1, true, &player), Ok(None));
+        player.pose.aim_roll = 0.3;
+        assert_eq!(route.advance(3.2, true, &player), Ok(Some("pov-right")));
+        player.pose.aim_roll = 0.0;
+        assert_eq!(route.advance(3.4, true, &player), Ok(Some("pov-return")));
+    }
+
+    #[test]
+    fn pov_inspect_waits_for_authoritative_action_and_return() {
+        use common::catalog::{ManipulationKind, MechanicalSnapshot};
+        let mut route = Inspect::default();
+        let mut snapshot = MechanicalSnapshot::default();
+        assert_eq!(route.advance(0.5, true, snapshot), Ok(Some("pov-rest")));
+        assert_eq!(route.advance(1.0, true, snapshot), Ok(None));
+        snapshot.kind = Some(ManipulationKind::Inspect);
+        snapshot.fraction = 0.2;
+        assert_eq!(route.advance(1.1, true, snapshot), Ok(None));
+        snapshot.fraction = 0.4;
+        assert_eq!(route.advance(1.3, true, snapshot), Ok(Some("pov-inspect")));
+        assert_eq!(route.advance(1.5, true, snapshot), Ok(None));
+        snapshot.kind = None;
+        assert_eq!(route.advance(2.0, true, snapshot), Ok(Some("pov-return")));
+    }
 
     #[test]
     fn pov_ads_requires_confirmed_state_and_matching_render_lens() {

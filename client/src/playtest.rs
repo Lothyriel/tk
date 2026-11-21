@@ -64,7 +64,7 @@ enum Step {
     PhysicalSetup,
     PhysicalAction,
     PhysicalRest,
-    PovAds,
+    Pov,
     Animation,
     AssetReview,
     Weapons,
@@ -93,6 +93,8 @@ struct Driver {
     injury: mechanics::Injury,
     physical: physical::Review,
     pov_ads: pov::Ads,
+    pov_inspect: pov::Inspect,
+    pov_stop_lean: pov::StopLean,
     pov_visual_since: Option<f64>,
     fall_ids: Vec<u64>,
     recovery_seen: bool,
@@ -355,8 +357,8 @@ fn drive(
             assert_eq!(session.players.iter().filter(|p| p.bot).count(), 2);
             capture(&mut commands, "raid");
             driver.advance(
-                if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("ads") {
-                    Step::PovAds
+                if std::env::var_os("TK_PLAYTEST_POV").is_some() {
+                    Step::Pov
                 } else if physical::scenario().is_some() {
                     Step::PhysicalSetup
                 } else if std::env::var("TK_PLAYTEST_CLIENTS").is_ok_and(|v| v == "2") {
@@ -371,7 +373,8 @@ fn drive(
                 now,
             );
         }
-        Step::PovAds => {
+        Step::Pov => {
+            let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");
             input.camera = CameraInput::default();
             input.weapon = EquipmentSlot::Primary;
             let elapsed = now - driver.since;
@@ -387,29 +390,53 @@ fn drive(
             }
             let visual_settled = visual_ready
                 && now - *driver.pov_visual_since.get_or_insert(now) >= pov::VIEW_WARMUP_SECONDS;
-            let name = driver
-                .pov_ads
-                .advance(elapsed, local.pose.grounded && visual_settled, ads, world_fov)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "{error}: state={:?} pos={:?} ads={ads} fov={world_fov} visual_ready={visual_ready}",
-                        driver.pov_ads, local.pos
-                    )
-                });
+            let ready = local.pose.grounded && visual_settled;
+            let capture_roll = local.pose.aim_roll;
+            let name = match preset.as_str() {
+                "ads" => driver.pov_ads.advance(elapsed, ready, ads, world_fov),
+                "inspect" => driver.pov_inspect.advance(elapsed, ready, local.mechanics),
+                "stop-lean" => driver.pov_stop_lean.advance(elapsed, ready, local),
+                _ => panic!("Unknown POV preset: {preset}"),
+            }
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{error}: preset={preset} movement={:?} pos={:?} velocity={:?} roll={} ads={ads} fov={world_fov} visual_ready={visual_ready} mechanics={:?}",
+                    driver.pov_stop_lean, local.pos, local.pose.velocity, local.pose.aim_roll, local.mechanics
+                )
+            });
             if let Some(name) = name {
                 info!(
-                    "POV EVIDENCE {name} t={now:.3} pos={:?} ads={ads:.3} fov={world_fov:.2} config={}",
-                    local.pos, local.configuration
+                    "POV EVIDENCE {name} t={now:.3} pos={:?} velocity={:?} crouch={:.3} roll={:.3} ads={ads:.3} fov={world_fov:.2} config={} action={:?} fraction={:.3}",
+                    local.pos,
+                    local.pose.velocity,
+                    local.pose.crouch,
+                    local.pose.aim_roll,
+                    local.configuration,
+                    local.mechanics.kind,
+                    local.mechanics.fraction
                 );
                 capture(&mut commands, name);
             }
             input.aim = driver.pov_ads == pov::Ads::Aim;
-            if driver.pov_ads == pov::Ads::Finish
+            if preset == "inspect" && name == Some("pov-rest") {
+                input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
+            }
+            if preset == "stop-lean" {
+                driver.pov_stop_lean.input(&mut input);
+                if name.is_some() {
+                    // Present runs after Input in this frame. Do not replace
+                    // the confirmed roll with the next cue before readback.
+                    input.camera.roll = capture_roll;
+                }
+            }
+            if (driver.pov_ads == pov::Ads::Finish
+                || driver.pov_inspect == pov::Inspect::Finish
+                || driver.pov_stop_lean == pov::StopLean::Finish)
                 && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
                     .join("pov-return.png")
                     .is_file()
             {
-                info!("POV PASS ads t={now:.3}");
+                info!("POV PASS {preset} t={now:.3}");
                 exit.write(AppExit::Success);
             }
         }

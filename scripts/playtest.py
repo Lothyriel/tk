@@ -15,6 +15,13 @@ import subprocess
 import sys
 
 
+POV_CAPTURES = {
+    "ads": ("rest", "ads", "return"),
+    "inspect": ("rest", "inspect", "return"),
+    "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
+}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-build", action="store_true")
@@ -32,7 +39,7 @@ def main():
                         help="Show live socket/pivot overlays and use a close side observer during animation review")
     parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
                         help="Explicit LOD inspection override (requires --weapon-debug)")
-    parser.add_argument("--pov", choices=("ads",), help="Run only the named POV bench after deploy")
+    parser.add_argument("--pov", choices=POV_CAPTURES, help="Run only the named POV bench after deploy")
     args = parser.parse_args()
     if args.pov and (args.clients != 1 or args.animation_review or args.configure_weapons or args.video):
         parser.error("--pov requires one client and no other review, configurator or video mode")
@@ -43,8 +50,8 @@ def main():
     output = (args.output or root / "target" / "playtest").resolve()
     output.mkdir(parents=True, exist_ok=True)
     if args.pov:
-        for name in ("pov-rest", "pov-ads", "pov-return"):
-            (output / f"{name}.png").unlink(missing_ok=True)
+        for name in POV_CAPTURES[args.pov]:
+            (output / f"pov-{name}.png").unlink(missing_ok=True)
     if args.video:
         assert not (output / "frame-times.csv").exists(), "Use a fresh output directory for video evidence"
     # Old screenshots must never satisfy evidence checks for a new run.
@@ -152,9 +159,9 @@ def main():
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
     if args.pov:
-        proof = re.search(r"POV PASS ads t=([0-9.]+)", client_text)
+        proof = re.search(rf"POV PASS {re.escape(args.pov)} t=([0-9.]+)", client_text)
         assert proof, f"Missing POV completion proof: {output / 'client.log'}"
-        names = ("pov-rest", "pov-ads", "pov-return")
+        names = tuple(f"pov-{name}" for name in POV_CAPTURES[args.pov])
         for name in names:
             assert f"POV EVIDENCE {name} " in client_text
             data = (output / f"{name}.png").read_bytes()
@@ -165,7 +172,7 @@ def main():
             settings["resolution"] = [width, height]
         settings["seconds_to_evidence"] = float(proof[1])
         (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
-        result = f"PASS: native POV ads, real UDP, evidence at {proof[1]}s\n"
+        result = f"PASS: native POV {args.pov}, real UDP, evidence at {proof[1]}s\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
         return
