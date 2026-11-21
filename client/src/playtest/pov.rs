@@ -24,7 +24,7 @@ pub(super) fn pace(cadence: Res<Cadence>, mut last: Local<Option<Instant>>) {
 pub(super) fn trace(
     driver: Res<super::Driver>,
     time: Res<Time<Real>>,
-    eye: Single<(&GlobalTransform, &Transform), With<crate::render::WorldModelCamera>>,
+    eye: Single<(&Camera, &GlobalTransform, &Transform), With<crate::render::WorldModelCamera>>,
     input: Res<common::LocalInput>,
     mut file: Local<Option<BufWriter<std::fs::File>>>,
 ) {
@@ -37,20 +37,28 @@ pub(super) fn trace(
         let mut out = BufWriter::new(std::fs::File::create(root.join("pov-trace.csv")).unwrap());
         writeln!(
             out,
-            "seconds,frame_seconds,stage,eye_x,eye_y,eye_z,roll,input_roll"
+            "seconds,frame_seconds,stage,eye_x,eye_y,eye_z,roll,input_roll,marker_ndc_x,marker_ndc_y"
         )
         .unwrap();
         out
     });
-    let [x, y, z] = eye.0.translation().to_array();
-    let (_, _, roll) = eye.1.rotation.to_euler(EulerRot::YXZ);
+    let [x, y, z] = eye.1.translation().to_array();
+    let (_, _, roll) = eye.2.rotation.to_euler(EulerRot::YXZ);
+    // A fixed scene reference in normalized screen coordinates; this
+    // measures framing, not whether another mesh or the HUD occludes it.
+    let marker = eye
+        .0
+        .world_to_ndc(eye.1, Vec3::from(common::map::POV_MARKER))
+        .map_or(Vec2::splat(f32::NAN), |p| p.truncate());
     writeln!(
         out,
-        "{:.6},{:.6},{:?},{x:.6},{y:.6},{z:.6},{roll:.6},{:.6}",
+        "{:.6},{:.6},{:?},{x:.6},{y:.6},{z:.6},{roll:.6},{:.6},{:.6},{:.6}",
         time.elapsed_secs_f64() - driver.since,
         time.delta_secs_f64(),
         driver.pov_stop_lean,
-        input.camera.roll
+        input.camera.roll,
+        marker.x,
+        marker.y
     )
     .unwrap();
     if driver.pov_stop_lean == StopLean::Finish {
