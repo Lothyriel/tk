@@ -10,9 +10,10 @@ pub const LOOT_POSITIONS: [[f32; 3]; 3] =
 pub const BOT_POSITIONS: [[f32; 3]; 2] = [[0.0, 1.05, -10.0], [8.0, 1.05, -6.0]];
 
 /// Static geometry for the opt-in POV fixture. Offset from the straight
-/// approach so the step stays visible without changing the braking surface.
+/// approach so the step stays visible without intersecting either dual lane
+/// (spawn centers at ±0.75 m, plus the character capsule radius).
 pub const POV_STEP: MapBlock = MapBlock {
-    center: [-0.95, 0.19, -1.75],
+    center: [-1.55, 0.19, -1.75],
     half_size: [0.35, 0.09, 0.32],
     surface: SurfaceKind::Concrete,
 };
