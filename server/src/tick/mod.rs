@@ -195,6 +195,14 @@ fn spawn_world_colliders(mut commands: Commands) {
             Transform::from_translation(Vec3::from(position)),
         ));
     }
+    if common::map::pov_fixture() {
+        let step = common::map::POV_STEP;
+        commands.spawn((
+            step.surface,
+            Collider::cuboid(step.half_size[0], step.half_size[1], step.half_size[2]),
+            Transform::from_translation(Vec3::from(step.center)),
+        ));
+    }
 }
 
 fn character_bundle(id: u64, position: Vec3) -> impl Bundle {

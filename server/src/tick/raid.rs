@@ -172,7 +172,7 @@ pub(super) fn lobby_tick(
         world_state.impact_cells.clear();
         world_state.fired_projectiles.clear();
     }
-    if started {
+    if started && !pov_fixture() {
         for (i, position) in BOT_POSITIONS.into_iter().enumerate() {
             let loadout = Loadout {
                 primary: WeaponId::MP5,
