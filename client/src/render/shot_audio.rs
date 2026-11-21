@@ -18,12 +18,16 @@ pub(super) struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        let muted = std::env::args().any(|arg| arg == "--playtest")
-            || std::env::var_os("TK_MUTE_AUDIO").is_some();
+        let playtest = std::env::args().any(|arg| arg == "--playtest");
+        let probe = playtest && std::env::var_os("TK_PLAYTEST_AUDIO").is_some();
+        let muted = (playtest && !probe) || std::env::var_os("TK_MUTE_AUDIO").is_some();
         app.add_audio_source::<SynthShot>()
             .insert_resource(Muted(muted))
             .add_systems(Startup, prepare)
             .add_systems(Update, present.in_set(ClientSystems::Present));
+        if probe {
+            app.add_systems(Update, report_playback);
+        }
     }
 }
 
@@ -202,6 +206,25 @@ fn prepare(mut commands: Commands, mut assets: ResMut<Assets<SynthShot>>) {
 
 #[derive(Component)]
 struct Voice(f32);
+
+fn report_playback(
+    local: Query<(), (With<Voice>, With<AudioSink>)>,
+    remote: Query<(), (With<Voice>, With<SpatialAudioSink>)>,
+    mut reported: Local<[bool; 2]>,
+) {
+    for (i, (kind, ready)) in [
+        ("local", !local.is_empty()),
+        ("spatial", !remote.is_empty()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if ready && !reported[i] {
+            info!("PLAYTEST AUDIO SINK {kind}");
+            reported[i] = true;
+        }
+    }
+}
 
 #[derive(Default)]
 struct History {

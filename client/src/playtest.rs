@@ -266,19 +266,28 @@ fn drive(
     };
     let world_fov = lens(false);
     assert!(now < 240.0, "PLAYTEST timed out at {:?}", driver.step);
-    assert_eq!(
-        audio.iter().count(),
-        0,
-        "Playtest mute must not create shot audio entities"
-    );
+    if std::env::var_os("TK_PLAYTEST_AUDIO").is_none() {
+        assert_eq!(
+            audio.iter().count(),
+            0,
+            "Playtest mute must not create shot audio entities"
+        );
+    } else {
+        assert!(
+            audio.iter().count() <= 12,
+            "Playtest audio exceeded its voice cap"
+        );
+    }
     driver.frames.push(time.delta_secs() * 1000.0);
     if driver.frames.len() == 300 {
         driver.frames.sort_by(f32::total_cmp);
         info!(
-            "TK PERF frame_ms mean={:.3} p95={:.3} max={:.3}",
+            "TK PERF frame_ms mean={:.3} p95={:.3} max={:.3} p50={:.3} p99={:.3}",
             driver.frames.iter().sum::<f32>() / 300.0,
             driver.frames[285],
-            driver.frames[299]
+            driver.frames[299],
+            driver.frames[149],
+            driver.frames[296]
         );
         driver.frames.clear();
     }
@@ -842,7 +851,8 @@ fn drive(
                 assert_eq!(local.ammo_in_mag, spec.magazine_size);
                 assert_eq!(local.reload_remaining(), 0.0);
                 info!(
-                    "WEAPON EXERCISE PASS primary empty, blocked trigger, interrupted reload, pistol shot/full reload, primary full reload; audio_entities=0"
+                    "WEAPON EXERCISE PASS primary empty, blocked trigger, interrupted reload, pistol shot/full reload, primary full reload; audio_entities={}",
+                    audio.iter().count()
                 );
                 driver.advance(Step::Loot, now);
             }
@@ -1296,8 +1306,9 @@ fn drive(
                     ids
                 );
                 info!(
-                    "PHYSICAL PLAYTEST PASS: normal peer limb shots, lateral impairment, separation and ragdoll converge; unique_pieces={} audio_entities=0",
-                    count
+                    "PHYSICAL PLAYTEST PASS: normal peer limb shots, lateral impairment, separation and ragdoll converge; unique_pieces={} audio_entities={}",
+                    count,
+                    audio.iter().count()
                 );
                 driver.advance(Step::Done, now);
             }

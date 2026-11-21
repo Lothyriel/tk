@@ -104,9 +104,17 @@ def main():
                         help="Require this exact POV or clean-art framebuffer (WIDTHxHEIGHT)")
     parser.add_argument("--pov-hz", type=int, choices=range(15, 241), metavar="HZ",
                         help="Cap the stop-lean client update rate and write the actual camera trace")
+    parser.add_argument("--no-capture", action="store_true",
+                        help="Run the raid without framebuffer readbacks for profiling")
+    parser.add_argument("--audio", action="store_true",
+                        help="Enable game audio and verify local and spatial playback sinks")
     args = parser.parse_args()
-    if args.viewport and not (args.pov or args.clean_art):
-        parser.error("--viewport requires --pov or --clean-art")
+    if args.viewport and not (args.pov or args.clean_art or args.no_capture):
+        parser.error("--viewport requires --pov, --clean-art or --no-capture")
+    if args.no_capture and (args.video or args.pov or args.weapon_debug):
+        parser.error("--no-capture is for the plain raid or animation review, not visual evidence modes")
+    if args.audio and not (args.no_capture and args.clients == 2):
+        parser.error("--audio requires --no-capture and --clients 2")
     if args.pov_hz and args.pov != "stop-lean":
         parser.error("--pov-hz requires --pov stop-lean")
     if args.pov and (args.animation_review or args.configure_weapons
@@ -148,8 +156,14 @@ def main():
     for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY",
                   "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV",
                   "TK_PLAYTEST_VIEWPORT", "TK_PLAYTEST_POV_HZ", "TK_PLAYTEST_CLEAN_ART",
-                  "TK_PLAYTEST_NEUTRAL_ART"):
+                  "TK_PLAYTEST_NEUTRAL_ART", "TK_PLAYTEST_NO_CAPTURE", "TK_PLAYTEST_AUDIO"):
         env.pop(flag, None)
+    if args.no_capture:
+        env["TK_PLAYTEST_NO_CAPTURE"] = "1"
+    if args.audio:
+        if "TK_MUTE_AUDIO" in env:
+            parser.error("--audio conflicts with TK_MUTE_AUDIO")
+        env["TK_PLAYTEST_AUDIO"] = "1"
     if args.pov:
         env["TK_PLAYTEST_POV"] = args.pov
     if args.viewport:
@@ -190,6 +204,7 @@ def main():
         "requested_viewport": args.viewport,
         "requested_pov_hz": args.pov_hz,
         "video": args.video, "animation_review": args.animation_review,
+        "no_capture": args.no_capture, "audio": args.audio,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "clean_art": args.clean_art,
         "art_lighting": "neutral white, cast shadows disabled" if args.neutral_art else "raid",
@@ -330,6 +345,25 @@ def main():
         assert leader_state.groups() == peer_state.groups(), "Clients disagree on persistent victim/organ/wound/piece state"
     for milestone in ("collected loot", "extracted; secured=1", "debrief"):
         assert milestone in server_text, f"Missing authoritative milestone: {milestone}"
+    if args.no_capture:
+        logs = [client_text] + ([peer_text] if args.clients == 2 else [])
+        for text in logs:
+            for kind in ("local", "spatial"):
+                assert (f"PLAYTEST AUDIO SINK {kind}" in text) == args.audio, (
+                    f"Unexpected or missing {kind} audio playback evidence"
+                )
+        evidence = {
+            "clients": args.clients, "captures": [],
+            "server_performance": re.findall(r"TK PERF [^\r\n]+", server_text),
+            "client_performance": re.findall(r"TK PERF [^\r\n]+", client_text),
+            "peer_performance": re.findall(r"TK PERF [^\r\n]+", logs[1]) if len(logs) == 2 else [],
+        }
+        assert evidence["client_performance"], "Missing frame time evidence"
+        (output / "evidence.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+        result = f"PASS: native UDP raid without framebuffer capture; audio={args.audio}\n"
+        (output / "result.txt").write_text(result, encoding="utf-8")
+        print(result, end="")
+        return
     evidence = []
     resolution = None
     for name in ("lobby", "raid", "extracting", "debrief", "return-lobby"):

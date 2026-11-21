@@ -15,6 +15,10 @@ pub(super) fn record(
     mut captures: ResMut<CaptureQueue>,
     driver: Res<super::Driver>,
 ) {
+    if std::env::var_os("TK_PLAYTEST_NO_CAPTURE").is_some() {
+        captures.0.clear();
+        return;
+    }
     let video = std::env::var_os("TK_PLAYTEST_VIDEO").is_some()
         && (std::env::var_os("TK_PLAYTEST_POV").is_none() || driver.step == super::Step::Pov);
     if !video {
