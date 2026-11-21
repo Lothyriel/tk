@@ -10,6 +10,7 @@ struct Plant {
     yaw: f32,
     planted: bool,
     replanting: bool,
+    released_until_swing: bool,
 }
 
 #[derive(Default, Component)]
@@ -90,6 +91,9 @@ pub(super) fn advance(
                 && body.anatomy.missing & (1 << segment.index()) == 0;
             let proposed = root.transform_point(rig[segment.index()].position.into());
             let foot = &mut gait.feet[i];
+            if !stance || speed < 0.12 {
+                foot.released_until_swing = false;
+            }
             if pivot_foot == Some(i) {
                 foot.planted = false;
                 foot.replanting = pose.foot_weight[i] > 0.01;
@@ -97,6 +101,7 @@ pub(super) fn advance(
             if stance
                 && !foot.planted
                 && !foot.replanting
+                && !foot.released_until_swing
                 && let Some((_, hit)) = context.cast_ray_and_get_normal(
                     proposed + Vec3::Y * 0.35,
                     -Vec3::Y,
@@ -113,7 +118,12 @@ pub(super) fn advance(
                 foot.yaw = yaw;
                 foot.planted = hit.normal.y > 0.65;
             }
-            if !stance || proposed.distance(foot.position) > 0.8 {
+            if foot.planted && stance && speed >= 0.12 && proposed.distance(foot.position) > 0.8 {
+                // Do not teleport a loaded anchor to a new contact in the same
+                // stance. Replication may skip the intervening release tick.
+                foot.released_until_swing = true;
+            }
+            if !stance || foot.released_until_swing {
                 foot.planted = false;
             }
             let target = if foot.planted { 1.0 } else { 0.0 };
