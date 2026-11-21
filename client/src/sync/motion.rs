@@ -32,7 +32,7 @@ pub(crate) struct LocalMotion {
 }
 
 impl LocalMotion {
-    pub(super) fn record(&mut self, time: f32, pose: LocalMotionPose, received: f64, reset: bool) {
+    pub(crate) fn record(&mut self, time: f32, pose: LocalMotionPose, received: f64, reset: bool) {
         let time = f64::from(time);
         let reset = reset
             || self.samples.back().is_some_and(|last| {
