@@ -192,6 +192,18 @@ class M4A1AssetTests(unittest.TestCase):
         self.assertTrue(all(not intersects(a, b) for a in mount_solids for b in optic_solids))
         sight = [[-0.010, 0.029, -0.037], [0.010, 0.049, 0.141]]
         self.assertTrue(all(not intersects(b, sight) for b in mount_solids + optic_solids))
+        optic_parts = {p["id"]: p for p in optic["parts"]}
+        markers = {s["id"]: s for s in optic["sockets"]}
+        bounds = []
+        for name in ("sight.aperture_min", "sight.aperture_max"):
+            marker = markers[name]
+            bounds.append([a + b for a, b in zip(
+                point(optic_parts, marker["part"], marker["pose"]["translation"]), seat
+            )])
+        self.assertTrue(all(lo < hi for lo, hi in zip(*bounds)))
+        self.assertTrue(all(not intersects(b, bounds) for b in mount_solids + optic_solids))
+        self.assertGreater(bounds[1][2] + 1e-8, max(b[1][2] for b in optic_solids))
+        self.assertLess(bounds[0][2], min(b[1][2] for b in optic_solids))
         self.assertAlmostEqual(max(b[1][2] for b in optic_solids)
                                - min(b[0][2] for b in optic_solids), 0.132, delta=1e-6)
         all_solids = mount_solids + optic_solids
