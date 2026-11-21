@@ -63,10 +63,13 @@ impl bevy::prelude::Plugin for Plugin {
 }
 
 fn review_hud(driver: Res<Driver>, mut hud: Query<&mut Node, With<crate::hud::RaidHud>>) {
+    let observing = driver.step == Step::Pov
+        && std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1")
+        && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("2");
     for mut node in &mut hud {
         // The verbose raid panel covers the hands in portrait review windows.
         // State evidence stays in the route logs; restore ordinary HUD afterward.
-        node.display = if matches!(driver.step, Step::Animation | Step::AssetReview) {
+        node.display = if observing || matches!(driver.step, Step::Animation | Step::AssetReview) {
             Display::None
         } else {
             Display::Flex
@@ -415,12 +418,28 @@ fn drive(
                 else {
                     return;
                 };
-                if local.pos[2] > 1.8 {
+                // Capture an actual loaded running step while the remote
+                // runner is still ahead of the observer in the adjacent lane.
+                let delta = Vec3::from(actor.pos) - Vec3::from(local.pos);
+                let [vx, _, vz] = actor.pose.velocity;
+                if driver.captures & 1 == 0
+                    && vx.hypot(vz) > 4.5
+                    && delta.z < -2.5
+                    && delta.length() < 6.0
+                    && let Some((phase, weights)) = projections.poses.presented_support(actor.id)
+                    && weights.iter().any(|weight| *weight > 0.95)
+                {
+                    driver.captures |= 1;
+                    info!(
+                        "POV OBSERVER run phase={phase:.3} weights={weights:?} relative={delta:?}"
+                    );
+                    capture(&mut commands, "pov-run");
+                }
+                if local.pos[2] > 3.5 {
                     input.camera = CameraInput::default();
                     input.forward = true;
                     return;
                 }
-                let delta = Vec3::from(actor.pos) - Vec3::from(local.pos);
                 input.camera = CameraInput {
                     yaw: (-delta.x).atan2(-delta.z),
                     pitch: delta.y.atan2(delta.x.hypot(delta.z)),
