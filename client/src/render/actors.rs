@@ -148,6 +148,54 @@ fn interpolate_foot_anchor(
     root.rotation.inverse() * (*anchor - root.translation)
 }
 
+fn retain_configured_upper_pose(
+    current: &mut [SegmentPose; SEGMENT_COUNT],
+    previous: &[SegmentPose; SEGMENT_COUNT],
+) {
+    use Segment::*;
+    // Configuration solving owns the upper-body posture and hand contacts,
+    // not the locomotion of the pelvis or feet.
+    current[Thorax.index()] = previous[Thorax.index()];
+    for segment in [
+        LeftUpperArm,
+        LeftForearm,
+        LeftHand,
+        RightUpperArm,
+        RightForearm,
+        RightHand,
+    ] {
+        current[segment.index()] = previous[segment.index()];
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn rejected_upper_pose_keeps_the_current_gait() {
+    use Segment::*;
+    let prior = evaluate_pose(&PoseState::default(), 1.0, 1.0);
+    let mut current = evaluate_pose(
+        &PoseState {
+            phase: 1.0,
+            grounded: true,
+            velocity: [0.0, 0.0, -5.5],
+            ..default()
+        },
+        1.0,
+        1.0,
+    );
+    let feet = [LeftFoot, RightFoot, Pelvis].map(|part| current[part.index()].position);
+    assert_ne!(feet[0], prior[LeftFoot.index()].position);
+    retain_configured_upper_pose(&mut current, &prior);
+    assert_eq!(
+        [LeftFoot, RightFoot, Pelvis].map(|part| current[part.index()].position),
+        feet
+    );
+    assert_eq!(
+        current[LeftHand.index()].position,
+        prior[LeftHand.index()].position
+    );
+}
+
 #[cfg(test)]
 #[test]
 fn planted_anchor_stays_fixed_as_the_remote_root_turns_and_translates() {
@@ -906,7 +954,7 @@ fn animate(
                 Err(error) => {
                     posture_errors.insert(p.id, format!("configured posture: {error:?}"));
                     if let Some(previous) = cache.accepted_rigs.get(&p.id) {
-                        rig = *previous;
+                        retain_configured_upper_pose(&mut rig, previous);
                     }
                 }
             }
