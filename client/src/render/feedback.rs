@@ -360,6 +360,20 @@ fn locomotion_offset(phase: f32, speed: f32, ads: f32) -> Vec3 {
         * (1.0 - ads.clamp(0.0, 1.0) * 0.92)
 }
 
+fn carry_motion(elapsed: f32, speed: f32, ads: f32, ready: bool) -> (Vec3, f32) {
+    if !ready {
+        return (Vec3::ZERO, 0.0);
+    }
+    let sprint = common::weapon_animation::ease(
+        (speed - common::PLAYER_WALK_SPEED)
+            / (common::PLAYER_RUN_SPEED - common::PLAYER_WALK_SPEED),
+    ) * (1.0 - ads);
+    let breath = (elapsed * (0.27 * std::f32::consts::TAU)).sin()
+        * (1.0 - common::weapon_animation::ease(speed / common::PLAYER_WALK_SPEED))
+        * (1.0 - ads);
+    (Vec3::Y * (0.002 * breath - 0.035 * sprint), 0.16 * sprint)
+}
+
 pub(super) fn advance(
     time: Res<Time>,
     real_time: Option<Res<Time<Real>>>,
@@ -641,7 +655,14 @@ pub(super) fn animate_local(
             continue;
         }
         let base = *t;
+        let (carry_offset, carry_pitch) = carry_motion(
+            time.elapsed_secs(),
+            speed,
+            response.ads,
+            p.alive && p.pose.mode == PhysicalMode::Standing,
+        );
         t.translation += locomotion_offset(phase, speed, response.ads)
+            + carry_offset
             + action.root.translation
             + Vec3::new(response.sway.x * 0.2, 0.0, response.recoil);
         t.translation += response.inertia;
@@ -649,7 +670,7 @@ pub(super) fn animate_local(
         t.rotation *=
             Quat::from_rotation_x((response.travel.y * 0.008).clamp(-0.05, 0.05) * motion_weight);
         let injury = (1.0 - p.body.anatomy.handling()) * (time.elapsed_secs() * 3.7).sin() * 0.035;
-        t.rotation *= Quat::from_rotation_x(response.sway.y * motion_weight);
+        t.rotation *= Quat::from_rotation_x(response.sway.y * motion_weight + carry_pitch);
         t.rotation *= Quat::from_rotation_y(response.sway.x * motion_weight);
         t.rotation *= Quat::from_rotation_z((injury - response.sway.x * 0.5) * motion_weight);
         {
@@ -1027,6 +1048,32 @@ fn pistol_frame_correction(points: &[Vec3], projection: &PerspectiveProjection, 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn carry_pose_tracks_speed_and_keeps_idle_breathing_subtle() {
+        use super::*;
+        let (idle, pitch) = carry_motion(1.0 / (4.0 * 0.27), 0.0, 0.0, true);
+        assert!((idle.y - 0.002).abs() < 1e-6);
+        assert_eq!(pitch, 0.0);
+        let walk = carry_motion(1.0, common::PLAYER_WALK_SPEED, 0.0, true);
+        let jog = carry_motion(
+            1.0,
+            (common::PLAYER_WALK_SPEED + common::PLAYER_RUN_SPEED) * 0.5,
+            0.0,
+            true,
+        );
+        let sprint = carry_motion(1.0, common::PLAYER_RUN_SPEED, 0.0, true);
+        assert!(sprint.0.y < jog.0.y && jog.0.y < walk.0.y);
+        assert!(sprint.1 > jog.1 && jog.1 > walk.1);
+        assert_eq!(
+            carry_motion(1.0, common::PLAYER_RUN_SPEED, 1.0, true),
+            (Vec3::ZERO, 0.0)
+        );
+        assert_eq!(
+            carry_motion(1.0, common::PLAYER_RUN_SPEED, 0.0, false),
+            (Vec3::ZERO, 0.0)
+        );
+    }
+
     fn reload_snapshot(
         weapon: common::WeaponKind,
         fraction: f32,

@@ -47,12 +47,15 @@ fn configured_local_inspect_frames_real_assembly_and_returns_continuously() {
     for aspect in [4.0 / 3.0, 1.6, 16.0 / 9.0, 21.0 / 9.0] {
         for fps in [30, 60, 165] {
             let mut f = Fixture::new(WeaponKind::Rifle, aspect);
-            f.app
-                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-                    std::time::Duration::from_secs_f64(1.0 / fps as f64),
-                ));
+            let mut idle = Fixture::new(WeaponKind::Rifle, aspect);
+            for fixture in [&mut f, &mut idle] {
+                fixture
+                    .app
+                    .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                        std::time::Duration::from_secs_f64(1.0 / fps as f64),
+                    ));
+            }
             let before = f.app.world().resource::<ClientSession>().players[0].mechanics;
-            let rest_frame = f.app.world().resource::<Feedback>().responses[&7].frame_offset;
             let pieces = descendants(f.app.world(), f.root);
             let trigger = named(&f.app, f.root, "configured-trigger-palm");
             let mut previous = Some(
@@ -73,6 +76,7 @@ fn configured_local_inspect_frames_real_assembly_and_returns_continuously() {
                     session.players[0].mechanics.fraction = fraction;
                 }
                 f.step();
+                idle.step();
                 f.assert_contacts();
                 let world = f.app.world();
                 let response = &world.resource::<Feedback>().responses[&7];
@@ -120,6 +124,9 @@ fn configured_local_inspect_frames_real_assembly_and_returns_continuously() {
                 sides.into_iter().all(|side| side),
                 "both receiver sides must be presented: {side_range:?}"
             );
+            // Framing at rest also follows breathing. Compare against a
+            // non-inspecting rig at the same simulation time.
+            let rest_frame = idle.app.world().resource::<Feedback>().responses[&7].frame_offset;
             assert!(
                 f.app.world().resource::<Feedback>().responses[&7]
                     .frame_offset
