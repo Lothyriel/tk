@@ -32,13 +32,19 @@ def main():
                         help="Show live socket/pivot overlays and use a close side observer during animation review")
     parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
                         help="Explicit LOD inspection override (requires --weapon-debug)")
+    parser.add_argument("--pov", choices=("ads",), help="Run only the named POV bench after deploy")
     args = parser.parse_args()
+    if args.pov and (args.clients != 1 or args.animation_review or args.configure_weapons or args.video):
+        parser.error("--pov requires one client and no other review, configurator or video mode")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
     assert args.weapon_debug or args.weapon_lod == "auto", "--weapon-lod requires --weapon-debug"
     assert not (args.configure_weapons and args.weapon_kit), "Panel acceptance must not seed server fixtures"
     root = Path(__file__).resolve().parents[1]
     output = (args.output or root / "target" / "playtest").resolve()
     output.mkdir(parents=True, exist_ok=True)
+    if args.pov:
+        for name in ("pov-rest", "pov-ads", "pov-return"):
+            (output / f"{name}.png").unlink(missing_ok=True)
     if args.video:
         assert not (output / "frame-times.csv").exists(), "Use a fresh output directory for video evidence"
     # Old screenshots must never satisfy evidence checks for a new run.
@@ -56,8 +62,10 @@ def main():
     if args.weapon_kit:
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
     for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY",
-                 "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR"):
+                  "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV"):
         env.pop(flag, None)
+    if args.pov:
+        env["TK_PLAYTEST_POV"] = args.pov
     env.update(SERVER_ADDR="127.0.0.1", TK_PORT="19080", TK_PLAYTEST_DIR=str(output), TK_PLAYTEST_CLIENTS=str(args.clients), NO_COLOR="1")
     if args.video:
         env["TK_PLAYTEST_VIDEO"] = "1"
@@ -93,7 +101,7 @@ def main():
         "shot_diagnostics": env.get("TK_SHOT_DIAGNOSTICS") is not None,
         "loadouts": ("leader compact M4A1 / peer suppressed M4A1" if args.configure_weapons
                      else "leader Rifle / peer SMG") + "; AP; heavy vest; helmet; both carry pistol",
-        "route": "optional reciprocal continuous weapon actions -> full-body route -> weapon exercise -> loot -> sentry combat -> extraction -> debrief -> lobby -> deploy -> limb injury/fall/recovery/death",
+        "route": args.pov or "optional reciprocal continuous weapon actions -> full-body route -> weapon exercise -> loot -> sentry combat -> extraction -> debrief -> lobby -> deploy -> limb injury/fall/recovery/death",
         "timestamps": "client.log PLAYTEST stage clocks and ANIMATION CONTACT local clocks; frame-times.csv real frame timestamps",
     }, indent=2), encoding="utf-8")
     with (output / "server.log").open("w", encoding="utf-8") as server_log:
@@ -114,7 +122,7 @@ def main():
                     processes.append(subprocess.Popen([str(client_path), "--playtest"], cwd=root,
                                                       env=client_env, stdout=log, stderr=subprocess.STDOUT))
                 for process in processes:
-                    code = process.wait(timeout=300)
+                    code = process.wait(timeout=45 if args.pov else 300)
                     if code != 0:
                         raise AssertionError(f"Client failed ({code}); see {output}")
             finally:
@@ -143,6 +151,24 @@ def main():
     combined = re.sub(r"\x1b\[[0-9;]*m", "", client_text + server_text)
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
+    if args.pov:
+        proof = re.search(r"POV PASS ads t=([0-9.]+)", client_text)
+        assert proof, f"Missing POV completion proof: {output / 'client.log'}"
+        names = ("pov-rest", "pov-ads", "pov-return")
+        for name in names:
+            assert f"POV EVIDENCE {name} " in client_text
+            data = (output / f"{name}.png").read_bytes()
+            assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
+            width, height = struct.unpack(">II", data[16:24])
+            assert width >= 600 and height >= 400
+            assert name == names[0] or settings["resolution"] == [width, height]
+            settings["resolution"] = [width, height]
+        settings["seconds_to_evidence"] = float(proof[1])
+        (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        result = f"PASS: native POV ads, real UDP, evidence at {proof[1]}s\n"
+        (output / "result.txt").write_text(result, encoding="utf-8")
+        print(result, end="")
+        return
     assert "PLAYTEST PASS" in client_text, f"Missing completion proof: {output / 'client.log'}"
     if args.configure_weapons:
         assert "INITIAL EQUIPMENT FIXTURE" not in server_text
