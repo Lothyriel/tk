@@ -20,6 +20,7 @@ pub(crate) struct LocalMotionPose {
     pub stride_phase: f32,
     pub stride_speed: f32,
     pub ads: f32,
+    pub roll: f32,
 }
 
 /// Presentation history only. Gameplay/HUD retain the newest authoritative session.
@@ -72,6 +73,7 @@ impl LocalMotion {
                         .stride_speed
                         .lerp(next.pose.stride_speed, alpha),
                     ads: previous.pose.ads.lerp(next.pose.ads, alpha),
+                    roll: previous.pose.roll.lerp(next.pose.roll, alpha),
                 });
             }
             previous = next;
@@ -298,6 +300,7 @@ mod tests {
             stride_phase: std::f32::consts::TAU - 0.2,
             stride_speed: 3.0,
             ads: 0.0,
+            roll: -0.2,
         };
         let crouched = LocalMotionPose {
             position: Vec3::new(2.0, 0.7, -1.0),
@@ -305,6 +308,7 @@ mod tests {
             stride_phase: 0.2,
             stride_speed: 0.0,
             ads: 1.0,
+            roll: 0.2,
         };
         motion.record(1.0, standing, 10.0, false);
         motion.record(1.04, crouched, 10.04, false);
@@ -320,6 +324,7 @@ mod tests {
         assert!((middle.stride_phase - std::f32::consts::TAU).abs() < 0.00001);
         assert!((middle.stride_speed - 1.5).abs() < 0.00001);
         assert!((middle.ads - 0.5).abs() < 0.00001);
+        assert!(middle.roll.abs() < 0.00001);
         assert!(eye(10.07).distance(eye(10.0).lerp(eye(20.0), 0.5)) < 0.00001);
         assert_eq!(motion.sample(10.0).unwrap().position, standing.position);
         assert_eq!(motion.sample(20.0).unwrap().position, crouched.position);

@@ -224,6 +224,7 @@ fn recv_players_pos(
                         0.0
                     },
                     ads: player.pose.ads,
+                    roll: player.pose.aim_roll,
                 },
                 time.elapsed_secs_f64(),
                 reset,

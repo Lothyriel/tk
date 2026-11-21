@@ -2077,6 +2077,44 @@ fn lean_moves_the_authoritative_eye_and_muzzle_sideways() {
 }
 
 #[test]
+fn lean_leaves_room_for_the_view_near_side_cover() {
+    use common::humanoid::PoseState;
+
+    // The view's near plane extends sideways at wide aspect ratios. Check
+    // clearance at the eye, not merely whether the eye point is outside.
+    for side in [-1.0, 1.0] {
+        let (mut app, player, _) = physical_fixture();
+        let root = app.world().get::<Transform>(player).unwrap().translation;
+        let face = root.x + side * (PLAYER_COLLIDER_RADIUS + 0.01);
+        app.world_mut().spawn((
+            SurfaceKind::Concrete,
+            Collider::cuboid(0.10, 1.5, 1.5),
+            Transform::from_xyz(face + side * 0.10, root.y, root.z),
+        ));
+        for crouch in [false, true] {
+            {
+                let mut input = app.world_mut().get_mut::<ClientInput>(player).unwrap();
+                input.crouch = crouch;
+                input.camera.roll = -side * 0.3;
+            }
+            held_steps(&mut app, player, 8);
+            let actor = app.world().get::<Transform>(player).unwrap();
+            let pose = app.world().get::<PoseState>(player).unwrap();
+            let eye_x = actor.translation.x - pose.aim_roll * 0.7;
+            let clearance = side * (face - eye_x);
+            assert!(
+                clearance >= 0.179,
+                "side={side} crouch={crouch} eye clearance={clearance}"
+            );
+            assert!(
+                pose.aim_roll.abs() > 0.1,
+                "cover should limit, not disable lean"
+            );
+        }
+    }
+}
+
+#[test]
 fn walking_and_running_pose_cadence_stays_in_a_human_step_range() {
     let walking_steps = common::humanoid::stride_phase_rate(3.25, 0.0) / std::f32::consts::PI;
     let running_steps = common::humanoid::stride_phase_rate(5.5, 0.0) / std::f32::consts::PI;
