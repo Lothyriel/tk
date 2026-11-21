@@ -138,6 +138,30 @@ fn gait_knee_scale(rig: &[SegmentPose; SEGMENT_COUNT], segment: Segment) -> f32 
     ((a.distance(b) + 0.004) / span).clamp(1.0, 1.35)
 }
 
+fn interpolate_foot_anchor(
+    anchor: &mut Vec3,
+    confirmed: Vec3,
+    root: &Transform,
+    alpha: f32,
+) -> Vec3 {
+    *anchor = anchor.lerp(confirmed, alpha);
+    root.rotation.inverse() * (*anchor - root.translation)
+}
+
+#[cfg(test)]
+#[test]
+fn planted_anchor_stays_fixed_as_the_remote_root_turns_and_translates() {
+    let planted = Vec3::new(1.0, 0.15, 2.0);
+    let mut anchor = planted;
+    for tick in 0..32 {
+        let t = tick as f32 / 31.0;
+        let root = Transform::from_xyz(1.0 + t * 0.3, 1.0, 2.0 - t * 0.6)
+            .with_rotation(Quat::from_rotation_y(t * 0.7));
+        let local = interpolate_foot_anchor(&mut anchor, planted, &root, 0.22);
+        assert!(root.transform_point(local).distance(planted) < 0.00001);
+    }
+}
+
 #[cfg(test)]
 #[test]
 fn gait_knee_scale_closes_overextended_meshes_without_moving_contacts() {
@@ -838,11 +862,10 @@ fn animate(
         if p.pose.physical.is_some() || !p.pose.grounded || !p.alive {
             *anchors = confirmed;
         }
-        let inverse_rotation = root.rotation.inverse();
         for i in 0..2 {
             // Filter the contact independently of root motion and yaw.
-            anchors[i] = anchors[i].lerp(confirmed[i], foot_alpha);
-            state.feet[i] = (inverse_rotation * (anchors[i] - root.translation)).into();
+            state.feet[i] =
+                interpolate_foot_anchor(&mut anchors[i], confirmed[i], &root, foot_alpha).into();
             state.foot_weight[i] += (p.pose.foot_weight[i] - state.foot_weight[i]) * foot_alpha;
             state.foot_normal[i] = p.pose.foot_normal[i];
             let delta = p.pose.foot_yaw[i] - state.foot_yaw[i];
