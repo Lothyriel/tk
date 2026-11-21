@@ -171,6 +171,7 @@ mod tests {
             time: 3.8,
             muzzle: [0.2, 1.2, 0.0],
             direction: [0.0, 0.0, -1.0],
+            ejection: Some([0.25, 1.5, -0.15]),
         };
         let snapshot = WorldSnapshot {
             configuration_epoch: 1,
@@ -258,26 +259,48 @@ mod tests {
             let rig = evaluate_pose(&PoseState::default(), 1.0, 1.0);
             player.pose.physical = Some(Box::new(PackedRig::pack(&rig)));
         }
-        let packed = encode(&worst);
+        use crate::replication::shots::*;
+        let shot_template = worst.fired_projectiles[0].clone();
+        let physical = pack_snapshot(worst).unwrap();
+        let packed = physical.bytes;
+        let received: WorldSnapshot = decode(&packed);
         println!(
-            "TK MAX PHYSICAL SNAPSHOT actors=32 physical_rigs=32 pieces=320 bytes={}",
-            packed.len()
+            "TK MAX PHYSICAL SNAPSHOT actors=32 physical_rigs=32 pieces=320 bytes={} reliable_only={}",
+            packed.len(),
+            physical.overflow.len()
         );
-        assert!(
-            packed.len() < 60_000,
-            "physical rig state must retain the existing network budget"
+        assert!(packed.len() < MAX_SNAPSHOT_BYTES);
+        assert_eq!(
+            received
+                .players
+                .iter()
+                .filter(|p| p.pose.physical.is_some())
+                .count(),
+            32
         );
+        assert_eq!(received.physics_pieces.len(), 320);
+        assert_eq!(received.impact_marks.len(), 256);
+        let mut shots: Vec<_> = received
+            .fired_projectiles
+            .iter()
+            .chain(&physical.overflow)
+            .map(|shot| {
+                assert_eq!(shot.ejection, Some([0.25, 1.5, -0.15]));
+                shot.id
+            })
+            .collect();
+        shots.sort_unstable();
+        assert!(shots.into_iter().eq(0..224));
         // Project the same physical stress at higher rates, up to the 128 Hz
         // simulation ceiling (one shot per actor/tick). No mandatory fields
         // disappear: the explicit overflow plus snapshot retain every shot ID.
-        use crate::replication::shots::*;
         for rpm in [900_u32, 1200, 2400, 7680] {
             let mut projected: WorldSnapshot = decode(&packed);
             let count = (32 * rpm).div_ceil(120); // half a second
             projected.fired_projectiles = (0..u64::from(count))
                 .map(|id| FiredProjectileData {
                     id,
-                    ..worst.fired_projectiles[0].clone()
+                    ..shot_template.clone()
                 })
                 .collect();
             let raw = encode(&projected).len();

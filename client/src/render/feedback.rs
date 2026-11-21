@@ -329,8 +329,13 @@ fn update_casings(
         let up = right.cross(direction).normalize_or_zero();
         let spec = casing_spec(shot.weapon.class());
         let jitter = casing_jitter(shot.id as u32);
-        let position =
-            muzzle - direction * spec.ejection_back + right * spec.ejection_side + up * 0.035;
+        let position = shot.ejection.map_or_else(
+            || muzzle - direction * spec.ejection_back + right * spec.ejection_side + up * 0.035,
+            Vec3::from,
+        );
+        if !position.is_finite() {
+            continue;
+        }
         let velocity =
             right * (1.35 + jitter * 0.35) + up * (1.65 + jitter.abs() * 0.25) + direction * 0.25;
         let entity = commands
@@ -1367,6 +1372,7 @@ mod tests {
             time: 0.0,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
+            ejection: None,
         });
         assert!((response.recoil - 0.010).abs() < f32::EPSILON);
         assert_eq!(response.angular.angles(0.1), Vec2::ZERO);
@@ -2054,6 +2060,7 @@ mod tests {
             time: 0.0,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
+            ejection: None,
         };
         r.shot(&shot);
         let v = r.velocity;
@@ -2116,6 +2123,7 @@ mod tests {
             time: 0.0,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
+            ejection: None,
         });
         app.init_resource::<Time>()
             .init_resource::<Feedback>()

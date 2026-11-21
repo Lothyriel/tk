@@ -8,7 +8,8 @@ use crate::{data, FiredProjectileData, WorldSnapshot};
 
 pub const SHOT_CHANNEL: u8 = 4;
 pub const MAX_SNAPSHOT_BYTES: usize = 60_000;
-pub const MAX_SHOT_BATCH: usize = 128;
+// Leave room for the archived message header and optional ejection origins.
+pub const MAX_SHOT_BATCH: usize = 120;
 pub const MAX_SHOT_MESSAGE_BYTES: usize = 8_192;
 pub const SHOT_WINDOW: u64 = 8_192;
 pub const MAX_PENDING_SHOTS: usize = 8_192;
@@ -54,6 +55,7 @@ impl ShotMessage {
                             .muzzle
                             .iter()
                             .chain(&shot.direction)
+                            .chain(shot.ejection.iter().flatten())
                             .all(|v| v.is_finite())
                 })
                 || shots.windows(2).any(|pair| pair[0].id >= pair[1].id)

@@ -289,6 +289,11 @@ pub(super) fn weapons_tick(
             time: time.elapsed_secs(),
             muzzle: muzzle.into(),
             direction: direction.into(),
+            ejection: common::weapon_animation::resolved_ejection_offset(
+                arsenal.current().spec(),
+                pose.ads,
+            )
+            .map(|offset| (eye + rotation * offset).into()),
         });
         // The current projectile uses the pre-impulse bore. Reaction changes
         // subsequent aim, once per authorized shot, independently of rendering.

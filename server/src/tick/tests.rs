@@ -2427,6 +2427,12 @@ fn lean_moves_the_authoritative_eye_and_muzzle_sideways() {
 
     assert!((pose.aim_roll - 0.3).abs() < 0.001);
     assert!(Vec3::from(shot.muzzle).distance(expected_muzzle) < 0.001);
+    let arsenal = app.world().get::<Arsenal>(shooter).unwrap();
+    let assembly = &arsenal.current().spec().assembly;
+    let port = assembly.anchors[&common::catalog::AnchorKind::Ejection];
+    let expected_port = expected_eye
+        + Quat::from(&input.camera) * assembly.hip_from_root.transform_point(port.translation);
+    assert!(Vec3::from(shot.ejection.unwrap()).distance(expected_port) < 0.001);
 }
 
 #[test]
@@ -3153,5 +3159,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
     assert_eq!(cover.cuts.len(), 1);
     assert_eq!(cover.cuts[0].cell, cell.id);
     assert_eq!(cover.raid_id, snapshot.raid.raid_id);
-    assert_eq!(PROTOCOL_ID, 15);
+    assert_eq!(PROTOCOL_ID, 16);
 }
