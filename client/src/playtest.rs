@@ -116,6 +116,7 @@ struct Driver {
     pov_ads: pov::Ads,
     pov_inspect: pov::Inspect,
     pov_stop_lean: pov::StopLean,
+    pov_stop_lean_roll: f32,
     pov_visual_since: Option<f64>,
     fall_ids: Vec<u64>,
     recovery_seen: bool,
@@ -399,6 +400,7 @@ fn drive(
         }
         Step::Pov => {
             let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");
+            let previous_lean = driver.pov_stop_lean_roll;
             input.camera = CameraInput::default();
             input.weapon = EquipmentSlot::Primary;
             let elapsed = now - driver.since;
@@ -422,7 +424,12 @@ fn drive(
                     // The capture runs after Present; allow the interpolation
                     // buffer to catch up before taking a static stance/roll cue.
                     let settled = session.local_motion.sample(now).is_some_and(|pose| {
-                        (pose.roll - local.pose.aim_roll).abs() < 0.01
+                        let roll_settled = if driver.pov_stop_lean == pov::StopLean::Neutral {
+                            pose.roll.abs() < 0.001
+                        } else {
+                            (pose.roll - local.pose.aim_roll).abs() < 0.01
+                        };
+                        roll_settled
                             && (pose.crouch - f32::from(u8::from(local.crouched))).abs() < 0.01
                     });
                     driver.pov_stop_lean.advance(elapsed, ready && settled, local)
@@ -453,7 +460,10 @@ fn drive(
                 input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
             }
             if preset == "stop-lean" {
-                driver.pov_stop_lean.input(&mut input);
+                driver
+                    .pov_stop_lean
+                    .input(&mut input, previous_lean, time.delta_secs());
+                driver.pov_stop_lean_roll = input.camera.roll;
             }
             if (driver.pov_ads == pov::Ads::Finish
                 || driver.pov_inspect == pov::Inspect::Finish

@@ -84,16 +84,12 @@ fn keyboard(
     if active && keys.just_pressed(KeyCode::KeyB) {
         input.selector_sequence = input.selector_sequence.wrapping_add(1);
     }
-    let tilt_target = match (
+    input.camera.roll = step_lean(
+        input.camera.roll,
         active && keys.pressed(KeyCode::KeyQ),
         active && keys.pressed(KeyCode::KeyE),
-    ) {
-        (true, false) => 0.3,
-        (false, true) => -0.3,
-        _ => 0.0,
-    };
-    let max_tilt_change = 0.6 * time.delta_secs();
-    input.camera.roll += (tilt_target - input.camera.roll).clamp(-max_tilt_change, max_tilt_change);
+        time.delta_secs(),
+    );
     let editing = editor.is_some_and(|editor| editor.visible || editor.pending.is_some());
     if keys.just_pressed(KeyCode::Enter) && !editing {
         input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
@@ -143,6 +139,16 @@ fn keyboard(
             }
         }
     }
+}
+
+pub(crate) fn step_lean(roll: f32, left: bool, right: bool, dt: f32) -> f32 {
+    let target = match (left, right) {
+        (true, false) => 0.3,
+        (false, true) => -0.3,
+        _ => 0.0,
+    };
+    let max_change = 0.6 * dt;
+    roll + (target - roll).clamp(-max_change, max_change)
 }
 
 fn mouse(
