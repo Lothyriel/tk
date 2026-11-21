@@ -1,4 +1,63 @@
 //! Short POV route driven by confirmed raid state, not animation timers.
+use bevy::prelude::*;
+use std::{
+    io::{BufWriter, Write},
+    time::{Duration, Instant},
+};
+
+#[derive(Resource)]
+pub(super) struct Cadence(Duration);
+
+impl Cadence {
+    pub(super) fn new(hz: u32) -> Self {
+        Self(Duration::from_secs_f64(1.0 / f64::from(hz)))
+    }
+}
+
+pub(super) fn pace(cadence: Res<Cadence>, mut last: Local<Option<Instant>>) {
+    if let Some(last) = *last {
+        std::thread::sleep(cadence.0.saturating_sub(last.elapsed()));
+    }
+    *last = Some(Instant::now());
+}
+
+pub(super) fn trace(
+    driver: Res<super::Driver>,
+    time: Res<Time<Real>>,
+    eye: Single<(&GlobalTransform, &Transform), With<crate::render::WorldModelCamera>>,
+    input: Res<common::LocalInput>,
+    mut file: Local<Option<BufWriter<std::fs::File>>>,
+) {
+    if driver.step != super::Step::Pov {
+        return;
+    }
+    let out = file.get_or_insert_with(|| {
+        let root =
+            std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").expect("playtest dir"));
+        let mut out = BufWriter::new(std::fs::File::create(root.join("pov-trace.csv")).unwrap());
+        writeln!(
+            out,
+            "seconds,frame_seconds,stage,eye_x,eye_y,eye_z,roll,input_roll"
+        )
+        .unwrap();
+        out
+    });
+    let [x, y, z] = eye.0.translation().to_array();
+    let (_, _, roll) = eye.1.rotation.to_euler(EulerRot::YXZ);
+    writeln!(
+        out,
+        "{:.6},{:.6},{:?},{x:.6},{y:.6},{z:.6},{roll:.6},{:.6}",
+        time.elapsed_secs_f64() - driver.since,
+        time.delta_secs_f64(),
+        driver.pov_stop_lean,
+        input.camera.roll
+    )
+    .unwrap();
+    if driver.pov_stop_lean == StopLean::Finish {
+        out.flush().unwrap();
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) enum Ads {
     #[default]

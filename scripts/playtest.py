@@ -50,9 +50,13 @@ def main():
                         help="Explicit LOD inspection override (requires --weapon-debug)")
     parser.add_argument("--pov", choices=POV_CAPTURES, help="Run only the named POV bench after deploy")
     parser.add_argument("--viewport", type=parse_viewport, help="Require this exact POV framebuffer (WIDTHxHEIGHT)")
+    parser.add_argument("--pov-hz", type=int, choices=range(15, 241), metavar="HZ",
+                        help="Cap the stop-lean client update rate and write the actual camera trace")
     args = parser.parse_args()
     if args.viewport and not args.pov:
         parser.error("--viewport requires --pov")
+    if args.pov_hz and args.pov != "stop-lean":
+        parser.error("--pov-hz requires --pov stop-lean")
     if args.pov and (args.clients != 1 or args.animation_review or args.configure_weapons or args.video):
         parser.error("--pov requires one client and no other review, configurator or video mode")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
@@ -64,6 +68,7 @@ def main():
     if args.pov:
         for name in POV_CAPTURES[args.pov]:
             (output / f"pov-{name}.png").unlink(missing_ok=True)
+        (output / "pov-trace.csv").unlink(missing_ok=True)
     if args.video:
         assert not (output / "frame-times.csv").exists(), "Use a fresh output directory for video evidence"
     # Old screenshots must never satisfy evidence checks for a new run.
@@ -82,12 +87,14 @@ def main():
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
     for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY",
                   "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV",
-                  "TK_PLAYTEST_VIEWPORT"):
+                  "TK_PLAYTEST_VIEWPORT", "TK_PLAYTEST_POV_HZ"):
         env.pop(flag, None)
     if args.pov:
         env["TK_PLAYTEST_POV"] = args.pov
     if args.viewport:
         env["TK_PLAYTEST_VIEWPORT"] = f"{args.viewport[0]}x{args.viewport[1]}"
+    if args.pov_hz:
+        env["TK_PLAYTEST_POV_HZ"] = str(args.pov_hz)
     env.update(SERVER_ADDR="127.0.0.1", TK_PORT="19080", TK_PLAYTEST_DIR=str(output), TK_PLAYTEST_CLIENTS=str(args.clients), NO_COLOR="1")
     if args.video:
         env["TK_PLAYTEST_VIDEO"] = "1"
@@ -116,6 +123,7 @@ def main():
         "peer_snapshot_drop_every": 3 if args.clients == 2 else 0,
         "resolution": [1280, 800], "world_fov_degrees": 70,
         "requested_viewport": args.viewport,
+        "requested_pov_hz": args.pov_hz,
         "video": args.video, "animation_review": args.animation_review,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "initial_weapon_kit_fixture": args.weapon_kit,
@@ -175,6 +183,9 @@ def main():
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
     if args.pov:
+        if args.pov_hz:
+            trace = output / "pov-trace.csv"
+            assert trace.is_file() and trace.stat().st_size > 500, f"Missing camera cadence trace: {trace}"
         proof = re.search(rf"POV PASS {re.escape(args.pov)} t=([0-9.]+)", client_text)
         assert proof, f"Missing POV completion proof: {output / 'client.log'}"
         names = tuple(f"pov-{name}" for name in POV_CAPTURES[args.pov])

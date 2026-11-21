@@ -47,6 +47,18 @@ impl bevy::prelude::Plugin for Plugin {
                 asset_review::camera.after(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(PostUpdate, video::record);
+        if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("stop-lean")
+            && let Ok(value) = std::env::var("TK_PLAYTEST_POV_HZ")
+        {
+            let hz = value.parse::<u32>().expect("POV cadence in Hz");
+            assert!((15..=240).contains(&hz));
+            app.insert_resource(pov::Cadence::new(hz))
+                .add_systems(Last, pov::pace)
+                .add_systems(
+                    PostUpdate,
+                    pov::trace.after(bevy::transform::TransformSystems::Propagate),
+                );
+        }
     }
 }
 
