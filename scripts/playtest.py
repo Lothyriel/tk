@@ -19,7 +19,17 @@ POV_CAPTURES = {
     "ads": ("rest", "ads", "return"),
     "inspect": ("rest", "inspect", "return"),
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
+    "side-cover": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
 }
+
+
+def parse_viewport(value):
+    match = re.fullmatch(r"([0-9]{1,4})x([0-9]{1,4})", value)
+    if match:
+        width, height = map(int, match.groups())
+        if 600 <= width <= 3840 and 400 <= height <= 2160:
+            return width, height
+    raise argparse.ArgumentTypeError("expected WIDTHxHEIGHT between 600x400 and 3840x2160")
 
 
 def main():
@@ -40,9 +50,17 @@ def main():
     parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
                         help="Explicit LOD inspection override (requires --weapon-debug)")
     parser.add_argument("--pov", choices=POV_CAPTURES, help="Run only the named POV bench after deploy")
+    parser.add_argument("--viewport", type=parse_viewport, help="Require this exact POV framebuffer (WIDTHxHEIGHT)")
+    parser.add_argument("--pov-hz", type=int, choices=range(15, 241), metavar="HZ",
+                        help="Cap the stop-lean client update rate and write the actual camera trace")
     args = parser.parse_args()
-    if args.pov and (args.clients != 1 or args.animation_review or args.configure_weapons or args.video):
-        parser.error("--pov requires one client and no other review, configurator or video mode")
+    if args.viewport and not args.pov:
+        parser.error("--viewport requires --pov")
+    if args.pov_hz and args.pov != "stop-lean":
+        parser.error("--pov-hz requires --pov stop-lean")
+    if args.pov and (args.animation_review or args.configure_weapons or args.video
+                     or (args.clients == 2 and args.pov != "stop-lean")):
+        parser.error("--pov is standalone; only stop-lean supports a second client")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
     assert args.weapon_debug or args.weapon_lod == "auto", "--weapon-lod requires --weapon-debug"
     assert not (args.configure_weapons and args.weapon_kit), "Panel acceptance must not seed server fixtures"
@@ -52,6 +70,10 @@ def main():
     if args.pov:
         for name in POV_CAPTURES[args.pov]:
             (output / f"pov-{name}.png").unlink(missing_ok=True)
+        (output / "pov-trace.csv").unlink(missing_ok=True)
+        if args.clients == 2:
+            for name in ("left", "right", "return"):
+                (output / "peer" / f"pov-{name}.png").unlink(missing_ok=True)
     if args.video:
         assert not (output / "frame-times.csv").exists(), "Use a fresh output directory for video evidence"
     # Old screenshots must never satisfy evidence checks for a new run.
@@ -69,10 +91,15 @@ def main():
     if args.weapon_kit:
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
     for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY",
-                  "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV"):
+                  "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV",
+                  "TK_PLAYTEST_VIEWPORT", "TK_PLAYTEST_POV_HZ"):
         env.pop(flag, None)
     if args.pov:
         env["TK_PLAYTEST_POV"] = args.pov
+    if args.viewport:
+        env["TK_PLAYTEST_VIEWPORT"] = f"{args.viewport[0]}x{args.viewport[1]}"
+    if args.pov_hz:
+        env["TK_PLAYTEST_POV_HZ"] = str(args.pov_hz)
     env.update(SERVER_ADDR="127.0.0.1", TK_PORT="19080", TK_PLAYTEST_DIR=str(output), TK_PLAYTEST_CLIENTS=str(args.clients), NO_COLOR="1")
     if args.video:
         env["TK_PLAYTEST_VIDEO"] = "1"
@@ -100,6 +127,8 @@ def main():
         "clients": args.clients, "transport": "real UDP 127.0.0.1:19080",
         "peer_snapshot_drop_every": 3 if args.clients == 2 else 0,
         "resolution": [1280, 800], "world_fov_degrees": 70,
+        "requested_viewport": args.viewport,
+        "requested_pov_hz": args.pov_hz,
         "video": args.video, "animation_review": args.animation_review,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "initial_weapon_kit_fixture": args.weapon_kit,
@@ -159,6 +188,21 @@ def main():
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
     if args.pov:
+        if args.clients == 2:
+            peer = output / "peer"
+            peer_text = (peer / "client.log").read_text(encoding="utf-8", errors="replace")
+            peer_text = re.sub(r"\x1b\[[0-9;]*m", "", peer_text)
+            assert "POV OBSERVER PASS" in peer_text and "panicked at" not in peer_text
+            assert " ERROR " not in peer_text, f"Runtime/render error in observer log: {peer}"
+            for name in ("left", "right", "return"):
+                assert f"POV OBSERVER {name} " in peer_text
+                data = (peer / f"pov-{name}.png").read_bytes()
+                assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
+                if args.viewport:
+                    assert struct.unpack(">II", data[16:24]) == args.viewport
+        if args.pov_hz:
+            trace = output / "pov-trace.csv"
+            assert trace.is_file() and trace.stat().st_size > 500, f"Missing camera cadence trace: {trace}"
         proof = re.search(rf"POV PASS {re.escape(args.pov)} t=([0-9.]+)", client_text)
         assert proof, f"Missing POV completion proof: {output / 'client.log'}"
         names = tuple(f"pov-{name}" for name in POV_CAPTURES[args.pov])
@@ -168,6 +212,10 @@ def main():
             assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
             width, height = struct.unpack(">II", data[16:24])
             assert width >= 600 and height >= 400
+            assert args.viewport is None or args.viewport == (width, height), (
+                f"{name}.png: expected {args.viewport}, got {(width, height)}; "
+                "check whether the window manager overrides the requested size"
+            )
             assert name == names[0] or settings["resolution"] == [width, height]
             settings["resolution"] = [width, height]
         settings["seconds_to_evidence"] = float(proof[1])

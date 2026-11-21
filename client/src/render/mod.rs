@@ -141,14 +141,33 @@ const BARREL_LASER_LENGTH: f32 = 25.0;
 struct ViewSettings {
     world_fov: f32,
     current_fov: f32,
+    bob_strength: f32,
 }
 impl Default for ViewSettings {
     fn default() -> Self {
         Self {
             world_fov: 70.0_f32.to_radians(),
             current_fov: 70.0_f32.to_radians(),
+            bob_strength: std::env::var("TK_CAMERA_BOB")
+                .ok()
+                .as_deref()
+                .map_or(1.0, camera_bob_strength),
         }
     }
+}
+
+fn camera_bob_strength(value: &str) -> f32 {
+    match value {
+        "off" => 0.0,
+        "reduced" => 0.35,
+        _ => 1.0,
+    }
+}
+
+fn stride_bob(phase: f32, speed: f32, ads: f32, strength: f32) -> f32 {
+    // Cosmetic translation only; fade to zero at rest and scale down in ADS.
+    let amplitude = 0.012 * ((speed - 0.08) / (5.5 - 0.08)).clamp(0.0, 1.0);
+    (2.0 * phase).cos() * amplitude * (1.0 - 0.8 * ads.clamp(0.0, 1.0)) * strength
 }
 
 fn aimed_fov(base: f32, weapon: WeaponKind, ads: f32) -> f32 {
@@ -406,13 +425,18 @@ fn spawn_world_model(
         ));
     }
     let full = materials.add(Color::srgb(1.0, 0.38, 0.045));
-    if common::map::pov_fixture() {
-        let step = common::map::POV_STEP;
+    for block in pov_fixture()
+        .then_some(POV_STEP)
+        .into_iter()
+        .chain(pov_side_cover())
+    {
         commands.spawn((
-            Mesh3d(meshes.add(Cuboid::from_size(Vec3::from(step.half_size) * 2.0))),
+            Mesh3d(meshes.add(Cuboid::from_size(Vec3::from(block.half_size) * 2.0))),
             MeshMaterial3d(concrete.clone()),
-            Transform::from_translation(Vec3::from(step.center)),
+            Transform::from_translation(Vec3::from(block.center)),
         ));
+    }
+    if pov_fixture() {
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::new(0.10, 0.10, 0.012))),
             MeshMaterial3d(full.clone()),
@@ -603,25 +627,46 @@ fn sync_local_view(
     player_input: Res<LocalInput>,
     feedback: Option<Res<feedback::Feedback>>,
     id: Option<Res<PlayerId>>,
+    presentation: (
+        Option<Res<ClientSession>>,
+        Option<Res<Time<Real>>>,
+        Option<Res<ViewSettings>>,
+    ),
     player_visual_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     mut query: Query<(&BaseLocalOffset, &mut Transform), With<LocalView>>,
 ) {
+    let (session, time, view_settings) = presentation;
     let camera = match (feedback, id) {
         (Some(feedback), Some(id)) => feedback.camera(id.0, player_input.camera),
         _ => player_input.camera,
     };
-    let vertical_offset = if player_visual_state.crouched {
-        PLAYER_CROUCH_VIEW_OFFSET
-    } else {
-        0.0
-    };
-    let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, camera.roll);
+    // Match the timestamps and endpoints used by the local root. The latest
+    // stance alone would switch the lens height before the root moves.
+    let motion = session
+        .zip(time)
+        .and_then(|(session, time)| session.local_motion.sample(time.elapsed_secs_f64()));
+    let crouch = motion.map_or_else(
+        || f32::from(u8::from(player_visual_state.crouched)),
+        |pose| pose.crouch,
+    );
+    let bob = motion.zip(view_settings).map_or(0.0, |(pose, settings)| {
+        stride_bob(
+            pose.stride_phase,
+            pose.stride_speed,
+            pose.ads,
+            settings.bob_strength,
+        )
+    });
+    let vertical_offset = crouch * PLAYER_CROUCH_VIEW_OFFSET;
+    let lean = motion.map_or(player_input.camera.roll, |pose| pose.roll);
+    let recoil_roll = camera.roll - player_input.camera.roll;
+    let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, lean + recoil_roll);
 
     for (base_offset, mut transform) in query.iter_mut() {
         transform.rotation = rotation;
         transform.translation = base_offset.0
-            + common::humanoid::aim_lean_offset(player_input.camera.roll)
-            + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset);
+            + common::humanoid::aim_lean_offset(lean)
+            + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset + bob);
     }
 }
 
@@ -817,6 +862,21 @@ mod view_tests {
     }
 
     #[test]
+    fn local_camera_stride_bob_is_bounded_and_zero_at_rest_or_when_disabled() {
+        use std::f32::consts::FRAC_PI_2;
+        let hip = stride_bob(0.0, 5.5, 0.0, 1.0);
+        assert!((hip - 0.012).abs() < 0.00001);
+        assert!((stride_bob(FRAC_PI_2, 5.5, 0.0, 1.0) + hip).abs() < 0.00001);
+        assert!(stride_bob(0.0, 3.25, 0.0, 1.0) < hip);
+        assert!(stride_bob(0.0, 5.5, 1.0, 1.0) < hip * 0.21);
+        assert!(stride_bob(0.0, 5.5, 0.0, camera_bob_strength("reduced")) < hip * 0.36);
+        assert_eq!(stride_bob(0.0, 5.5, 0.0, camera_bob_strength("off")), 0.0);
+        for phase in [0.0, FRAC_PI_2] {
+            assert_eq!(stride_bob(phase, 0.0, 0.0, 1.0), 0.0);
+        }
+    }
+
+    #[test]
     fn local_cameras_shift_sideways_with_the_upper_body_lean() {
         let mut app = App::new();
         app.insert_resource(LocalInput(common::ClientInput {
@@ -844,6 +904,67 @@ mod view_tests {
             let translation = app.world().get::<Transform>(camera).unwrap().translation;
             assert!((translation.x + 0.21).abs() < 0.001);
             assert!((translation.y - PLAYER_VIEW_HEIGHT).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn local_cameras_use_confirmed_lean_without_delaying_mouse_look() {
+        let mut app = App::new();
+        let mut session = ClientSession::default();
+        session.local_motion.record(
+            1.0,
+            crate::sync::LocalMotionPose {
+                position: Vec3::ZERO,
+                crouch: 1.0,
+                stride_phase: 0.0,
+                stride_speed: 0.0,
+                ads: 0.0,
+                roll: 0.22,
+            },
+            0.0,
+            false,
+        );
+        app.add_plugins(TransformPlugin)
+            .insert_resource(session)
+            .init_resource::<Time<Real>>()
+            .init_resource::<LocalInput>()
+            .add_systems(Update, (sync_local_player_rotation, sync_local_view));
+        let root = app
+            .world_mut()
+            .spawn((
+                LocalPlayer,
+                PlayerVisualState::default(),
+                Transform::default(),
+            ))
+            .id();
+        let cameras = [0, 1].map(|_| {
+            app.world_mut()
+                .spawn((
+                    LocalView,
+                    BaseLocalOffset(Vec3::ZERO),
+                    Transform::default(),
+                    ChildOf(root),
+                ))
+                .id()
+        });
+
+        // No fresh packet arrives as the player turns; requested roll has
+        // already reversed but neither rendered camera may use that request.
+        for (yaw, pitch) in [(0.0, 0.0), (0.38, -0.21)] {
+            app.world_mut().resource_mut::<LocalInput>().camera = common::CameraInput {
+                yaw,
+                pitch,
+                roll: -0.3,
+            };
+            app.update();
+            let expected = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.22);
+            let eye = Quat::from_rotation_y(yaw)
+                * Vec3::new(-0.154, PLAYER_VIEW_HEIGHT + PLAYER_CROUCH_VIEW_OFFSET, 0.0);
+            for camera in cameras {
+                let transform = app.world().get::<GlobalTransform>(camera).unwrap();
+                assert!(transform.rotation().dot(expected).abs() > 0.99999);
+                assert!(transform.translation().distance(eye) < 0.00001);
+            }
         }
     }
 

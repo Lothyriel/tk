@@ -55,12 +55,18 @@ struct EquipmentVisual {
 #[derive(Component)]
 struct PieceVisual(u64);
 #[derive(Default, Resource)]
-struct PoseCache {
+pub(crate) struct PoseCache {
     accepted_rigs: HashMap<u64, [SegmentPose; SEGMENT_COUNT]>,
     raid: u32,
     poses: HashMap<u64, PoseState>,
     roots: HashMap<u64, Transform>,
     last_live: HashMap<(u64, Segment), Transform>,
+}
+
+impl PoseCache {
+    pub(crate) fn presented_roll(&self, id: u64) -> Option<f32> {
+        self.poses.get(&id).map(|pose| pose.aim_roll)
+    }
 }
 #[derive(Component)]
 struct WorldWeapon {

@@ -10,7 +10,17 @@ const INTERPOLATION_DELAY: f64 = 3.0 * common::SNAPSHOT_INTERVAL as f64;
 #[derive(Debug)]
 struct Sample {
     time: f64,
-    position: Vec3,
+    pose: LocalMotionPose,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LocalMotionPose {
+    pub position: Vec3,
+    pub crouch: f32,
+    pub stride_phase: f32,
+    pub stride_speed: f32,
+    pub ads: f32,
+    pub roll: f32,
 }
 
 /// Presentation history only. Gameplay/HUD retain the newest authoritative session.
@@ -22,12 +32,12 @@ pub(crate) struct LocalMotion {
 }
 
 impl LocalMotion {
-    pub(super) fn record(&mut self, time: f32, position: Vec3, received: f64, reset: bool) {
+    pub(crate) fn record(&mut self, time: f32, pose: LocalMotionPose, received: f64, reset: bool) {
         let time = f64::from(time);
         let reset = reset
             || self.samples.back().is_some_and(|last| {
                 time <= last.time
-                    || position.distance(last.position) > 4.0
+                    || pose.position.distance(last.pose.position) > 4.0
                     || received - self.last_received > 0.25
             });
         if reset {
@@ -38,24 +48,38 @@ impl LocalMotion {
         // arrivals would turn delivery jitter into camera speed changes.
         self.clock_offset.get_or_insert(received - time);
         self.last_received = received;
-        self.samples.push_back(Sample { time, position });
+        self.samples.push_back(Sample { time, pose });
         while self.samples.len() > 32 {
             self.samples.pop_front();
         }
     }
 
-    fn position(&self, now: f64) -> Option<Vec3> {
+    pub(crate) fn sample(&self, now: f64) -> Option<LocalMotionPose> {
         let time = now - self.clock_offset? - INTERPOLATION_DELAY;
         let mut previous = self.samples.front()?;
         for next in self.samples.iter().skip(1) {
             if time <= next.time {
-                let alpha = ((time - previous.time) / (next.time - previous.time)).clamp(0.0, 1.0);
-                return Some(previous.position.lerp(next.position, alpha as f32));
+                let alpha =
+                    ((time - previous.time) / (next.time - previous.time)).clamp(0.0, 1.0) as f32;
+                use std::f32::consts::{PI, TAU};
+                let phase_delta =
+                    (next.pose.stride_phase - previous.pose.stride_phase + PI).rem_euclid(TAU) - PI;
+                return Some(LocalMotionPose {
+                    position: previous.pose.position.lerp(next.pose.position, alpha),
+                    crouch: previous.pose.crouch.lerp(next.pose.crouch, alpha),
+                    stride_phase: previous.pose.stride_phase + phase_delta * alpha,
+                    stride_speed: previous
+                        .pose
+                        .stride_speed
+                        .lerp(next.pose.stride_speed, alpha),
+                    ads: previous.pose.ads.lerp(next.pose.ads, alpha),
+                    roll: previous.pose.roll.lerp(next.pose.roll, alpha),
+                });
             }
             previous = next;
         }
         // Never predict through a wall or keep moving during a packet outage.
-        Some(previous.position)
+        Some(previous.pose)
     }
 }
 
@@ -64,9 +88,9 @@ pub(super) fn present_local_motion(
     time: Res<Time<Real>>,
     mut players: Query<&mut Transform, With<LocalPlayer>>,
 ) {
-    if let Some(position) = session.local_motion.position(time.elapsed_secs_f64()) {
+    if let Some(pose) = session.local_motion.sample(time.elapsed_secs_f64()) {
         for mut transform in &mut players {
-            transform.translation = position;
+            transform.translation = pose.position;
         }
     }
 }
@@ -267,19 +291,98 @@ mod tests {
     }
 
     #[test]
+    fn local_camera_motion_replays_the_same_brake_and_lean_at_30_and_165_hz() {
+        use super::{INTERPOLATION_DELAY, LocalMotion, LocalMotionPose};
+
+        // Replay identical confirmed samples; unlike the native live route,
+        // render cadence cannot change when authority receives the brake cue.
+        let path = |t: f32| {
+            let braking = (t - 0.5).clamp(0.0, 0.5);
+            let z = -(5.5 * t.min(0.5) + 5.5 * braking - 5.5 * braking * braking);
+            let roll = if t < 1.5 {
+                0.6 * (t - 1.0).max(0.0)
+            } else if t < 2.5 {
+                0.3 - 0.6 * (t - 1.5)
+            } else {
+                (-0.3 + 0.6 * (t - 2.5)).min(0.0)
+            };
+            (z, roll)
+        };
+        for fps in [30, 165] {
+            let mut motion = LocalMotion::default();
+            let mut next_sample = 0;
+            let mut last_roll = 0.0_f32;
+            for frame in 0..=fps * 4 {
+                let now = f64::from(frame) / f64::from(fps);
+                while f64::from(next_sample) / 60.0 <= now {
+                    let stamp = f64::from(next_sample) / 60.0;
+                    let (z, roll) = path(stamp as f32);
+                    motion.record(
+                        stamp as f32,
+                        LocalMotionPose {
+                            position: Vec3::new(0.0, 1.0, z),
+                            crouch: 0.0,
+                            stride_phase: 0.0,
+                            stride_speed: 0.0,
+                            ads: 0.0,
+                            roll,
+                        },
+                        stamp,
+                        false,
+                    );
+                    next_sample += 1;
+                }
+                let sample = motion.sample(now).unwrap();
+                let (expected_z, expected_roll) = path((now - INTERPOLATION_DELAY).max(0.0) as f32);
+                // Linear interpolation of a constant-acceleration segment
+                // contributes at most a * snapshot_dt² / 8 (< 0.4 mm).
+                assert!((sample.position.z - expected_z).abs() < 0.0004);
+                assert!((sample.roll - expected_roll).abs() < 0.00001);
+                assert!((sample.roll - last_roll).abs() <= 0.6 / fps as f32 + 0.00001);
+                last_roll = sample.roll;
+            }
+            assert_eq!(last_roll, 0.0);
+        }
+    }
+
+    #[test]
     fn local_camera_motion_samples_the_confirmed_3d_path_with_a_50ms_delay() {
-        let mut motion = super::LocalMotion::default();
-        motion.record(1.0, Vec3::new(0.0, 1.0, 0.0), 10.0, false);
-        motion.record(1.04, Vec3::new(2.0, 2.0, -1.0), 10.04, false);
-        assert!(
-            motion
-                .position(10.07)
-                .unwrap()
-                .distance(Vec3::new(1.0, 1.5, -0.5))
-                < 0.00001
-        );
-        assert_eq!(motion.position(10.0), Some(Vec3::new(0.0, 1.0, 0.0)));
-        assert_eq!(motion.position(20.0), Some(Vec3::new(2.0, 2.0, -1.0)));
+        use super::{LocalMotion, LocalMotionPose};
+        let mut motion = LocalMotion::default();
+        let standing = LocalMotionPose {
+            position: Vec3::new(0.0, 1.0, 0.0),
+            crouch: 0.0,
+            stride_phase: std::f32::consts::TAU - 0.2,
+            stride_speed: 3.0,
+            ads: 0.0,
+            roll: -0.2,
+        };
+        let crouched = LocalMotionPose {
+            position: Vec3::new(2.0, 0.7, -1.0),
+            crouch: 1.0,
+            stride_phase: 0.2,
+            stride_speed: 0.0,
+            ads: 1.0,
+            roll: 0.2,
+        };
+        motion.record(1.0, standing, 10.0, false);
+        motion.record(1.04, crouched, 10.04, false);
+        let eye = |now| {
+            let sample = motion.sample(now).unwrap();
+            sample.position
+                + Vec3::Y
+                    * (common::PLAYER_VIEW_HEIGHT
+                        + sample.crouch * common::PLAYER_CROUCH_VIEW_OFFSET)
+        };
+        assert!((motion.sample(10.07).unwrap().crouch - 0.5).abs() < 0.00001);
+        let middle = motion.sample(10.07).unwrap();
+        assert!((middle.stride_phase - std::f32::consts::TAU).abs() < 0.00001);
+        assert!((middle.stride_speed - 1.5).abs() < 0.00001);
+        assert!((middle.ads - 0.5).abs() < 0.00001);
+        assert!(middle.roll.abs() < 0.00001);
+        assert!(eye(10.07).distance(eye(10.0).lerp(eye(20.0), 0.5)) < 0.00001);
+        assert_eq!(motion.sample(10.0).unwrap().position, standing.position);
+        assert_eq!(motion.sample(20.0).unwrap().position, crouched.position);
     }
 
     #[test]

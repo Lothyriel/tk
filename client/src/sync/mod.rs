@@ -11,6 +11,8 @@ use common::raid::{RaidPhase, RaidState, RaidStatus};
 
 pub(crate) mod cover;
 mod motion;
+#[cfg(test)]
+pub(crate) use motion::LocalMotionPose;
 
 #[derive(Debug, Default, Resource)]
 pub(crate) struct ClientSession {
@@ -212,7 +214,20 @@ fn recv_players_pos(
                 });
             session.local_motion.record(
                 snapshot.simulation_time,
-                player.pos.into(),
+                motion::LocalMotionPose {
+                    position: player.pos.into(),
+                    crouch: f32::from(u8::from(player.crouched)),
+                    stride_phase: player.pose.phase,
+                    stride_speed: if player.pose.grounded
+                        && player.pose.mode == common::humanoid::PhysicalMode::Standing
+                    {
+                        player.pose.velocity[0].hypot(player.pose.velocity[2])
+                    } else {
+                        0.0
+                    },
+                    ads: player.pose.ads,
+                    roll: player.pose.aim_roll,
+                },
                 time.elapsed_secs_f64(),
                 reset,
             );

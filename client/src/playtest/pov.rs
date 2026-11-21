@@ -1,4 +1,71 @@
 //! Short POV route driven by confirmed raid state, not animation timers.
+use bevy::prelude::*;
+use std::{
+    io::{BufWriter, Write},
+    time::{Duration, Instant},
+};
+
+#[derive(Resource)]
+pub(super) struct Cadence(Duration);
+
+impl Cadence {
+    pub(super) fn new(hz: u32) -> Self {
+        Self(Duration::from_secs_f64(1.0 / f64::from(hz)))
+    }
+}
+
+pub(super) fn pace(cadence: Res<Cadence>, mut last: Local<Option<Instant>>) {
+    if let Some(last) = *last {
+        std::thread::sleep(cadence.0.saturating_sub(last.elapsed()));
+    }
+    *last = Some(Instant::now());
+}
+
+pub(super) fn trace(
+    driver: Res<super::Driver>,
+    time: Res<Time<Real>>,
+    eye: Single<(&Camera, &GlobalTransform, &Transform), With<crate::render::WorldModelCamera>>,
+    input: Res<common::LocalInput>,
+    mut file: Local<Option<BufWriter<std::fs::File>>>,
+) {
+    if driver.step != super::Step::Pov {
+        return;
+    }
+    let out = file.get_or_insert_with(|| {
+        let root =
+            std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").expect("playtest dir"));
+        let mut out = BufWriter::new(std::fs::File::create(root.join("pov-trace.csv")).unwrap());
+        writeln!(
+            out,
+            "seconds,frame_seconds,stage,eye_x,eye_y,eye_z,roll,input_roll,marker_ndc_x,marker_ndc_y"
+        )
+        .unwrap();
+        out
+    });
+    let [x, y, z] = eye.1.translation().to_array();
+    let (_, _, roll) = eye.2.rotation.to_euler(EulerRot::YXZ);
+    // A fixed scene reference in normalized screen coordinates; this
+    // measures framing, not whether another mesh or the HUD occludes it.
+    let marker = eye
+        .0
+        .world_to_ndc(eye.1, Vec3::from(common::map::POV_MARKER))
+        .map_or(Vec2::splat(f32::NAN), |p| p.truncate());
+    writeln!(
+        out,
+        "{:.6},{:.6},{:?},{x:.6},{y:.6},{z:.6},{roll:.6},{:.6},{:.6},{:.6}",
+        time.elapsed_secs_f64() - driver.since,
+        time.delta_secs_f64(),
+        driver.pov_stop_lean,
+        input.camera.roll,
+        marker.x,
+        marker.y
+    )
+    .unwrap();
+    if driver.pov_stop_lean == StopLean::Finish {
+        out.flush().unwrap();
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) enum Ads {
     #[default]
@@ -32,6 +99,7 @@ impl StopLean {
         elapsed: f64,
         ready: bool,
         player: &common::ClientData,
+        side_cover: bool,
     ) -> Result<Option<&'static str>, &'static str> {
         if elapsed >= 15.0 {
             return Err("POV stop/lean did not reach its confirmed state before timeout");
@@ -42,6 +110,13 @@ impl StopLean {
         let pose = &player.pose;
         let [x, _, z] = pose.velocity;
         let speed = x.hypot(z);
+        let settled_lean = |roll: f32| {
+            if side_cover {
+                (0.20..0.29).contains(&roll)
+            } else {
+                roll > 0.29
+            }
+        };
         let (next, capture) = match self {
             Self::Rest => (Self::Walk, "pov-rest"),
             Self::Walk if speed >= 2.5 && player.pos[2] < 8.0 => (Self::Run, "pov-walk"),
@@ -49,27 +124,24 @@ impl StopLean {
             Self::Run if speed >= 4.5 && player.pos[2] < -0.7 => (Self::Brake, "pov-run"),
             Self::Brake if speed < 0.08 => (Self::Crouch, "pov-stop"),
             Self::Crouch if pose.crouch > 0.95 => (Self::Left, "pov-crouch"),
-            Self::Left if pose.aim_roll < -0.24 => (Self::Right, "pov-left"),
-            Self::Right if pose.aim_roll > 0.24 => (Self::Neutral, "pov-right"),
-            Self::Neutral if pose.aim_roll.abs() < 0.02 => (Self::Finish, "pov-return"),
+            Self::Left if settled_lean(-pose.aim_roll) => (Self::Right, "pov-left"),
+            Self::Right if settled_lean(pose.aim_roll) => (Self::Neutral, "pov-right"),
+            Self::Neutral if pose.aim_roll.abs() < 0.001 => (Self::Finish, "pov-return"),
             _ => return Ok(None),
         };
         *self = next;
         Ok(Some(capture))
     }
 
-    pub(super) fn input(&self, input: &mut common::ClientInput) {
+    pub(super) fn input(&self, input: &mut common::ClientInput, previous_roll: f32, dt: f32) {
         input.forward = matches!(self, Self::Walk | Self::Run);
         input.run = *self == Self::Run;
         input.crouch = matches!(
             self,
             Self::Crouch | Self::Left | Self::Right | Self::Neutral | Self::Finish
         );
-        input.camera.roll = match self {
-            Self::Left => -0.3,
-            Self::Right => 0.3,
-            _ => 0.0,
-        };
+        input.camera.roll =
+            crate::input::step_lean(previous_roll, *self == Self::Right, *self == Self::Left, dt);
     }
 }
 
@@ -149,19 +221,37 @@ mod tests {
             ..Default::default()
         };
         player.pose.velocity[2] = -5.0;
-        assert_eq!(route.advance(2.0, true, &player), Ok(Some("pov-run")));
-        assert_eq!(route.advance(2.1, true, &player), Ok(None));
+        assert_eq!(
+            route.advance(2.0, true, &player, false),
+            Ok(Some("pov-run"))
+        );
+        assert_eq!(route.advance(2.1, true, &player, false), Ok(None));
         player.pose.velocity[2] = 0.0;
-        assert_eq!(route.advance(2.4, true, &player), Ok(Some("pov-stop")));
+        assert_eq!(
+            route.advance(2.4, true, &player, false),
+            Ok(Some("pov-stop"))
+        );
         player.pose.crouch = 1.0;
-        assert_eq!(route.advance(2.8, true, &player), Ok(Some("pov-crouch")));
+        assert_eq!(
+            route.advance(2.8, true, &player, false),
+            Ok(Some("pov-crouch"))
+        );
         player.pose.aim_roll = -0.3;
-        assert_eq!(route.advance(3.0, true, &player), Ok(Some("pov-left")));
-        assert_eq!(route.advance(3.1, true, &player), Ok(None));
+        assert_eq!(
+            route.advance(3.0, true, &player, false),
+            Ok(Some("pov-left"))
+        );
+        assert_eq!(route.advance(3.1, true, &player, false), Ok(None));
         player.pose.aim_roll = 0.3;
-        assert_eq!(route.advance(3.2, true, &player), Ok(Some("pov-right")));
+        assert_eq!(
+            route.advance(3.2, true, &player, false),
+            Ok(Some("pov-right"))
+        );
         player.pose.aim_roll = 0.0;
-        assert_eq!(route.advance(3.4, true, &player), Ok(Some("pov-return")));
+        assert_eq!(
+            route.advance(3.4, true, &player, false),
+            Ok(Some("pov-return"))
+        );
     }
 
     #[test]

@@ -93,8 +93,7 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | Mouse | Look |
 | Left Shift / Left Ctrl | Run / crouch |
 | Space | Jump while active; never respawn during the current raid |
-| Hold Q / E | Gradually lean the view, upper body and firing origin left / right; remote players see the body move with it; release to hold the current angle |
-| Tap the opposite tilt key | Ease the view and upper body back to center |
+| Hold Q / E | Gradually lean left / right; release both keys (or hold both) to return to neutral |
 | 1 / 2 | Equip your selected primary / pistol |
 | Left mouse button | Hold for rifle/SMG automatic fire; click for pistol semi-automatic fire |
 | Hold right mouse button | Aim down iron sights; release to return to hip fire |
@@ -105,6 +104,10 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | Escape | Release or recapture the cursor during a raid; lobby/debrief release it automatically |
 | Up / Down arrow | Narrow / widen the field of view |
 | F8 / F9 | Toggle weapon socket/pivot debug overlay / cycle inspection LOD while enabled |
+
+For less first-person camera movement, launch the client with
+`TK_CAMERA_BOB=reduced` or `TK_CAMERA_BOB=off`. This changes only the
+cosmetic step motion, not stance, mouse aim, or collision.
 
 ### Configure a weapon
 

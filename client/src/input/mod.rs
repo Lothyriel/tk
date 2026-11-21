@@ -56,7 +56,7 @@ fn keyboard(
     time: Res<Time<Real>>,
     window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
-    (mut tilt_target, editor): (Local<f32>, Option<Res<crate::loadout::Editor>>),
+    editor: Option<Res<crate::loadout::Editor>>,
 ) {
     let active = session.playing(id.0)
         && window.0.focused
@@ -84,22 +84,12 @@ fn keyboard(
     if active && keys.just_pressed(KeyCode::KeyB) {
         input.selector_sequence = input.selector_sequence.wrapping_add(1);
     }
-    if active {
-        if keys.just_pressed(KeyCode::KeyQ) {
-            *tilt_target = if input.camera.roll < 0.0 { 0.0 } else { 0.3 };
-        }
-        if keys.just_pressed(KeyCode::KeyE) {
-            *tilt_target = if input.camera.roll > 0.0 { 0.0 } else { -0.3 };
-        }
-        if !keys.pressed(KeyCode::KeyQ) && !keys.pressed(KeyCode::KeyE) && *tilt_target != 0.0 {
-            *tilt_target = input.camera.roll;
-        }
-    } else {
-        *tilt_target = 0.0;
-    }
-    let max_tilt_change = 0.6 * time.delta_secs();
-    input.camera.roll +=
-        (*tilt_target - input.camera.roll).clamp(-max_tilt_change, max_tilt_change);
+    input.camera.roll = step_lean(
+        input.camera.roll,
+        active && keys.pressed(KeyCode::KeyQ),
+        active && keys.pressed(KeyCode::KeyE),
+        time.delta_secs(),
+    );
     let editing = editor.is_some_and(|editor| editor.visible || editor.pending.is_some());
     if keys.just_pressed(KeyCode::Enter) && !editing {
         input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
@@ -149,6 +139,16 @@ fn keyboard(
             }
         }
     }
+}
+
+pub(crate) fn step_lean(roll: f32, left: bool, right: bool, dt: f32) -> f32 {
+    let target = match (left, right) {
+        (true, false) => 0.3,
+        (false, true) => -0.3,
+        _ => 0.0,
+    };
+    let max_change = 0.6 * dt;
+    roll + (target - roll).clamp(-max_change, max_change)
 }
 
 fn mouse(
@@ -257,8 +257,10 @@ mod tests {
     }
 
     #[test]
-    fn q_and_e_hold_tilt_gradually_and_opposite_press_returns_to_level() {
+    fn q_and_e_release_and_reverse_continuously() {
         let mut app = input_app();
+        app.init_resource::<AccumulatedMouseMotion>()
+            .add_systems(Update, mouse.after(keyboard));
         {
             let mut session = app.world_mut().resource_mut::<ClientSession>();
             session.raid.phase = RaidPhase::Active;
@@ -280,20 +282,36 @@ mod tests {
         app.update();
         assert!((app.world().resource::<LocalInput>().camera.roll - 0.3).abs() < 0.001);
 
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyQ);
+        app.update();
+        assert!((app.world().resource::<LocalInput>().camera.roll - 0.15).abs() < 0.001);
+
         {
             let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.release(KeyCode::KeyQ);
             keys.clear_just_pressed(KeyCode::KeyQ);
             keys.press(KeyCode::KeyE);
         }
         app.world_mut()
             .resource_mut::<Time<Real>>()
             .advance_by(std::time::Duration::from_secs_f32(0.25));
+        app.world_mut()
+            .resource_mut::<AccumulatedMouseMotion>()
+            .delta = Vec2::new(10.0, -5.0);
         app.update();
-        assert!((app.world().resource::<LocalInput>().camera.roll - 0.15).abs() < 0.001);
+        let camera = app.world().resource::<LocalInput>().camera;
+        assert!(camera.roll.abs() < 0.001);
+        assert!((camera.yaw + 0.03).abs() < 0.00001);
+        assert!((camera.pitch - 0.01).abs() < 0.00001);
         app.world_mut()
             .resource_mut::<Time<Real>>()
             .advance_by(std::time::Duration::from_secs_f32(0.25));
+        app.update();
+        assert!((app.world().resource::<LocalInput>().camera.roll + 0.15).abs() < 0.001);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyE);
         app.update();
         assert!(app.world().resource::<LocalInput>().camera.roll.abs() < 0.001);
     }

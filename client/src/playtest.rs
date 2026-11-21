@@ -13,6 +13,15 @@ mod video;
 
 pub struct Plugin;
 
+pub(crate) fn requested_viewport() -> Option<(u32, u32)> {
+    let value = std::env::var("TK_PLAYTEST_VIEWPORT").ok()?;
+    let (width, height) = value.split_once('x').expect("viewport WIDTHxHEIGHT");
+    Some((
+        width.parse().expect("viewport width"),
+        height.parse().expect("viewport height"),
+    ))
+}
+
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Driver>()
@@ -38,6 +47,18 @@ impl bevy::prelude::Plugin for Plugin {
                 asset_review::camera.after(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(PostUpdate, video::record);
+        if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("stop-lean")
+            && let Ok(value) = std::env::var("TK_PLAYTEST_POV_HZ")
+        {
+            let hz = value.parse::<u32>().expect("POV cadence in Hz");
+            assert!((15..=240).contains(&hz));
+            app.insert_resource(pov::Cadence::new(hz))
+                .add_systems(Last, pov::pace)
+                .add_systems(
+                    PostUpdate,
+                    pov::trace.after(bevy::transform::TransformSystems::Propagate),
+                );
+        }
     }
 }
 
@@ -95,6 +116,9 @@ struct Driver {
     pov_ads: pov::Ads,
     pov_inspect: pov::Inspect,
     pov_stop_lean: pov::StopLean,
+    pov_stop_lean_roll: f32,
+    pov_lean_since: f64,
+    pov_observed: u8,
     pov_visual_since: Option<f64>,
     fall_ids: Vec<u64>,
     recovery_seen: bool,
@@ -196,6 +220,7 @@ struct PlaytestLenses<'w, 's> {
     world: Single<'w, 's, &'static Projection, With<crate::render::WorldModelCamera>>,
     view: Single<'w, 's, &'static Projection, With<crate::render::ViewModelCamera>>,
     configured: AcceptedViewModels<'w, 's>,
+    poses: Res<'w, crate::render::actors::PoseCache>,
 }
 
 fn drive(
@@ -378,6 +403,58 @@ fn drive(
         }
         Step::Pov => {
             let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");
+            let observe =
+                preset == "stop-lean" && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("2");
+            if peer && observe {
+                view_camera.is_active = false;
+                assert!(now - driver.since < 18.0, "POV observer timed out");
+                let Some(actor) = session
+                    .players
+                    .iter()
+                    .find(|actor| actor.id != id.0 && !actor.bot)
+                else {
+                    return;
+                };
+                if local.pos[2] > 1.8 {
+                    input.camera = CameraInput::default();
+                    input.forward = true;
+                    return;
+                }
+                let delta = Vec3::from(actor.pos) - Vec3::from(local.pos);
+                input.camera = CameraInput {
+                    yaw: (-delta.x).atan2(-delta.z),
+                    pitch: delta.y.atan2(delta.x.hypot(delta.z)),
+                    ..default()
+                };
+                if let Some(roll) = projections.poses.presented_roll(actor.id) {
+                    let observed = match driver.pov_observed {
+                        0 if roll < -0.27 && actor.pose.aim_roll < -0.29 => Some("left"),
+                        1 if roll > 0.27 && actor.pose.aim_roll > 0.29 => Some("right"),
+                        2 if roll.abs() < 0.01 && actor.pose.aim_roll.abs() < 0.001 => {
+                            Some("return")
+                        }
+                        _ => None,
+                    };
+                    if let Some(name) = observed {
+                        info!(
+                            "POV OBSERVER {name} render_roll={roll:.3} confirmed_roll={:.3}",
+                            actor.pose.aim_roll
+                        );
+                        capture(&mut commands, &format!("pov-{name}"));
+                        driver.pov_observed += 1;
+                    }
+                }
+                if driver.pov_observed == 3
+                    && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
+                        .join("pov-return.png")
+                        .is_file()
+                {
+                    info!("POV OBSERVER PASS");
+                    exit.write(AppExit::Success);
+                }
+                return;
+            }
+            let previous_lean = driver.pov_stop_lean_roll;
             input.camera = CameraInput::default();
             input.weapon = EquipmentSlot::Primary;
             let elapsed = now - driver.since;
@@ -394,11 +471,30 @@ fn drive(
             let visual_settled = visual_ready
                 && now - *driver.pov_visual_since.get_or_insert(now) >= pov::VIEW_WARMUP_SECONDS;
             let ready = local.pose.grounded && visual_settled;
-            let capture_roll = local.pose.aim_roll;
             let name = match preset.as_str() {
                 "ads" => driver.pov_ads.advance(elapsed, ready, ads, world_fov),
                 "inspect" => driver.pov_inspect.advance(elapsed, ready, local.mechanics),
-                "stop-lean" => driver.pov_stop_lean.advance(elapsed, ready, local),
+                "stop-lean" | "side-cover" => {
+                    // The capture runs after Present; allow the interpolation
+                    // buffer to catch up before taking a static stance/roll cue.
+                    let settled = session.local_motion.sample(now).is_some_and(|pose| {
+                        let roll_settled = if driver.pov_stop_lean == pov::StopLean::Neutral {
+                            pose.roll.abs() < 0.001
+                        } else {
+                            (pose.roll - local.pose.aim_roll).abs() < 0.01
+                        };
+                        roll_settled
+                            && (pose.crouch - f32::from(u8::from(local.crouched))).abs() < 0.01
+                    });
+                    let side_cover = preset == "side-cover";
+                    let at_limit = !side_cover
+                        || !matches!(driver.pov_stop_lean, pov::StopLean::Left | pov::StopLean::Right)
+                        || previous_lean.abs() >= 0.299;
+                    let observer_window = !observe
+                        || !matches!(driver.pov_stop_lean, pov::StopLean::Left | pov::StopLean::Right)
+                        || now - driver.pov_lean_since >= 1.65;
+                    driver.pov_stop_lean.advance(elapsed, ready && settled && at_limit && observer_window, local, side_cover)
+                }
                 _ => panic!("Unknown POV preset: {preset}"),
             }
             .unwrap_or_else(|error| {
@@ -408,6 +504,7 @@ fn drive(
                 )
             });
             if let Some(name) = name {
+                driver.pov_lean_since = now;
                 info!(
                     "POV EVIDENCE {name} t={now:.3} pos={:?} velocity={:?} crouch={:.3} roll={:.3} ads={ads:.3} fov={world_fov:.2} config={} action={:?} fraction={:.3}",
                     local.pos,
@@ -424,17 +521,16 @@ fn drive(
             if preset == "inspect" && name == Some("pov-rest") {
                 input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
             }
-            if preset == "stop-lean" {
-                driver.pov_stop_lean.input(&mut input);
-                if name.is_some() {
-                    // Present runs after Input in this frame. Do not replace
-                    // the confirmed roll with the next cue before readback.
-                    input.camera.roll = capture_roll;
-                }
+            if matches!(preset.as_str(), "stop-lean" | "side-cover") {
+                driver
+                    .pov_stop_lean
+                    .input(&mut input, previous_lean, time.delta_secs());
+                driver.pov_stop_lean_roll = input.camera.roll;
             }
             if (driver.pov_ads == pov::Ads::Finish
                 || driver.pov_inspect == pov::Inspect::Finish
                 || driver.pov_stop_lean == pov::StopLean::Finish)
+                && (!observe || now - driver.pov_lean_since > 0.5)
                 && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
                     .join("pov-return.png")
                     .is_file()

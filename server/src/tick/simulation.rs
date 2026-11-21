@@ -138,6 +138,64 @@ pub(super) fn physx_tick(
     }
 }
 
+fn neutral_eye(transform: &Transform, movement: &MovementState) -> Vec3 {
+    let stance = if movement.crouched {
+        PLAYER_CROUCH_VIEW_OFFSET
+    } else {
+        0.0
+    };
+    transform.translation + Vec3::Y * (PLAYER_VIEW_HEIGHT + stance)
+}
+
+pub(super) fn resolve_eye_lean(
+    context: ReadRapierContext,
+    raid: Res<RaidState>,
+    mut actors: Query<(
+        Entity,
+        &ClientInput,
+        &Transform,
+        &MovementState,
+        &Participant,
+        &mut PoseState,
+    )>,
+) {
+    let Ok(context) = context.single() else {
+        return;
+    };
+    if raid.phase != RaidPhase::Active {
+        return;
+    }
+    // Reserve room around the eye for the lens near plane and cosmetic bob.
+    let clearance = Collider::ball(0.18);
+    for (entity, input, root, movement, participant, mut pose) in &mut actors {
+        if participant.status != RaidStatus::Active
+            || !matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
+        {
+            continue;
+        }
+        let requested = input.camera.roll;
+        let fraction = if requested == 0.0 {
+            1.0
+        } else {
+            let travel = root.rotation * common::humanoid::aim_lean_offset(requested);
+            context
+                .cast_shape(
+                    neutral_eye(root, movement),
+                    Quat::IDENTITY,
+                    travel,
+                    &clearance,
+                    ShapeCastOptions::with_max_time_of_impact(1.0),
+                    QueryFilter::new()
+                        .groups(CollisionGroups::new(Group::ALL, Group::GROUP_1))
+                        .exclude_collider(entity)
+                        .exclude_sensors(),
+                )
+                .map_or(1.0, |(_, hit)| hit.time_of_impact.clamp(0.0, 1.0))
+        };
+        pose.aim_roll = requested * fraction;
+    }
+}
+
 pub(super) fn weapons_tick(
     mut commands: Commands,
     time: Res<Time>,
@@ -185,18 +243,14 @@ pub(super) fn weapons_tick(
         else {
             continue;
         };
-        let camera = arsenal.recoil.camera(input.camera);
+        let camera = arsenal.recoil.camera(CameraInput {
+            roll: pose.aim_roll,
+            ..input.camera
+        });
         let rotation = Quat::from(&camera);
         let direction = rotation * -Vec3::Z;
-        let eye = transform.translation
-            + transform.rotation * common::humanoid::aim_lean_offset(input.camera.roll)
-            + Vec3::Y
-                * (PLAYER_VIEW_HEIGHT
-                    + if movement.crouched {
-                        PLAYER_CROUCH_VIEW_OFFSET
-                    } else {
-                        0.0
-                    });
+        let eye = neutral_eye(transform, movement)
+            + transform.rotation * common::humanoid::aim_lean_offset(pose.aim_roll);
         let muzzle = eye
             + rotation
                 * common::weapon_animation::resolved_barrel_offset(
