@@ -111,7 +111,7 @@ fn synth(weapon: WeaponKind, softened: bool) -> SynthShot {
 }
 
 #[derive(Resource)]
-struct Cues([Handle<SynthShot>; 13]);
+struct Cues([Handle<SynthShot>; 14]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HandlingCue {
@@ -122,11 +122,15 @@ enum HandlingCue {
     Equipped = 10,
     Lowering = 11,
     Inspect = 12,
+    EmptyPress = 13,
 }
 
 fn handling_cue(before: MechanicalSnapshot, after: MechanicalSnapshot) -> Option<HandlingCue> {
     use ManipulationKind::{EmptyReload, Inspect, Unequip};
     use ManipulationPhase::{Equip, Feed, Finish, Insert, Remove};
+    if before.dry_cue_sequence != after.dry_cue_sequence {
+        return Some(HandlingCue::EmptyPress);
+    }
     if after.action_id < before.action_id {
         return None;
     }
@@ -192,6 +196,7 @@ fn prepare(mut commands: Commands, mut assets: ResMut<Assets<SynthShot>>) {
         assets.add(synth_contact(385.0, 125.0)),
         assets.add(synth_contact(255.0, 150.0)),
         assets.add(synth_contact(610.0, 210.0)),
+        assets.add(synth_contact(1100.0, 240.0)),
     ]));
 }
 
@@ -332,6 +337,12 @@ mod tests {
     #[test]
     fn shot_audio_handling_distinguishes_contacts_from_cancel_and_repeated_state() {
         let idle = MechanicalSnapshot::default();
+        let clicked = MechanicalSnapshot {
+            dry_cue_sequence: 1,
+            ..idle
+        };
+        assert_eq!(handling_cue(idle, clicked), Some(HandlingCue::EmptyPress));
+        assert_eq!(handling_cue(clicked, clicked), None);
         let lower = MechanicalSnapshot {
             action_id: 1,
             kind: Some(ManipulationKind::Unequip),

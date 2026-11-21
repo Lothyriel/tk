@@ -1,5 +1,42 @@
 use super::*;
 
+#[test]
+fn dry_cue_requires_a_fresh_authorized_empty_press() {
+    let mut arsenal = Arsenal::new(Loadout::default());
+    let mut input = ClientInput {
+        fire: true,
+        fire_pressed_sequence: 1,
+        ..default()
+    };
+    let rounds = arsenal.current().rounds();
+    for i in 0..rounds {
+        assert!(arsenal.step(&input, 0.0, i as f32).is_some());
+    }
+    assert!(arsenal.current().mechanics().chamber().is_none());
+    let cue = |arsenal: &Arsenal| arsenal.current().mechanics().snapshot().dry_cue_sequence;
+    let now = rounds as f32 + 1.0;
+    assert!(arsenal.step(&input, 0.0, now).is_none());
+    assert_eq!(cue(&arsenal), 0, "held trigger cannot repeat the click");
+    input.fire_pressed_sequence += 1;
+    assert!(arsenal.step(&input, 0.0, now).is_none());
+    assert_eq!(cue(&arsenal), 1);
+    assert!(arsenal.step(&input, 0.0, now).is_none());
+    assert_eq!(cue(&arsenal), 1);
+    input.fire_pressed_sequence += 1;
+    input.reload_sequence += 1;
+    assert!(arsenal.step(&input, 0.0, now).is_none());
+    assert_eq!(cue(&arsenal), 1, "reload blocks the empty-press cue");
+    arsenal.cancel_actions();
+    input.fire_pressed_sequence += 1;
+    input.selector_sequence += 1;
+    assert!(arsenal.step(&input, 0.0, now).is_none());
+    assert_eq!(
+        arsenal.current().mechanics().mode(),
+        crate::catalog::FireMode::Safe
+    );
+    assert_eq!(cue(&arsenal), 1, "safe selector blocks the empty-press cue");
+}
+
 // ALPHA-04/05: equipment is constrained, and every weapon has its own magazine/cadence.
 #[test]
 fn loadout_only_allows_primary_and_sidearm() {

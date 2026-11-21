@@ -503,12 +503,11 @@ impl Arsenal {
         {
             return None;
         }
-        if !self
-            .equipped_mut(self.active)
-            .unwrap()
-            .mechanics_mut()
-            .fire(input.fire, pressed)
-        {
+        let mechanics = self.equipped_mut(self.active).unwrap().mechanics_mut();
+        if !mechanics.fire(input.fire, pressed) {
+            if pressed {
+                mechanics.acknowledge_empty_press();
+            }
             return None;
         }
         self.last_shot_at = now;
