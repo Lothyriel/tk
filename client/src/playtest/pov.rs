@@ -108,27 +108,24 @@ impl StopLean {
             Self::Run if speed >= 4.5 && player.pos[2] < -0.7 => (Self::Brake, "pov-run"),
             Self::Brake if speed < 0.08 => (Self::Crouch, "pov-stop"),
             Self::Crouch if pose.crouch > 0.95 => (Self::Left, "pov-crouch"),
-            Self::Left if pose.aim_roll < -0.24 => (Self::Right, "pov-left"),
-            Self::Right if pose.aim_roll > 0.24 => (Self::Neutral, "pov-right"),
-            Self::Neutral if pose.aim_roll.abs() < 0.02 => (Self::Finish, "pov-return"),
+            Self::Left if pose.aim_roll < -0.29 => (Self::Right, "pov-left"),
+            Self::Right if pose.aim_roll > 0.29 => (Self::Neutral, "pov-right"),
+            Self::Neutral if pose.aim_roll.abs() < 0.001 => (Self::Finish, "pov-return"),
             _ => return Ok(None),
         };
         *self = next;
         Ok(Some(capture))
     }
 
-    pub(super) fn input(&self, input: &mut common::ClientInput) {
+    pub(super) fn input(&self, input: &mut common::ClientInput, previous_roll: f32, dt: f32) {
         input.forward = matches!(self, Self::Walk | Self::Run);
         input.run = *self == Self::Run;
         input.crouch = matches!(
             self,
             Self::Crouch | Self::Left | Self::Right | Self::Neutral | Self::Finish
         );
-        input.camera.roll = match self {
-            Self::Left => -0.3,
-            Self::Right => 0.3,
-            _ => 0.0,
-        };
+        input.camera.roll =
+            crate::input::step_lean(previous_roll, *self == Self::Right, *self == Self::Left, dt);
     }
 }
 
