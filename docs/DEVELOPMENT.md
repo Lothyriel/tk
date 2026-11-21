@@ -80,6 +80,14 @@ inclui um degrau estático e um marcador fixo na barreira, sem NPCs que possam
 alterar a pose por dano. A bancada solo não substitui o observador remoto nem
 o gate de rede.
 
+No `stop-lean`, use `--clients 2` para capturar os extremos e o retorno
+também no observador, que descarta cada terceiro snapshot. Use `--pov
+side-cover` para conferir as duas paredes no cliente solo. `--viewport
+1260x540` exige a dimensão exata dos PNGs, sem alterar o FOV. Com
+`--pov-hz 30` ou `--pov-hz 165`, `stop-lean` grava a posição do olho, o
+roll e a cadência efetiva em `pov-trace.csv`, sem vídeo. Compare também a
+posição de parada: percorrer a mesma rota não garante a mesma trajetória.
+
 Compare capturas de diretórios separados com o mesmo kit e viewport. Confira
 `run-settings.json` para hashes dos binários e projeções e `client.log` para
 estado confirmado por captura. Se a revisão não tiver animação de inspeção,
