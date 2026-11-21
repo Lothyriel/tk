@@ -9,6 +9,7 @@ fn shot(id: u64, time: f32) -> FiredProjectileData {
         weapon: WeaponId::M4A1,
         muzzle: [0.0; 3],
         direction: [0.0, 0.0, -1.0],
+        ejection: None,
     }
 }
 
@@ -130,17 +131,30 @@ fn shots_wire_and_queue_limits_fail_explicitly() {
     for _ in 0..MAX_PENDING_SHOTS / MAX_SHOT_BATCH {
         receiver.message(&bytes).unwrap();
     }
+    let remainder = MAX_PENDING_SHOTS % MAX_SHOT_BATCH;
+    if remainder != 0 {
+        assert_eq!(receiver.message(&bytes), Err(ShotError::Backpressure));
+        let tail = ShotMessage::Batch {
+            raid: 2,
+            time: 1.0,
+            shots: (0..remainder as u64).map(|id| shot(id, 1.0)).collect(),
+        };
+        receiver.message(&data::encode(&tail)).unwrap();
+    }
     assert_eq!(receiver.message(&bytes), Err(ShotError::Backpressure));
     assert_eq!(receiver.pending_count, MAX_PENDING_SHOTS);
     assert!(matches!(
         ShotMessage::decode(&vec![0; MAX_SHOT_MESSAGE_BYTES + 1]),
         Err(ShotError::PayloadSize)
     ));
+    let mut invalid_ejection = shot(1, 1.0);
+    invalid_ejection.ejection = Some([0.0, f32::NAN, 0.0]);
     for shots in [
         vec![],
         vec![shot(1, 1.0); MAX_SHOT_BATCH + 1],
         vec![shot(2, 1.0), shot(1, 1.0)],
         vec![shot(1, f32::NAN)],
+        vec![invalid_ejection],
     ] {
         assert!(matches!(
             ShotMessage::decode(&data::encode(&ShotMessage::Batch {

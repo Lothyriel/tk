@@ -347,6 +347,7 @@ mod tests {
                 time: id as f32 * 0.1,
                 muzzle: [0.0; 3],
                 direction: [0.0, 0.0, -1.0],
+                ejection: None,
             })
             .collect();
         use common::replication::shots::*;
@@ -376,6 +377,7 @@ mod tests {
                 time: 1.0 - id as f32 * 0.01,
                 muzzle: [0.0; 3],
                 direction: [0.0, 0.0, -1.0],
+                ejection: None,
             })
             .collect();
         use common::replication::shots::*;
@@ -605,6 +607,7 @@ mod barrier_snapshot_tests {
                     time: 1.0,
                     muzzle: [0.0; 3],
                     direction: [0.0, 0.0, -1.0],
+                    ejection: Some([0.25, 1.5, -0.15]),
                 }],
             }),
         );
@@ -619,6 +622,7 @@ mod barrier_snapshot_tests {
                 .collect::<Vec<_>>(),
             [2]
         );
+        assert_eq!(session.casing_shots[0].ejection, Some([0.25, 1.5, -0.15]));
         app.update();
         assert!(
             app.world()
@@ -639,6 +643,7 @@ mod barrier_snapshot_tests {
             time: 10.0,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
+            ejection: None,
         }];
         server.send_message(7, DefaultChannel::Unreliable, data::encode(&delayed));
         server.send_message(

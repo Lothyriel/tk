@@ -94,6 +94,22 @@ pub fn resolved_barrel_offset(spec: &crate::catalog::ResolvedWeapon, ads: f32) -
     )
 }
 
+pub fn resolved_ejection_offset(spec: &crate::catalog::ResolvedWeapon, ads: f32) -> Option<Vec3> {
+    let assembly = &spec.assembly;
+    let port = assembly
+        .anchors
+        .get(&crate::catalog::AnchorKind::Ejection)?;
+    Some(
+        assembly
+            .hip_from_root
+            .transform_point(port.translation)
+            .lerp(
+                assembly.ads_from_root.transform_point(port.translation),
+                ease(ads),
+            ),
+    )
+}
+
 fn ramp(t: f32, a: f32, b: f32) -> f32 {
     ease((t - a) / (b - a))
 }
