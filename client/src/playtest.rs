@@ -697,8 +697,8 @@ fn drive(
                     info!("ASSET VIEW {label} elapsed={elapsed:.2} world_fov={world_fov}");
                 }
             }
-            if elapsed >= 8.0 {
-                assert_eq!(driver.asset_captures, 0b1111);
+            if elapsed >= asset_review::VIEWS.len() as f64 * 2.0 {
+                assert_eq!(driver.asset_captures, (1 << asset_review::VIEWS.len()) - 1);
                 driver.advance(Step::Showcase, now);
             }
         }

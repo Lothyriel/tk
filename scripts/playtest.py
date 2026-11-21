@@ -93,6 +93,8 @@ def main():
                         help="Choose compact/suppressed kits through real lobby panel actions")
     parser.add_argument("--weapon-debug", action="store_true",
                         help="Show live socket/pivot overlays and use a close side observer during animation review")
+    parser.add_argument("--clean-art", action="store_true",
+                        help="Keep the asset review cameras but hide socket/pivot overlays")
     parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
                         help="Explicit LOD inspection override (requires --weapon-debug)")
     parser.add_argument("--pov", choices=POV_CAPTURES, help="Run only the named POV bench after deploy")
@@ -109,6 +111,7 @@ def main():
                      or (args.clients == 2 and args.pov != "stop-lean")):
         parser.error("--pov is standalone; only stop-lean supports a second client or solo video without --pov-hz")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
+    assert not args.clean_art or args.weapon_debug, "--clean-art requires --weapon-debug"
     assert args.weapon_debug or args.weapon_lod == "auto", "--weapon-lod requires --weapon-debug"
     assert not (args.configure_weapons and args.weapon_kit), "Panel acceptance must not seed server fixtures"
     root = Path(__file__).resolve().parents[1]
@@ -140,7 +143,7 @@ def main():
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
     for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY",
                   "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV",
-                  "TK_PLAYTEST_VIEWPORT", "TK_PLAYTEST_POV_HZ"):
+                  "TK_PLAYTEST_VIEWPORT", "TK_PLAYTEST_POV_HZ", "TK_PLAYTEST_CLEAN_ART"):
         env.pop(flag, None)
     if args.pov:
         env["TK_PLAYTEST_POV"] = args.pov
@@ -157,6 +160,8 @@ def main():
     if args.weapon_debug:
         env["TK_WEAPON_DEBUG"] = "1"
         env["TK_WEAPON_LOD"] = args.weapon_lod
+    if args.clean_art:
+        env["TK_PLAYTEST_CLEAN_ART"] = "1"
     if args.configure_weapons:
         env["TK_PLAYTEST_CONFIGURATOR"] = "1"
     server_path = output / f"server{suffix}"
@@ -179,6 +184,7 @@ def main():
         "requested_pov_hz": args.pov_hz,
         "video": args.video, "animation_review": args.animation_review,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
+        "clean_art": args.clean_art,
         "initial_weapon_kit_fixture": args.weapon_kit,
         "lobby_configurator": args.configure_weapons,
         "capture_target_hz": 30 if args.video else 0,
@@ -336,7 +342,7 @@ def main():
                  "injury-healthy", "injury-correction", "injury-lateral-limp", "injury-arm", "injury-separation", "injury-fall", "injury-recovery", "injury-ragdoll"]
         for directory in (output, output / "peer"):
             if args.weapon_debug:
-                for label in ("right", "left", "front", "top"):
+                for label in ("right", "left", "front", "top", "three-quarter"):
                     path = directory / f"asset-{label}.png"
                     data = path.read_bytes()
                     assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing live asset view: {path}"

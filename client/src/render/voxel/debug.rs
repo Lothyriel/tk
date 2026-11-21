@@ -23,7 +23,8 @@ impl bevy::prelude::Plugin for Plugin {
         app.init_gizmo_group::<WorldAxes>()
             .init_gizmo_group::<ViewAxes>()
             .insert_resource(DebugView {
-                enabled: std::env::var_os("TK_WEAPON_DEBUG").is_some(),
+                enabled: std::env::var_os("TK_WEAPON_DEBUG").is_some()
+                    && std::env::var_os("TK_PLAYTEST_CLEAN_ART").is_none(),
                 lod: if std::env::var_os("TK_WEAPON_DEBUG").is_some() {
                     match std::env::var("TK_WEAPON_LOD").as_deref() {
                         Ok("near") => Some(false),
