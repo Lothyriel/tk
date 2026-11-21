@@ -136,6 +136,49 @@ pub(crate) struct ConfiguredPose {
     pub muzzle: Transform,
 }
 
+/// View-only sleeve geometry. The solved bones and grip sockets stay intact.
+#[derive(Component)]
+pub(crate) struct ViewSleeveClearance {
+    pub to_eye: Mat4,
+    pub near: f32,
+}
+
+impl ViewSleeveClearance {
+    fn trim(&self, pose: &mut Transform, length: f32, half_width: f32, half_depth: f32) -> bool {
+        let z = |point| self.to_eye.transform_point3(point).z;
+        let radial = self
+            .to_eye
+            .transform_vector3(pose.rotation * Vec3::X)
+            .z
+            .abs()
+            * half_width
+            + self
+                .to_eye
+                .transform_vector3(pose.rotation * Vec3::Z)
+                .z
+                .abs()
+                * half_depth;
+        // Keep sleeves out of the lens's immediate foreground as well as
+        // ahead of its near plane. Their palm contacts are never shortened.
+        let limit = -(self.near + 0.01).max(0.16) - radial;
+        let axis = pose.rotation * Vec3::Y;
+        let a = pose.translation - axis * (length * 0.5);
+        let b = pose.translation + axis * (length * 0.5);
+        let (za, zb) = (z(a), z(b));
+        if za.max(zb) <= limit {
+            return true;
+        }
+        if za.min(zb) >= limit {
+            return false;
+        }
+        let cut = a.lerp(b, (limit - za) / (zb - za));
+        let kept = if za < zb { a } else { b };
+        pose.translation = kept.midpoint(cut);
+        pose.scale.y *= kept.distance(cut) / length;
+        true
+    }
+}
+
 #[derive(Component)]
 pub(crate) struct ConfigurationVisualError(pub String);
 
@@ -591,11 +634,12 @@ pub(super) fn pose(
         &ConfiguredWeapon,
         &ConfiguredHandling,
         Option<&ConfigurationVisualError>,
+        Option<&ViewSleeveClearance>,
     )>,
     instances: Query<(&VoxelInstance, &ConfiguredPiece)>,
     mut transforms: Query<(&mut Transform, &mut Visibility)>,
 ) {
-    for (entity, model, request, input, old_error) in &models {
+    for (entity, model, request, input, old_error, sleeve) in &models {
         if *request != model.request {
             continue;
         }
@@ -630,11 +674,26 @@ pub(super) fn pose(
             updates.push((model.weapon_root, solved.root, true));
             for (i, arm) in [solved.support, solved.trigger].into_iter().enumerate() {
                 for (j, segment) in arm.segments(input.shoulders[i]).into_iter().enumerate() {
-                    updates.push((
-                        model.hands[i * 3 + j],
-                        segment.transform(),
-                        input.visible_hands[i * 3 + j],
-                    ));
+                    let mut transform = segment.transform();
+                    let mut visible = input.visible_hands[i * 3 + j];
+                    if let Some(clearance) = sleeve {
+                        visible &= match j {
+                            0 => clearance.trim(
+                                &mut transform,
+                                handling::UPPER_ARM_METRES,
+                                0.035,
+                                0.0325,
+                            ),
+                            1 => clearance.trim(
+                                &mut transform,
+                                handling::FOREARM_METRES,
+                                0.0325,
+                                0.030,
+                            ),
+                            _ => true,
+                        };
+                    }
+                    updates.push((model.hands[i * 3 + j], transform, visible));
                 }
             }
             if updates
