@@ -37,6 +37,7 @@ def gait_metrics(path):
     result = {}
     for name, low, high in (("walk", 2.5, 3.7), ("run", 4.5, 7.0)):
         samples = []
+        transitions = {"loading": [], "steady": [], "releasing": []}
         for a, b in zip(rows, rows[1:]):
             dt = b["seconds"] - a["seconds"]
             if dt >= 0.05 or not (low < a["speed"] < high and low < b["speed"] < high):
@@ -49,6 +50,10 @@ def gait_metrics(path):
                     [b[f"{side}_{axis}"] for axis in "xyz"],
                 )
                 samples.append((distance, dt))
+                delta_weight = b[f"{side}_weight"] - a[f"{side}_weight"]
+                phase = ("loading" if delta_weight > 0.005
+                         else "releasing" if delta_weight < -0.005 else "steady")
+                transitions[phase].append(distance)
         assert samples, f"No consecutive loaded {name} samples: {path}"
         peak, interval = max(samples)
         result[name] = {
@@ -56,6 +61,10 @@ def gait_metrics(path):
             "max_displacement_m": peak,
             "max_displacement_interval_s": interval,
             "median_displacement_m": statistics.median(distance for distance, _ in samples),
+            "by_weight_transition": {
+                phase: {"pairs": len(distances), "max_displacement_m": max(distances, default=None)}
+                for phase, distances in transitions.items()
+            },
         }
     return result
 
