@@ -294,6 +294,77 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "opt-in CPU timing experiment; run without other workloads"]
+    fn shot_audio_scheduling_cost() {
+        const ACTORS: u64 = 32;
+        const WARMUP: usize = 120;
+        const FRAMES: usize = 1200;
+        let run = |muted: bool| {
+            let mut app = App::new();
+            let session = ClientSession {
+                players: (1..=ACTORS)
+                    .map(|id| common::ClientData {
+                        id,
+                        alive: true,
+                        pos: [id as f32, 1.0, 0.0],
+                        ..default()
+                    })
+                    .collect(),
+                ..default()
+            };
+            app.init_resource::<Time>()
+                .insert_resource(session)
+                .insert_resource(PlayerId(1))
+                .insert_resource(Muted(muted))
+                .insert_resource(Cues(std::array::from_fn(|_| Handle::default())))
+                .add_systems(Update, present);
+            let mut times = Vec::with_capacity(FRAMES);
+            let mut peak_voices = 0;
+            for frame in 0..WARMUP + FRAMES {
+                app.world_mut()
+                    .resource_mut::<Time>()
+                    .advance_by(Duration::from_secs_f64(1.0 / 60.0));
+                let mut session = app.world_mut().resource_mut::<ClientSession>();
+                session.shots.clear();
+                if frame % 6 == 0 {
+                    session
+                        .shots
+                        .extend((1..=ACTORS).map(|shooter| common::FiredProjectileData {
+                            id: frame as u64 * ACTORS + shooter,
+                            shooter,
+                            weapon: common::WeaponId::M4A1,
+                            time: frame as f32 / 60.0,
+                            muzzle: [shooter as f32, 1.6, -1.0],
+                            direction: [0.0, 0.0, -1.0],
+                            ejection: None,
+                            audio_signature: if shooter % 2 == 0 { 55 } else { 100 },
+                        }));
+                }
+                let start = std::time::Instant::now();
+                app.update();
+                let elapsed = start.elapsed().as_secs_f64() * 1e6;
+                if frame >= WARMUP {
+                    times.push(elapsed);
+                }
+                let world = app.world_mut();
+                peak_voices = peak_voices.max(world.query::<&Voice>().iter(world).count());
+            }
+            assert_eq!(peak_voices, if muted { 0 } else { MAX_VOICES });
+            times.sort_by(f64::total_cmp);
+            [50, 95, 99].map(|p| times[(FRAMES * p).div_ceil(100) - 1])
+        };
+        for repetition in 0..3 {
+            for muted in [repetition % 2 == 0, repetition % 2 != 0] {
+                let [p50, p95, p99] = run(muted);
+                println!(
+                    "TK AUDIO CPU run={} muted={muted} p50_us={p50:.2} p95_us={p95:.2} p99_us={p99:.2}",
+                    repetition + 1
+                );
+            }
+        }
+    }
+
+    #[test]
     fn shot_audio_reload_contacts_use_confirmed_phase_without_replaying_skipped_cues() {
         use ManipulationPhase::*;
         use common::catalog::ManipulationKind::{EmptyReload, TacticalReload};
