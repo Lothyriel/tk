@@ -212,7 +212,10 @@ fn recv_players_pos(
                 });
             session.local_motion.record(
                 snapshot.simulation_time,
-                player.pos.into(),
+                motion::LocalMotionPose {
+                    position: player.pos.into(),
+                    crouch: f32::from(u8::from(player.crouched)),
+                },
                 time.elapsed_secs_f64(),
                 reset,
             );

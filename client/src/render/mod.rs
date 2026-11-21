@@ -603,6 +603,8 @@ fn sync_local_view(
     player_input: Res<LocalInput>,
     feedback: Option<Res<feedback::Feedback>>,
     id: Option<Res<PlayerId>>,
+    session: Option<Res<ClientSession>>,
+    time: Option<Res<Time<Real>>>,
     player_visual_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     mut query: Query<(&BaseLocalOffset, &mut Transform), With<LocalView>>,
 ) {
@@ -610,11 +612,16 @@ fn sync_local_view(
         (Some(feedback), Some(id)) => feedback.camera(id.0, player_input.camera),
         _ => player_input.camera,
     };
-    let vertical_offset = if player_visual_state.crouched {
-        PLAYER_CROUCH_VIEW_OFFSET
-    } else {
-        0.0
-    };
+    // Match the timestamps and endpoints used by the local root. The latest
+    // stance alone would switch the lens height before the root moves.
+    let crouch = session
+        .zip(time)
+        .and_then(|(session, time)| session.local_motion.sample(time.elapsed_secs_f64()))
+        .map_or_else(
+            || f32::from(u8::from(player_visual_state.crouched)),
+            |pose| pose.crouch,
+        );
+    let vertical_offset = crouch * PLAYER_CROUCH_VIEW_OFFSET;
     let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, camera.roll);
 
     for (base_offset, mut transform) in query.iter_mut() {
