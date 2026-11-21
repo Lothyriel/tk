@@ -5,12 +5,15 @@ damage overrides, accelerated raid clocks or test-only rewards.
 Evidence is saved under target/playtest (or --output).
 """
 import argparse
+import csv
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import struct
+import statistics
 import subprocess
 import sys
 
@@ -21,6 +24,40 @@ POV_CAPTURES = {
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "side-cover": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
 }
+
+
+def gait_metrics(path):
+    with path.open(newline="", encoding="utf-8") as stream:
+        rows = [{key: float(value) for key, value in row.items()}
+                for row in csv.DictReader(stream)]
+    assert len(rows) >= 30, f"Insufficient observer telemetry: {path}"
+    assert all(math.isfinite(value) for row in rows for value in row.values()), path
+    assert all(a["seconds"] < b["seconds"] and a["snapshot"] <= b["snapshot"]
+               for a, b in zip(rows, rows[1:])), f"Unordered observer telemetry: {path}"
+    result = {}
+    for name, low, high in (("walk", 2.5, 3.7), ("run", 4.5, 7.0)):
+        samples = []
+        for a, b in zip(rows, rows[1:]):
+            dt = b["seconds"] - a["seconds"]
+            if dt >= 0.05 or not (low < a["speed"] < high and low < b["speed"] < high):
+                continue
+            for side in ("left", "right"):
+                if min(a[f"{side}_weight"], b[f"{side}_weight"]) <= 0.95:
+                    continue
+                distance = math.dist(
+                    [a[f"{side}_{axis}"] for axis in "xyz"],
+                    [b[f"{side}_{axis}"] for axis in "xyz"],
+                )
+                samples.append((distance, dt))
+        assert samples, f"No consecutive loaded {name} samples: {path}"
+        peak, interval = max(samples)
+        result[name] = {
+            "loaded_pairs": len(samples),
+            "max_displacement_m": peak,
+            "max_displacement_interval_s": interval,
+            "median_displacement_m": statistics.median(distance for distance, _ in samples),
+        }
+    return result
 
 
 def parse_viewport(value):
@@ -196,6 +233,7 @@ def main():
             peer_text = re.sub(r"\x1b\[[0-9;]*m", "", peer_text)
             assert "POV OBSERVER PASS" in peer_text and "panicked at" not in peer_text
             assert " ERROR " not in peer_text, f"Runtime/render error in observer log: {peer}"
+            settings["observer_gait"] = gait_metrics(peer / "gait-trace.csv")
             for name in ("run", "left", "right", "return"):
                 assert f"POV OBSERVER {name} " in peer_text, f"Missing observer cue {name}: {peer}"
                 data = (peer / f"pov-{name}.png").read_bytes()
