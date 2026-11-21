@@ -10,7 +10,13 @@ const INTERPOLATION_DELAY: f64 = 3.0 * common::SNAPSHOT_INTERVAL as f64;
 #[derive(Debug)]
 struct Sample {
     time: f64,
-    position: Vec3,
+    pose: LocalMotionPose,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LocalMotionPose {
+    pub position: Vec3,
+    pub crouch: f32,
 }
 
 /// Presentation history only. Gameplay/HUD retain the newest authoritative session.
@@ -22,12 +28,12 @@ pub(crate) struct LocalMotion {
 }
 
 impl LocalMotion {
-    pub(super) fn record(&mut self, time: f32, position: Vec3, received: f64, reset: bool) {
+    pub(super) fn record(&mut self, time: f32, pose: LocalMotionPose, received: f64, reset: bool) {
         let time = f64::from(time);
         let reset = reset
             || self.samples.back().is_some_and(|last| {
                 time <= last.time
-                    || position.distance(last.position) > 4.0
+                    || pose.position.distance(last.pose.position) > 4.0
                     || received - self.last_received > 0.25
             });
         if reset {
@@ -38,24 +44,28 @@ impl LocalMotion {
         // arrivals would turn delivery jitter into camera speed changes.
         self.clock_offset.get_or_insert(received - time);
         self.last_received = received;
-        self.samples.push_back(Sample { time, position });
+        self.samples.push_back(Sample { time, pose });
         while self.samples.len() > 32 {
             self.samples.pop_front();
         }
     }
 
-    fn position(&self, now: f64) -> Option<Vec3> {
+    pub(crate) fn sample(&self, now: f64) -> Option<LocalMotionPose> {
         let time = now - self.clock_offset? - INTERPOLATION_DELAY;
         let mut previous = self.samples.front()?;
         for next in self.samples.iter().skip(1) {
             if time <= next.time {
-                let alpha = ((time - previous.time) / (next.time - previous.time)).clamp(0.0, 1.0);
-                return Some(previous.position.lerp(next.position, alpha as f32));
+                let alpha =
+                    ((time - previous.time) / (next.time - previous.time)).clamp(0.0, 1.0) as f32;
+                return Some(LocalMotionPose {
+                    position: previous.pose.position.lerp(next.pose.position, alpha),
+                    crouch: previous.pose.crouch.lerp(next.pose.crouch, alpha),
+                });
             }
             previous = next;
         }
         // Never predict through a wall or keep moving during a packet outage.
-        Some(previous.position)
+        Some(previous.pose)
     }
 }
 
@@ -64,9 +74,9 @@ pub(super) fn present_local_motion(
     time: Res<Time<Real>>,
     mut players: Query<&mut Transform, With<LocalPlayer>>,
 ) {
-    if let Some(position) = session.local_motion.position(time.elapsed_secs_f64()) {
+    if let Some(pose) = session.local_motion.sample(time.elapsed_secs_f64()) {
         for mut transform in &mut players {
-            transform.translation = position;
+            transform.translation = pose.position;
         }
     }
 }
@@ -268,18 +278,29 @@ mod tests {
 
     #[test]
     fn local_camera_motion_samples_the_confirmed_3d_path_with_a_50ms_delay() {
-        let mut motion = super::LocalMotion::default();
-        motion.record(1.0, Vec3::new(0.0, 1.0, 0.0), 10.0, false);
-        motion.record(1.04, Vec3::new(2.0, 2.0, -1.0), 10.04, false);
-        assert!(
-            motion
-                .position(10.07)
-                .unwrap()
-                .distance(Vec3::new(1.0, 1.5, -0.5))
-                < 0.00001
-        );
-        assert_eq!(motion.position(10.0), Some(Vec3::new(0.0, 1.0, 0.0)));
-        assert_eq!(motion.position(20.0), Some(Vec3::new(2.0, 2.0, -1.0)));
+        use super::{LocalMotion, LocalMotionPose};
+        let mut motion = LocalMotion::default();
+        let standing = LocalMotionPose {
+            position: Vec3::new(0.0, 1.0, 0.0),
+            crouch: 0.0,
+        };
+        let crouched = LocalMotionPose {
+            position: Vec3::new(2.0, 0.7, -1.0),
+            crouch: 1.0,
+        };
+        motion.record(1.0, standing, 10.0, false);
+        motion.record(1.04, crouched, 10.04, false);
+        let eye = |now| {
+            let sample = motion.sample(now).unwrap();
+            sample.position
+                + Vec3::Y
+                    * (common::PLAYER_VIEW_HEIGHT
+                        + sample.crouch * common::PLAYER_CROUCH_VIEW_OFFSET)
+        };
+        assert!((motion.sample(10.07).unwrap().crouch - 0.5).abs() < 0.00001);
+        assert!(eye(10.07).distance(eye(10.0).lerp(eye(20.0), 0.5)) < 0.00001);
+        assert_eq!(motion.sample(10.0).unwrap().position, standing.position);
+        assert_eq!(motion.sample(20.0).unwrap().position, crouched.position);
     }
 
     #[test]
