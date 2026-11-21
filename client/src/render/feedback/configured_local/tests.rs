@@ -196,6 +196,26 @@ fn configured_local_inspect_frames_real_assembly_and_returns_continuously() {
                 // an assumed yaw angle: an external inspection also rolls it.
                 let side =
                     (receiver.rotation() * Vec3::X).dot((eye - receiver.translation()).normalize());
+                if (0.30..=0.33).contains(&fraction) {
+                    let to_eye = world
+                        .get::<GlobalTransform>(f.camera)
+                        .unwrap()
+                        .to_matrix()
+                        .inverse();
+                    let arm = |name, endpoint| {
+                        let bone = world
+                            .get::<GlobalTransform>(named(&f.app, f.root, name))
+                            .unwrap();
+                        to_eye.transform_point3(bone.transform_point(endpoint))
+                    };
+                    let shoulder = arm("configured-support-upper", Vec3::Y * 0.15);
+                    let wrist = arm("configured-support-forearm", Vec3::NEG_Y * 0.14);
+                    assert!(
+                        shoulder.y < wrist.y,
+                        "support sleeve must extend from below its grip during inspect: \
+                         shoulder={shoulder:?}, wrist={wrist:?}, fraction={fraction}"
+                    );
+                }
                 sides[0] |= side > 0.15;
                 sides[1] |= side < -0.15;
                 side_range[0] = side_range[0].min(side);

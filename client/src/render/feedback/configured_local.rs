@@ -97,6 +97,18 @@ pub(super) fn prepare(
         ) {
             input.preflight_error = Some(error);
         }
+        if displayed == WeaponKind::Rifle {
+            // The view rotates around the receiver during handling. Keep the
+            // shoulder rig facing the body, not rolling with the weapon.
+            // Use the displayed action so the correction also unwinds on cancel.
+            let to_weapon = action.root.rotation.inverse();
+            for shoulder in &mut input.shoulders {
+                *shoulder = to_weapon * *shoulder;
+            }
+            for pole in &mut input.poles {
+                *pole = to_weapon * *pole;
+            }
+        }
         // Explicit first-person rig: shoulders/poles are in presentation space,
         // moving with framing and action layers, with the same 30/28 cm bones.
         // The world rig instead derives shoulders from its anatomical torso.
