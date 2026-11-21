@@ -175,14 +175,44 @@ impl CasingSurfaces {
     }
 }
 
-// Sweep the cosmetic center against intact top faces only.
-fn casing_landing(
+/// Earliest entry of a cosmetic casing center into an intact map box.
+/// A casing already inside a box can leave it instead of sticking to it.
+fn casing_box_entry(from: Vec3, delta: Vec3, center: Vec3, half: Vec3) -> Option<(f32, Vec3)> {
+    let local = from - center;
+    let mut entry = f32::NEG_INFINITY;
+    let mut exit = 1.0_f32;
+    let mut normal = Vec3::ZERO;
+    for axis in 0..3 {
+        if delta[axis] == 0.0 {
+            if local[axis].abs() > half[axis] {
+                return None;
+            }
+            continue;
+        }
+        let sign = delta[axis].signum();
+        let enter = (-sign * half[axis] - local[axis]) / delta[axis];
+        let leave = (sign * half[axis] - local[axis]) / delta[axis];
+        if enter > entry {
+            entry = enter;
+            normal = Vec3::ZERO;
+            normal[axis] = -sign;
+        }
+        exit = exit.min(leave);
+        if entry > exit {
+            return None;
+        }
+    }
+    (entry >= 0.0).then_some((entry, normal))
+}
+
+fn casing_contact(
     from: Vec3,
     to: Vec3,
     surfaces: &CasingSurfaces,
     removed: &map::DestroyedCells,
-) -> Option<Vec3> {
-    if to.y >= from.y {
+) -> Option<(Vec3, Vec3)> {
+    let delta = to - from;
+    if delta == Vec3::ZERO {
         return None;
     }
     map::BLOCKS
@@ -196,16 +226,15 @@ fn casing_landing(
             (removed[id / 8] & (1 << (id % 8)) == 0).then_some((cell.center, cell.half_size))
         }))
         .filter_map(|(center, half)| {
-            let height = center[1] + half[1] + CASING_SURFACE_CLEARANCE;
-            if from.y < height || to.y > height {
-                return None;
-            }
-            let mut point = from.lerp(to, (from.y - height) / (from.y - to.y));
-            point.y = height;
-            ((point.x - center[0]).abs() <= half[0] && (point.z - center[2]).abs() <= half[2])
-                .then_some(point)
+            casing_box_entry(from, delta, Vec3::from(center), Vec3::from(half))
         })
-        .max_by(|a, b| a.y.total_cmp(&b.y))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(fraction, normal)| {
+            (
+                from + delta * fraction + normal * CASING_SURFACE_CLEARANCE,
+                normal,
+            )
+        })
 }
 
 fn step_casing(
@@ -228,15 +257,16 @@ fn step_casing(
         casing.spin.y * delta,
         casing.spin.z * delta,
     ) * transform.rotation;
-    if let Some(landing) = casing_landing(from, transform.translation, surfaces, removed) {
-        transform.translation = landing;
-        if casing.velocity.y < -0.25 {
-            casing.velocity.y *= -0.24;
+    if let Some((point, normal)) = casing_contact(from, transform.translation, surfaces, removed) {
+        transform.translation = point;
+        let approach = casing.velocity.dot(normal);
+        let tangent = casing.velocity - normal * approach;
+        let rebound = if approach < -0.25 {
+            -approach * 0.24
         } else {
-            casing.velocity.y = 0.0;
-        }
-        casing.velocity.x *= 0.72;
-        casing.velocity.z *= 0.72;
+            0.0
+        };
+        casing.velocity = tangent * 0.72 + normal * rebound;
         casing.spin *= 0.82;
     }
     false
@@ -1252,7 +1282,8 @@ mod tests {
         let intact = map::destroyed_mask(&[]);
         let from = Vec3::new(0.0, 1.4, -3.0);
         let to = Vec3::new(0.0, 0.0, -1.0);
-        let cover = casing_landing(from, to, &surfaces, &intact).unwrap();
+        let (cover, normal) = casing_contact(from, to, &surfaces, &intact).unwrap();
+        assert_eq!(normal, Vec3::Y);
         assert!((cover.y - 1.205).abs() < 1e-5);
         assert!(cover.z < -2.4);
         let removed = map::destroyed_mask(
@@ -1262,14 +1293,55 @@ mod tests {
                 .map(|cell| cell.id)
                 .collect::<Vec<_>>(),
         );
-        let floor = casing_landing(from, to, &surfaces, &removed).unwrap();
+        let (floor, normal) = casing_contact(from, to, &surfaces, &removed).unwrap();
+        assert_eq!(normal, Vec3::Y);
         assert!((floor.y - 0.105).abs() < 1e-5);
         let from = Vec3::new(-1.55, 0.5, -1.75);
         let to = Vec3::new(-1.55, 0.0, -1.75);
-        assert!((casing_landing(from, to, &surfaces, &intact).unwrap().y - 0.105).abs() < 1e-5);
+        assert!((casing_contact(from, to, &surfaces, &intact).unwrap().0.y - 0.105).abs() < 1e-5);
         surfaces.fixtures.push(map::POV_STEP);
-        assert!((casing_landing(from, to, &surfaces, &intact).unwrap().y - 0.285).abs() < 1e-5);
-        assert!(casing_landing(to, from, &surfaces, &intact).is_none());
+        assert!((casing_contact(from, to, &surfaces, &intact).unwrap().0.y - 0.285).abs() < 1e-5);
+    }
+
+    #[test]
+    fn shell_casing_rebounds_off_intact_side_and_passes_removed_cell() {
+        let surfaces = CasingSurfaces {
+            cells: map::barrier_cells(),
+            fixtures: vec![],
+        };
+        let start = Vec3::new(0.1, 0.9, -2.2);
+        let run = |removed: &map::DestroyedCells| {
+            let mut casing = EjectedCasing {
+                velocity: Vec3::NEG_Z * 10.0,
+                spin: Vec3::ZERO,
+                lifetime: CASING_LIFETIME,
+            };
+            let mut transform = Transform::from_translation(start);
+            assert!(!step_casing(
+                &mut casing,
+                &mut transform,
+                0.05,
+                &surfaces,
+                removed
+            ));
+            (transform.translation, casing.velocity)
+        };
+        let (point, velocity) = run(&map::destroyed_mask(&[]));
+        assert!((point.z + 2.395).abs() < 1e-5);
+        assert!((velocity.z - 2.4).abs() < 1e-5);
+        let cell = surfaces
+            .cells
+            .iter()
+            .find(|cell| {
+                let center = Vec3::from(cell.center);
+                let half = Vec3::from(cell.half_size);
+                let contact = point - Vec3::Z * CASING_SURFACE_CLEARANCE;
+                ((center - contact).abs() - half).max_element() < 1e-5
+            })
+            .unwrap();
+        let (point, velocity) = run(&map::destroyed_mask(&[cell.id]));
+        assert!((point.z + 2.7).abs() < 1e-5);
+        assert_eq!(velocity.z, -10.0);
     }
 
     #[test]
