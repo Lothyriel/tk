@@ -73,6 +73,7 @@ def main():
             (output / f"pov-{name}.png").unlink(missing_ok=True)
         (output / "pov-trace.csv").unlink(missing_ok=True)
         if args.clients == 2:
+            (output / "peer" / "gait-trace.csv").unlink(missing_ok=True)
             for name in ("run", "left", "right", "return"):
                 (output / "peer" / f"pov-{name}.png").unlink(missing_ok=True)
     if args.video:

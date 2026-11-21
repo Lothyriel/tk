@@ -73,6 +73,10 @@ impl PoseCache {
             .get(&id)
             .map(|pose| (pose.phase, pose.foot_weight))
     }
+
+    pub(crate) fn presented_bone(&self, id: u64, segment: Segment) -> Option<Transform> {
+        self.last_live.get(&(id, segment)).copied()
+    }
 }
 #[derive(Component)]
 struct WorldWeapon {
