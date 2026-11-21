@@ -1,4 +1,4 @@
-//! Four static views of the accepted remote assembly in the live game scene.
+//! Static views of the accepted remote assembly in the live game scene.
 //! Only the diagnostic camera moves; actor input, meshes, lighting and projection
 //! stay on the ordinary path. This is asset evidence, not a player inspect action.
 use super::*;
@@ -10,7 +10,7 @@ use crate::render::{
     },
 };
 
-pub(super) const VIEWS: [&str; 4] = ["right", "left", "front", "top"];
+pub(super) const VIEWS: [&str; 5] = ["right", "left", "front", "top", "three-quarter"];
 
 /// Remove body/exit-marker occlusion for dimensional views of the live assembly. Equipped
 /// actor/contact evidence is captured in the preceding action route.
@@ -90,14 +90,16 @@ pub(super) fn camera(
         {
             continue;
         }
-        let index = (((time.elapsed_secs_f64() - driver.since) / 2.0) as usize).min(3);
+        let index =
+            (((time.elapsed_secs_f64() - driver.since) / 2.0) as usize).min(VIEWS.len() - 1);
         let root = global.mul_transform(pose.solution.root);
         let center = root.transform_point(Vec3::new(0.0, -0.025, 0.02));
         let (offset, up) = match index {
             0 => (Vec3::X * 1.05, Vec3::Y),
             1 => (Vec3::NEG_X * 1.05, Vec3::Y),
             2 => (Vec3::NEG_Z * 1.05, Vec3::Y),
-            _ => (Vec3::Y * 1.05, Vec3::NEG_Z),
+            3 => (Vec3::Y * 1.05, Vec3::NEG_Z),
+            _ => (Vec3::new(0.8, 0.32, -0.60).normalize() * 1.05, Vec3::Y),
         };
         let rotation = root.rotation();
         **camera = Transform::from_translation(center + rotation * offset)
