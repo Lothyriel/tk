@@ -14,7 +14,7 @@ mod recoil;
 // Cosmetic only. Bound the render/update cost across all shooters in the raid.
 const CASING_LIFETIME: f32 = 20.0;
 const MAX_ACTIVE_CASINGS: usize = 128;
-const CASING_GROUND_HEIGHT: f32 = 0.105;
+const CASING_SURFACE_CLEARANCE: f32 = 0.005;
 
 #[derive(Debug, Clone, Copy)]
 struct CasingSpec {
@@ -157,12 +157,70 @@ impl CasingState {
     }
 }
 
-fn step_casing(casing: &mut EjectedCasing, transform: &mut Transform, delta: f32) -> bool {
+struct CasingSurfaces {
+    cells: Vec<map::BarrierCell>,
+    fixtures: Vec<map::MapBlock>,
+}
+
+impl CasingSurfaces {
+    fn new() -> Self {
+        Self {
+            cells: map::barrier_cells(),
+            fixtures: map::pov_fixture()
+                .then_some(map::POV_STEP)
+                .into_iter()
+                .chain(map::pov_side_cover())
+                .collect(),
+        }
+    }
+}
+
+// Sweep the cosmetic center against intact top faces only.
+fn casing_landing(
+    from: Vec3,
+    to: Vec3,
+    surfaces: &CasingSurfaces,
+    removed: &map::DestroyedCells,
+) -> Option<Vec3> {
+    if to.y >= from.y {
+        return None;
+    }
+    map::BLOCKS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !map::destructible(*i))
+        .map(|(_, block)| (block.center, block.half_size))
+        .chain(surfaces.fixtures.iter().map(|b| (b.center, b.half_size)))
+        .chain(surfaces.cells.iter().filter_map(|cell| {
+            let id = usize::from(cell.id);
+            (removed[id / 8] & (1 << (id % 8)) == 0).then_some((cell.center, cell.half_size))
+        }))
+        .filter_map(|(center, half)| {
+            let height = center[1] + half[1] + CASING_SURFACE_CLEARANCE;
+            if from.y < height || to.y > height {
+                return None;
+            }
+            let mut point = from.lerp(to, (from.y - height) / (from.y - to.y));
+            point.y = height;
+            ((point.x - center[0]).abs() <= half[0] && (point.z - center[2]).abs() <= half[2])
+                .then_some(point)
+        })
+        .max_by(|a, b| a.y.total_cmp(&b.y))
+}
+
+fn step_casing(
+    casing: &mut EjectedCasing,
+    transform: &mut Transform,
+    delta: f32,
+    surfaces: &CasingSurfaces,
+    removed: &map::DestroyedCells,
+) -> bool {
     casing.lifetime -= delta;
     if casing.lifetime <= 0.0 {
         return true;
     }
     casing.velocity.y -= 9.81 * delta;
+    let from = transform.translation;
     transform.translation += casing.velocity * delta;
     transform.rotation = Quat::from_euler(
         EulerRot::XYZ,
@@ -170,8 +228,8 @@ fn step_casing(casing: &mut EjectedCasing, transform: &mut Transform, delta: f32
         casing.spin.y * delta,
         casing.spin.z * delta,
     ) * transform.rotation;
-    if transform.translation.y < CASING_GROUND_HEIGHT {
-        transform.translation.y = CASING_GROUND_HEIGHT;
+    if let Some(landing) = casing_landing(from, transform.translation, surfaces, removed) {
+        transform.translation = landing;
         if casing.velocity.y < -0.25 {
             casing.velocity.y *= -0.24;
         } else {
@@ -191,6 +249,10 @@ fn update_casings(
     assets: Res<CasingAssets>,
     mut state: ResMut<CasingState>,
     mut casings: Query<(Entity, &mut EjectedCasing, &mut Transform)>,
+    cover_and_surfaces: (
+        Option<Res<crate::sync::cover::State>>,
+        Local<Option<CasingSurfaces>>,
+    ),
 ) {
     if state.raid != Some(session.raid.raid_id) {
         for entity in state.active.drain(..) {
@@ -201,9 +263,20 @@ fn update_casings(
     }
 
     let delta = time.delta_secs().min(0.05);
+    let (cover, mut surfaces) = cover_and_surfaces;
+    let surfaces = surfaces.get_or_insert_with(CasingSurfaces::new);
+    let mut removed = map::destroyed_mask(&session.destroyed_cells);
+    if let Some(cover) = cover
+        .as_ref()
+        .and_then(|state| state.current(&session.raid))
+    {
+        for (mask, reliable) in removed.iter_mut().zip(cover.removed) {
+            *mask |= reliable;
+        }
+    }
     let mut expired = Vec::new();
     for (entity, mut casing, mut transform) in &mut casings {
-        if step_casing(&mut casing, &mut transform, delta) {
+        if step_casing(&mut casing, &mut transform, delta, surfaces, &removed) {
             expired.push(entity);
             commands.entity(entity).despawn();
         }
@@ -1148,13 +1221,55 @@ mod tests {
             lifetime: CASING_LIFETIME,
         };
         let mut transform = Transform::from_xyz(0.0, 1.0, 0.0);
+        let surfaces = CasingSurfaces {
+            cells: vec![],
+            fixtures: vec![],
+        };
+        let removed = map::destroyed_mask(&[]);
         assert!(!step_casing(
             &mut casing,
             &mut transform,
-            CASING_LIFETIME - 0.1
+            CASING_LIFETIME - 0.1,
+            &surfaces,
+            &removed,
         ));
         assert!((casing.lifetime - 0.1).abs() < 0.001);
-        assert!(step_casing(&mut casing, &mut transform, 0.2));
+        assert!(step_casing(
+            &mut casing,
+            &mut transform,
+            0.2,
+            &surfaces,
+            &removed
+        ));
+    }
+
+    #[test]
+    fn shell_casing_lands_on_crossed_surface_not_endpoint_floor() {
+        let mut surfaces = CasingSurfaces {
+            cells: map::barrier_cells(),
+            fixtures: vec![],
+        };
+        let intact = map::destroyed_mask(&[]);
+        let from = Vec3::new(0.0, 1.4, -3.0);
+        let to = Vec3::new(0.0, 0.0, -1.0);
+        let cover = casing_landing(from, to, &surfaces, &intact).unwrap();
+        assert!((cover.y - 1.205).abs() < 1e-5);
+        assert!(cover.z < -2.4);
+        let removed = map::destroyed_mask(
+            &surfaces
+                .cells
+                .iter()
+                .map(|cell| cell.id)
+                .collect::<Vec<_>>(),
+        );
+        let floor = casing_landing(from, to, &surfaces, &removed).unwrap();
+        assert!((floor.y - 0.105).abs() < 1e-5);
+        let from = Vec3::new(-1.55, 0.5, -1.75);
+        let to = Vec3::new(-1.55, 0.0, -1.75);
+        assert!((casing_landing(from, to, &surfaces, &intact).unwrap().y - 0.105).abs() < 1e-5);
+        surfaces.fixtures.push(map::POV_STEP);
+        assert!((casing_landing(from, to, &surfaces, &intact).unwrap().y - 0.285).abs() < 1e-5);
+        assert!(casing_landing(to, from, &surfaces, &intact).is_none());
     }
 
     #[test]
