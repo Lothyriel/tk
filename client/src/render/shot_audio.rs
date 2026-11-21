@@ -4,8 +4,12 @@ use bevy::{
     audio::{AddAudioSource, ChannelCount, Decodable, SampleRate, Source, Volume},
     prelude::*,
 };
-use common::{PlayerId, WeaponKind, replication::shots::ShotWindow};
-use std::{sync::Arc, time::Duration};
+use common::{
+    PlayerId, WeaponInstanceId, WeaponKind,
+    catalog::{ManipulationPhase, MechanicalSnapshot},
+    replication::shots::ShotWindow,
+};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 const RATE: u32 = 24_000;
 const MAX_VOICES: usize = 12;
@@ -103,17 +107,70 @@ fn synth(weapon: WeaponKind) -> SynthShot {
 }
 
 #[derive(Resource)]
-struct Cues([Handle<SynthShot>; 3]);
+struct Cues([Handle<SynthShot>; 6]);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReloadCue {
+    Removed = 3,
+    Inserted = 4,
+    Fed = 5,
+}
+
+fn reload_cue(before: MechanicalSnapshot, after: MechanicalSnapshot) -> Option<ReloadCue> {
+    use ManipulationPhase::*;
+    if before.action_id != after.action_id
+        || before.kind != after.kind
+        || !after.reloading()
+        || after.fraction <= before.fraction
+    {
+        return None;
+    }
+    match (before.phase?, after.phase?) {
+        (Remove, Insert) => Some(ReloadCue::Removed),
+        (Remove | Insert, Feed) => Some(ReloadCue::Inserted),
+        (Remove | Insert | Feed, Finish)
+            if after.kind == Some(common::catalog::ManipulationKind::EmptyReload) =>
+        {
+            Some(ReloadCue::Fed)
+        }
+        (Remove | Insert, Finish) => Some(ReloadCue::Inserted),
+        _ => None,
+    }
+}
+
+fn synth_contact(tone: f32, decay: f32) -> SynthShot {
+    SynthShot(
+        (0..RATE / 16)
+            .map(|i| {
+                let t = i as f32 / RATE as f32;
+                let envelope = (t * 4_000.0).min(1.0) * (-decay * t).exp();
+                let phase = t * tone * std::f32::consts::TAU;
+                0.5 * envelope * (phase.sin() + 0.4 * (phase * 2.37).sin())
+            })
+            .collect(),
+    )
+}
 
 fn prepare(mut commands: Commands, mut assets: ResMut<Assets<SynthShot>>) {
-    commands.insert_resource(Cues(
-        [WeaponKind::Rifle, WeaponKind::Pistol, WeaponKind::Smg]
-            .map(|kind| assets.add(synth(kind))),
-    ));
+    commands.insert_resource(Cues([
+        assets.add(synth(WeaponKind::Rifle)),
+        assets.add(synth(WeaponKind::Pistol)),
+        assets.add(synth(WeaponKind::Smg)),
+        assets.add(synth_contact(320.0, 180.0)),
+        assets.add(synth_contact(510.0, 130.0)),
+        assets.add(synth_contact(780.0, 105.0)),
+    ]));
 }
 
 #[derive(Component)]
 struct Voice(f32);
+
+#[derive(Default)]
+struct History {
+    raid: Option<u32>,
+    shots: ShotWindow,
+    reloads: HashMap<u64, (WeaponInstanceId, MechanicalSnapshot)>,
+}
 
 fn present(
     mut commands: Commands,
@@ -122,14 +179,14 @@ fn present(
     local: Res<PlayerId>,
     settings: (Res<Muted>, Res<Cues>),
     voices: Query<(Entity, &Voice)>,
-    mut history: Local<(Option<u32>, ShotWindow)>,
+    mut history: Local<History>,
 ) {
     let (muted, cues) = settings;
     let now = time.elapsed_secs();
     let raid = Some(session.raid.raid_id);
-    let changed = history.0 != raid;
+    let changed = history.raid != raid;
     if changed {
-        *history = (raid, ShotWindow::default());
+        *history = History { raid, ..default() };
     }
     let mut active = 0;
     for (entity, voice) in &voices {
@@ -139,12 +196,22 @@ fn present(
             active += 1;
         }
     }
-    for shot in &session.shots {
-        if !history.1.observe(shot.id) || muted.0 || active >= MAX_VOICES {
-            continue;
+    let mut play = |cue: &Handle<SynthShot>, position: Vec3, remote: bool, volume: f32| {
+        if muted.0 || active >= MAX_VOICES || !position.is_finite() {
+            return;
         }
-        let position = Vec3::from(shot.muzzle);
-        if !position.is_finite() {
+        commands.spawn((
+            AudioPlayer(cue.clone()),
+            PlaybackSettings::DESPAWN
+                .with_volume(Volume::Linear(volume))
+                .with_spatial(remote),
+            Transform::from_translation(position),
+            Voice(now + 0.4),
+        ));
+        active += 1;
+    };
+    for shot in &session.shots {
+        if !history.shots.observe(shot.id) {
             continue;
         }
         let cue = match shot.weapon.class() {
@@ -153,21 +220,79 @@ fn present(
             WeaponKind::Smg => &cues.0[2],
         };
         let remote = shot.shooter != local.0;
-        commands.spawn((
-            AudioPlayer(cue.clone()),
-            PlaybackSettings::DESPAWN
-                .with_volume(Volume::Linear(if remote { 0.45 } else { 0.25 }))
-                .with_spatial(remote),
-            Transform::from_translation(position),
-            Voice(now + 0.4),
-        ));
-        active += 1;
+        play(
+            cue,
+            Vec3::from(shot.muzzle),
+            remote,
+            if remote { 0.45 } else { 0.25 },
+        );
+    }
+    history
+        .reloads
+        .retain(|id, _| session.local(*id).is_some_and(|actor| actor.alive));
+    for actor in session.players.iter().filter(|actor| actor.alive) {
+        let previous = history
+            .reloads
+            .insert(actor.id, (actor.weapon_instance, actor.mechanics));
+        if let Some((instance, before)) = previous
+            && instance == actor.weapon_instance
+            && let Some(cue) = reload_cue(before, actor.mechanics)
+        {
+            let remote = actor.id != local.0;
+            play(
+                &cues.0[cue as usize],
+                Vec3::from(actor.pos),
+                remote,
+                if remote { 0.24 } else { 0.17 },
+            );
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shot_audio_reload_contacts_use_confirmed_phase_without_replaying_skipped_cues() {
+        use ManipulationPhase::*;
+        use common::catalog::ManipulationKind::{EmptyReload, TacticalReload};
+        let state = |kind, phase, fraction| MechanicalSnapshot {
+            action_id: 7,
+            kind: Some(kind),
+            phase: Some(phase),
+            fraction,
+            ..default()
+        };
+        let removed = state(EmptyReload, Insert, 0.30);
+        let inserted = state(EmptyReload, Feed, 0.65);
+        let finished = state(EmptyReload, Finish, 0.92);
+        let started = state(EmptyReload, Remove, 0.15);
+        assert_eq!(reload_cue(started, removed), Some(ReloadCue::Removed));
+        assert_eq!(reload_cue(removed, inserted), Some(ReloadCue::Inserted));
+        assert_eq!(reload_cue(inserted, finished), Some(ReloadCue::Fed));
+        assert_eq!(reload_cue(started, finished), Some(ReloadCue::Fed));
+        assert_eq!(reload_cue(finished, finished), None);
+        assert_eq!(reload_cue(finished, inserted), None);
+        assert_eq!(reload_cue(removed, MechanicalSnapshot::default()), None);
+        assert_eq!(
+            reload_cue(
+                started,
+                MechanicalSnapshot {
+                    action_id: 8,
+                    ..removed
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            reload_cue(
+                state(TacticalReload, Insert, 0.45),
+                state(TacticalReload, Finish, 0.72)
+            ),
+            Some(ReloadCue::Inserted)
+        );
+    }
 
     #[test]
     fn shot_audio_only_plays_fresh_events_with_bounded_voices_and_respects_mute() {
