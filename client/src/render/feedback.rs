@@ -1,4 +1,4 @@
-//! Confirmed shots only. No audio assets, players or sinks on this path.
+//! Visual feedback for confirmed shots and weapon handling.
 use super::{LocalView, ViewModelCamera, WeaponMeshRoot, WeaponViewModel, WorldModelCamera};
 use crate::{ClientSystems, sync::ClientSession};
 use bevy::{platform::collections::HashMap, prelude::*};

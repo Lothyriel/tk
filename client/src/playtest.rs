@@ -231,11 +231,16 @@ struct PlaytestLenses<'w, 's> {
     poses: Res<'w, crate::render::actors::PoseCache>,
 }
 
+type PlaytestAudio = Or<(
+    With<AudioPlayer>,
+    With<AudioPlayer<crate::render::shot_audio::SynthShot>>,
+)>;
+
 fn drive(
     mut commands: Commands,
     state: PlaytestState,
     mut exit: MessageWriter<AppExit>,
-    audio: Query<(), With<AudioPlayer>>,
+    audio: Query<(), PlaytestAudio>,
     mut view_camera: Single<&mut Camera, With<crate::render::ViewModelCamera>>,
     flashes: Query<&Visibility, With<crate::render::feedback::Flash>>,
     projections: PlaytestLenses,
@@ -264,7 +269,7 @@ fn drive(
     assert_eq!(
         audio.iter().count(),
         0,
-        "Temporary shot mute must not create audio entities"
+        "Playtest mute must not create shot audio entities"
     );
     driver.frames.push(time.delta_secs() * 1000.0);
     if driver.frames.len() == 300 {
