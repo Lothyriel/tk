@@ -425,13 +425,18 @@ fn spawn_world_model(
         ));
     }
     let full = materials.add(Color::srgb(1.0, 0.38, 0.045));
-    if common::map::pov_fixture() {
-        let step = common::map::POV_STEP;
+    for block in pov_fixture()
+        .then_some(POV_STEP)
+        .into_iter()
+        .chain(pov_side_cover())
+    {
         commands.spawn((
-            Mesh3d(meshes.add(Cuboid::from_size(Vec3::from(step.half_size) * 2.0))),
+            Mesh3d(meshes.add(Cuboid::from_size(Vec3::from(block.half_size) * 2.0))),
             MeshMaterial3d(concrete.clone()),
-            Transform::from_translation(Vec3::from(step.center)),
+            Transform::from_translation(Vec3::from(block.center)),
         ));
+    }
+    if pov_fixture() {
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::new(0.10, 0.10, 0.012))),
             MeshMaterial3d(full.clone()),
