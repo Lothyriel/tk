@@ -22,6 +22,15 @@ POV_CAPTURES = {
 }
 
 
+def parse_viewport(value):
+    match = re.fullmatch(r"([0-9]{1,4})x([0-9]{1,4})", value)
+    if match:
+        width, height = map(int, match.groups())
+        if 600 <= width <= 3840 and 400 <= height <= 2160:
+            return width, height
+    raise argparse.ArgumentTypeError("expected WIDTHxHEIGHT between 600x400 and 3840x2160")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-build", action="store_true")
@@ -40,7 +49,10 @@ def main():
     parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
                         help="Explicit LOD inspection override (requires --weapon-debug)")
     parser.add_argument("--pov", choices=POV_CAPTURES, help="Run only the named POV bench after deploy")
+    parser.add_argument("--viewport", type=parse_viewport, help="Require this exact POV framebuffer (WIDTHxHEIGHT)")
     args = parser.parse_args()
+    if args.viewport and not args.pov:
+        parser.error("--viewport requires --pov")
     if args.pov and (args.clients != 1 or args.animation_review or args.configure_weapons or args.video):
         parser.error("--pov requires one client and no other review, configurator or video mode")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
@@ -69,10 +81,13 @@ def main():
     if args.weapon_kit:
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
     for flag in ("TK_PLAYTEST_VIDEO", "TK_ANIMATION_REVIEW", "TK_PHYSICAL_REVIEW", "TK_DROP_SNAPSHOT_EVERY",
-                  "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV"):
+                  "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV",
+                  "TK_PLAYTEST_VIEWPORT"):
         env.pop(flag, None)
     if args.pov:
         env["TK_PLAYTEST_POV"] = args.pov
+    if args.viewport:
+        env["TK_PLAYTEST_VIEWPORT"] = f"{args.viewport[0]}x{args.viewport[1]}"
     env.update(SERVER_ADDR="127.0.0.1", TK_PORT="19080", TK_PLAYTEST_DIR=str(output), TK_PLAYTEST_CLIENTS=str(args.clients), NO_COLOR="1")
     if args.video:
         env["TK_PLAYTEST_VIDEO"] = "1"
@@ -100,6 +115,7 @@ def main():
         "clients": args.clients, "transport": "real UDP 127.0.0.1:19080",
         "peer_snapshot_drop_every": 3 if args.clients == 2 else 0,
         "resolution": [1280, 800], "world_fov_degrees": 70,
+        "requested_viewport": args.viewport,
         "video": args.video, "animation_review": args.animation_review,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "initial_weapon_kit_fixture": args.weapon_kit,
@@ -168,6 +184,10 @@ def main():
             assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
             width, height = struct.unpack(">II", data[16:24])
             assert width >= 600 and height >= 400
+            assert args.viewport is None or args.viewport == (width, height), (
+                f"{name}.png: expected {args.viewport}, got {(width, height)}; "
+                "check whether the window manager overrides the requested size"
+            )
             assert name == names[0] or settings["resolution"] == [width, height]
             settings["resolution"] = [width, height]
         settings["seconds_to_evidence"] = float(proof[1])

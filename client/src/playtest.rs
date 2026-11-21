@@ -13,6 +13,15 @@ mod video;
 
 pub struct Plugin;
 
+pub(crate) fn requested_viewport() -> Option<(u32, u32)> {
+    let value = std::env::var("TK_PLAYTEST_VIEWPORT").ok()?;
+    let (width, height) = value.split_once('x').expect("viewport WIDTHxHEIGHT");
+    Some((
+        width.parse().expect("viewport width"),
+        height.parse().expect("viewport height"),
+    ))
+}
+
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Driver>()
