@@ -8,6 +8,7 @@ mod asset_review;
 mod lobby;
 mod mechanics;
 mod physical;
+mod pov;
 mod video;
 
 pub struct Plugin;
@@ -63,6 +64,7 @@ enum Step {
     PhysicalSetup,
     PhysicalAction,
     PhysicalRest,
+    PovAds,
     Animation,
     AssetReview,
     Weapons,
@@ -90,6 +92,8 @@ struct Driver {
     weapons: mechanics::Weapons,
     injury: mechanics::Injury,
     physical: physical::Review,
+    pov_ads: pov::Ads,
+    pov_visual_since: Option<f64>,
     fall_ids: Vec<u64>,
     recovery_seen: bool,
     recovery_recorded: bool,
@@ -172,10 +176,24 @@ struct PlaytestState<'w> {
     driver: ResMut<'w, Driver>,
 }
 
+type AcceptedViewModels<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static crate::render::voxel::configured::ConfiguredWeapon,
+        &'static InheritedVisibility,
+    ),
+    (
+        With<crate::render::voxel::configured::ConfiguredPose>,
+        Without<crate::render::voxel::configured::ConfigurationVisualError>,
+    ),
+>;
+
 #[derive(bevy::ecs::system::SystemParam)]
 struct PlaytestLenses<'w, 's> {
     world: Single<'w, 's, &'static Projection, With<crate::render::WorldModelCamera>>,
     view: Single<'w, 's, &'static Projection, With<crate::render::ViewModelCamera>>,
+    configured: AcceptedViewModels<'w, 's>,
 }
 
 fn drive(
@@ -337,7 +355,9 @@ fn drive(
             assert_eq!(session.players.iter().filter(|p| p.bot).count(), 2);
             capture(&mut commands, "raid");
             driver.advance(
-                if physical::scenario().is_some() {
+                if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("ads") {
+                    Step::PovAds
+                } else if physical::scenario().is_some() {
                     Step::PhysicalSetup
                 } else if std::env::var("TK_PLAYTEST_CLIENTS").is_ok_and(|v| v == "2") {
                     if std::env::var_os("TK_ANIMATION_REVIEW").is_some() {
@@ -350,6 +370,48 @@ fn drive(
                 },
                 now,
             );
+        }
+        Step::PovAds => {
+            input.camera = CameraInput::default();
+            input.weapon = EquipmentSlot::Primary;
+            let elapsed = now - driver.since;
+            let ads = local.pose.ads;
+            let visual_ready = projections.configured.iter().any(|(weapon, visible)| {
+                weapon.view_model
+                    && weapon.epoch == cache.epoch()
+                    && weapon.handle == local.configuration
+                    && visible.get()
+            });
+            if !visual_ready {
+                driver.pov_visual_since = None;
+            }
+            let visual_settled = visual_ready
+                && now - *driver.pov_visual_since.get_or_insert(now) >= pov::VIEW_WARMUP_SECONDS;
+            let name = driver
+                .pov_ads
+                .advance(elapsed, local.pose.grounded && visual_settled, ads, world_fov)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{error}: state={:?} pos={:?} ads={ads} fov={world_fov} visual_ready={visual_ready}",
+                        driver.pov_ads, local.pos
+                    )
+                });
+            if let Some(name) = name {
+                info!(
+                    "POV EVIDENCE {name} t={now:.3} pos={:?} ads={ads:.3} fov={world_fov:.2} config={}",
+                    local.pos, local.configuration
+                );
+                capture(&mut commands, name);
+            }
+            input.aim = driver.pov_ads == pov::Ads::Aim;
+            if driver.pov_ads == pov::Ads::Finish
+                && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
+                    .join("pov-return.png")
+                    .is_file()
+            {
+                info!("POV PASS ads t={now:.3}");
+                exit.write(AppExit::Success);
+            }
         }
         Step::PhysicalSetup => {
             let name = physical::scenario().unwrap();
