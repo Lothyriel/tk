@@ -39,8 +39,9 @@ Hotfix pequeno e localizado pode partir do chat. Mudança grande precisa de card
 A descrição guarda o acordo atual; comentários registram descobertas, motivos, alternativas rejeitadas, bloqueios, entregas verificadas e retomada.
 Git guarda a implementação. Documentação técnica guarda decisões reutilizáveis. Não há um diário operacional paralelo no repositório.
 
-Cada tarefa usa uma branch. Commits automáticos em inglês seguem Conventional Commits, com push das unidades verificadas para `origin`.
-Pedidos explícitos de trabalho local prevalecem. Merge, PR, release e deploy são ações separadas.
+O desenvolvimento é trunk-based: implementação e commits verificados são feitos diretamente em `main`, com push para `origin/main`.
+Commits automáticos em inglês seguem Conventional Commits. Branches de tarefa só são criadas quando solicitadas explicitamente.
+Pedidos explícitos de trabalho local prevalecem. PR, release e deploy são ações separadas.
 O agente preserva alterações locais alheias e os hooks do Git.
 
 ## Verificação
