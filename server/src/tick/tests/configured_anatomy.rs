@@ -86,15 +86,32 @@ fn change_grip(app: &mut App, player: Entity, x: f32, node: u16) {
 #[test]
 fn configured_anatomy_authority_hits_revised_hand_with_a_normal_projectile() {
     let (mut app, shooter, target) = physical_fixture();
-    change_grip(&mut app, target, -0.46, 9);
+    // Approach from the exposed side: the centred line can hit the rotated
+    // thorax before reaching the support hand.
+    app.world_mut()
+        .get_mut::<Transform>(shooter)
+        .unwrap()
+        .translation
+        .x -= 2.0;
+    change_grip(&mut app, target, -0.60, 9);
     held_steps(&mut app, target, 2);
     let motion = app.world().get::<ragdoll::Motion>(target).unwrap();
     assert!(motion.valid && motion.handling_error.is_none());
     let hand = motion.world[Segment::LeftHand.index()].translation;
     let root = app.world().get::<Transform>(target).unwrap();
     let old = evaluate_pose(app.world().get::<PoseState>(target).unwrap(), 1.0, 1.0);
+    let legacy_hand = root.transform_point(old[Segment::LeftHand.index()].position.into());
+    let eye =
+        app.world().get::<Transform>(shooter).unwrap().translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
+    // Require separation perpendicular to the sight line, not merely distance
+    // between the two hand centres. Leave room for the game's muzzle offset.
+    let legacy_radius = Segment::LeftHand.half_size().length();
     assert!(
-        hand.distance(root.transform_point(old[Segment::LeftHand.index()].position.into())) > 0.3
+        (hand - legacy_hand)
+            .cross((hand - eye).normalize())
+            .length()
+            > legacy_radius + 0.04,
+        "fixture must separate revised and legacy anatomy: revised={hand:?}, legacy={legacy_hand:?}"
     );
     normal_shot(&mut app, shooter, hand);
     let health = app.world().get::<BodyHealth>(target).unwrap();

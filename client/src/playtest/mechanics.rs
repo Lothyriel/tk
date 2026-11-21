@@ -391,7 +391,7 @@ mod tests {
             ];
             let mut sequences = [Sequence::default(), Sequence::default()];
             let mut finished_at = None;
-            for step in 0..19_000 {
+            for step in 0..23_000 {
                 let snapshots = [actors[0].received.clone(), actors[1].received.clone()];
                 for index in 0..2 {
                     let frame = ReviewFrame {

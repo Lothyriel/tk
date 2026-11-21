@@ -709,6 +709,144 @@ fn configured_remote_mixed_reload_extremes_preserve_contacts_identity_and_cancel
 }
 
 #[test]
+fn configured_remote_inspect_weapon_and_palms_clear_rendered_torso() {
+    use bevy::mesh::VertexAttributeValues;
+    use common::catalog::{Attachment, DefinitionId};
+    for (stock, grip, position) in [(0, 134, 0), (5, 134, 9), (5, 135, 2)] {
+        let (mut app, body) = fixture(WeaponKind::Rifle);
+        let root = weapon_root(&app, body);
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            let mut packet = session
+                .configurations
+                .cache
+                .get(1, 1)
+                .unwrap()
+                .packet
+                .clone();
+            packet.handle = 2;
+            packet.revision = 2;
+            let part = packet
+                .weapon
+                .components
+                .iter_mut()
+                .find(|p| p.node == 2)
+                .unwrap();
+            part.definition = DefinitionId(122);
+            part.position = stock;
+            packet.weapon.components.push(Attachment {
+                node: 11,
+                definition: DefinitionId(grip),
+                parent: Some(3),
+                socket: "bottom".into(),
+                position,
+            });
+            session
+                .configurations
+                .cache
+                .apply(catalog(), packet.catalog, packet)
+                .unwrap();
+            session.players[0].configuration = 2;
+        }
+        for step in 0..=28 {
+            {
+                let mut session = app.world_mut().resource_mut::<ClientSession>();
+                session.players[0].mechanics.kind =
+                    Some(common::catalog::ManipulationKind::Inspect);
+                session.players[0].mechanics.fraction = step as f32 / 28.0;
+            }
+            for _ in 0..6 {
+                app.update();
+            }
+            assert_arms(&app, body, root);
+            let world = app.world();
+            for torso in descendants(world, body).into_iter().filter(|&e| {
+                world.get::<BoneVisual>(e).is_some_and(|b| {
+                    matches!(
+                        b.segment,
+                        Segment::Thorax | Segment::Abdomen | Segment::Pelvis
+                    ) && b.inner == 0
+                })
+            }) {
+                let meshes = world.resource::<Assets<Mesh>>();
+                let torso_mesh = meshes.get(&world.get::<Mesh3d>(torso).unwrap().0).unwrap();
+                let VertexAttributeValues::Float32x3(vertices) =
+                    torso_mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
+                else {
+                    panic!("positions");
+                };
+                // voxel_mesh is a union of indexed cuboids, 24 vertices per voxel.
+                // Compare with its actual occupied cells, not an enclosing solid torso.
+                let boxes: Vec<_> = vertices
+                    .as_chunks::<24>()
+                    .0
+                    .iter()
+                    .map(|cell| {
+                        let min = cell
+                            .iter()
+                            .map(|&p| Vec3::from(p))
+                            .fold(Vec3::splat(f32::INFINITY), Vec3::min);
+                        let max = cell
+                            .iter()
+                            .map(|&p| Vec3::from(p))
+                            .fold(Vec3::splat(f32::NEG_INFINITY), Vec3::max);
+                        ((min + max) * 0.5, (max - min) * 0.5 - Vec3::splat(0.001))
+                    })
+                    .collect();
+                assert!(!boxes.is_empty());
+                let to_torso = world
+                    .get::<GlobalTransform>(torso)
+                    .unwrap()
+                    .to_matrix()
+                    .inverse();
+                let hands = descendants(world, body).into_iter().filter(|&e| {
+                    world.get::<BoneVisual>(e).is_some_and(|b| {
+                        matches!(b.segment, Segment::LeftHand | Segment::RightHand) && b.inner == 0
+                    })
+                });
+                for entity in descendants(world, root).into_iter().chain(hands) {
+                    let Some(mesh) = world.get::<Mesh3d>(entity) else {
+                        continue;
+                    };
+                    if !world
+                        .get::<InheritedVisibility>(entity)
+                        .is_some_and(|v| v.get())
+                    {
+                        continue;
+                    }
+                    let mesh = meshes.get(&mesh.0).unwrap();
+                    let VertexAttributeValues::Float32x3(vertices) =
+                        mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
+                    else {
+                        panic!("positions");
+                    };
+                    let transform =
+                        to_torso * world.get::<GlobalTransform>(entity).unwrap().to_matrix();
+                    let points: Vec<_> = vertices
+                        .iter()
+                        .map(|&p| transform.transform_point3(Vec3::from(p)))
+                        .collect();
+                    let indices: Vec<_> = mesh.indices().unwrap().iter().collect();
+                    for (centre, half) in &boxes {
+                        for triangle in indices.as_chunks::<3>().0 {
+                            let p = std::array::from_fn(|i| points[triangle[i]] - centre);
+                            assert!(
+                                !crate::render::weapons::grasp::triangle_intersects_box(p, *half),
+                                "inspect torso intersection kit={stock}/{grip}/{position} step={step} centre={centre:?} half={half:?} entity={:?} parent={:?} points={p:?}",
+                                world.get::<Name>(entity),
+                                world
+                                    .get::<ChildOf>(entity)
+                                    .and_then(|c| world.get::<Name>(c.0))
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn configured_remote_m4a1_kit_extremes_keep_rendered_contacts_and_piece_identity() {
     use common::catalog::{Attachment, DefinitionId};
     for (short, suppressed, grip, position) in [
