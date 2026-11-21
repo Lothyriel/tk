@@ -1325,6 +1325,102 @@ fn next_deploy_restores_separated_anatomy_and_clears_fragments_corpses_and_effec
 }
 
 #[test]
+fn walking_onto_a_low_step_acquires_a_supported_foot() {
+    use common::humanoid::{PoseState, Segment, evaluate_pose};
+    let (mut app, player, _) = physical_fixture();
+    let origin = app.world().get::<Transform>(player).unwrap().translation;
+    let top = 0.22;
+    app.world_mut().spawn((
+        SurfaceKind::Concrete,
+        Collider::cuboid(1.0, 0.06, 0.75),
+        Transform::from_xyz(origin.x, top - 0.06, origin.z + 1.45),
+    ));
+    steps(&mut app, 4);
+    app.world_mut()
+        .get_mut::<ClientInput>(player)
+        .unwrap()
+        .backward = true;
+    let mut supported = false;
+    for _ in 0..95 {
+        held_steps(&mut app, player, 1);
+        let root = app.world().get::<Transform>(player).unwrap();
+        let pose = app.world().get::<PoseState>(player).unwrap();
+        assert_eq!(pose.mode, common::humanoid::PhysicalMode::Standing);
+        let rig = evaluate_pose(pose, 1.0, 1.0);
+        for (i, segment) in [Segment::LeftFoot, Segment::RightFoot]
+            .into_iter()
+            .enumerate()
+        {
+            let foot = root.transform_point(rig[segment.index()].position.into());
+            assert!(foot.is_finite());
+            supported |= pose.foot_weight[i] > 0.95
+                && (origin.z + 0.75..origin.z + 2.10).contains(&foot.z)
+                && (foot.y - (top + 0.055)).abs() < 0.02;
+        }
+    }
+    assert!(supported, "no loaded foot acquired the top of the step");
+}
+
+#[test]
+fn walk_sprint_walk_keeps_loaded_feet_stable() {
+    use common::humanoid::{PoseState, Segment, evaluate_pose};
+    let (mut app, player, peer) = physical_fixture();
+    // The stock fixture puts the second capsule directly in this lane.
+    // Keep this cadence test on unobstructed ground.
+    app.world_mut()
+        .get_mut::<Transform>(peer)
+        .unwrap()
+        .translation
+        .x += 3.0;
+    steps(&mut app, 4);
+    app.world_mut()
+        .get_mut::<ClientInput>(player)
+        .unwrap()
+        .forward = true;
+    held_steps(&mut app, player, 48);
+    let feet = |app: &App| {
+        let root = app.world().get::<Transform>(player).unwrap();
+        let pose = app.world().get::<PoseState>(player).unwrap();
+        let rig = evaluate_pose(pose, 1.0, 1.0);
+        [Segment::LeftFoot, Segment::RightFoot].map(|segment| {
+            let i = usize::from(segment == Segment::RightFoot);
+            (
+                pose.foot_weight[i],
+                root.transform_point(rig[segment.index()].position.into()),
+            )
+        })
+    };
+    let mut previous = feet(&app);
+    for run in [true, false] {
+        app.world_mut().get_mut::<ClientInput>(player).unwrap().run = run;
+        let mut checked = 0;
+        let mut maximum = 0.0_f32;
+        for _ in 0..64 {
+            held_steps(&mut app, player, 1);
+            let next = feet(&app);
+            for ((old_weight, old_foot), (weight, foot)) in previous.into_iter().zip(next) {
+                if old_weight > 0.95 && weight > 0.95 {
+                    checked += 1;
+                    maximum = maximum.max(old_foot.distance(foot));
+                }
+            }
+            previous = next;
+        }
+        assert!(
+            checked > 10 && maximum < 0.01,
+            "run={run}: {checked} loaded ticks, drift={maximum:.4} m"
+        );
+        let speed = app.world().get::<PoseState>(player).unwrap().velocity[2].abs();
+        let target = if run {
+            PLAYER_RUN_SPEED
+        } else {
+            PLAYER_WALK_SPEED
+        };
+        assert!((speed - target).abs() < 0.2, "run={run}: speed={speed}");
+    }
+}
+
+#[test]
 fn stance_contact_survives_a_midstep_strafe_reversal() {
     use common::humanoid::{PoseState, Segment, evaluate_pose};
     let (mut app, player, _) = physical_fixture();
