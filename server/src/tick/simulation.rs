@@ -253,13 +253,13 @@ pub(super) fn weapons_tick(
             + transform.rotation * common::humanoid::aim_lean_offset(pose.aim_roll);
         let muzzle = eye
             + rotation
-                * common::weapon_animation::resolved_barrel_offset(
+                * common::weapon_animation::resolved_muzzle_offset(
                     arsenal.current().spec(),
                     pose.ads,
                 );
         // Resolve actual eye-to-muzzle contacts in projectiles_tick. A broad
         // movement capsule must neither redirect a clear offset ray to the eye
-        // nor let a muzzle spawn beyond real anatomy/concrete at point blank.
+        // nor let the device outlet spawn beyond real anatomy/concrete at point blank.
         let id = world_state.next_projectile_id;
         world_state.next_projectile_id = id + 1;
         commands.spawn((

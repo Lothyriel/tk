@@ -773,6 +773,12 @@ fn assembly_root_bridges_keep_bore_and_device_exit_distinct_through_ads() {
             (crate::weapon_animation::resolved_barrel_offset(&resolved, ads) - expected).length()
                 < 1e-6
         );
+        assert!(
+            (crate::weapon_animation::resolved_muzzle_offset(&resolved, ads)
+                - (expected - Vec3::Z * 0.2))
+                .length()
+                < 1e-6
+        );
     }
     assert!(
         (resolved.assembly.anchors[&AnchorKind::DeviceExit]
