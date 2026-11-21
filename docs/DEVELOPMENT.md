@@ -85,7 +85,8 @@ também no observador, que descarta cada terceiro snapshot. Use `--pov
 side-cover` para conferir as duas paredes no cliente solo. `--viewport
 1260x540` exige a dimensão exata dos PNGs, sem alterar o FOV. Com
 `--pov-hz 30` ou `--pov-hz 165`, `stop-lean` grava a posição do olho, o
-roll e a cadência efetiva em `pov-trace.csv`, sem vídeo. Compare também a
+roll, a cadência efetiva e a projeção normalizada do marcador em
+`pov-trace.csv`, sem vídeo. A projeção não mede oclusão. Compare também a
 posição de parada: percorrer a mesma rota não garante a mesma trajetória.
 
 Compare capturas de diretórios separados com o mesmo kit e viewport. Confira
