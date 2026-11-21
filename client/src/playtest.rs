@@ -425,9 +425,11 @@ fn drive(
                 if driver.captures & 1 == 0
                     && vx.hypot(vz) > 4.5
                     && delta.z < -2.5
-                    && delta.length() < 6.0
+                    && delta.length() < 7.0
                     && let Some((phase, weights)) = projections.poses.presented_support(actor.id)
-                    && weights.iter().any(|weight| *weight > 0.95)
+                    && (2.1..2.65).contains(&phase.rem_euclid(std::f32::consts::TAU))
+                    && weights[0] > 0.95
+                    && weights[1] < 0.10
                 {
                     driver.captures |= 1;
                     info!(
@@ -435,7 +437,7 @@ fn drive(
                     );
                     capture(&mut commands, "pov-run");
                 }
-                if local.pos[2] > 3.5 {
+                if local.pos[2] > 5.5 {
                     input.camera = CameraInput::default();
                     input.forward = true;
                     return;
@@ -468,6 +470,11 @@ fn drive(
                         .join("pov-return.png")
                         .is_file()
                 {
+                    assert_ne!(
+                        driver.captures & 1,
+                        0,
+                        "POV observer missed the loaded running phase"
+                    );
                     info!("POV OBSERVER PASS");
                     exit.write(AppExit::Success);
                 }

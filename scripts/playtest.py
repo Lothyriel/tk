@@ -196,7 +196,7 @@ def main():
             assert "POV OBSERVER PASS" in peer_text and "panicked at" not in peer_text
             assert " ERROR " not in peer_text, f"Runtime/render error in observer log: {peer}"
             for name in ("run", "left", "right", "return"):
-                assert f"POV OBSERVER {name} " in peer_text
+                assert f"POV OBSERVER {name} " in peer_text, f"Missing observer cue {name}: {peer}"
                 data = (peer / f"pov-{name}.png").read_bytes()
                 assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
                 if args.viewport:
