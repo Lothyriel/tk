@@ -32,10 +32,19 @@ pub(super) fn trace_observer(
     .map(|bone| poses.presented_bone(actor.id, bone)) else {
         return;
     };
+    let Some(anchors) = poses.presented_foot_anchors(actor.id) else {
+        return;
+    };
+    let root = Transform::from_translation(actor.pos.into())
+        .with_rotation(Quat::from_rotation_y(actor.rot.yaw));
+    let confirmed = actor
+        .pose
+        .feet
+        .map(|foot| root.transform_point(foot.into()));
     let out = file.get_or_insert_with(|| {
         let root = std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").expect("playtest dir"));
         let mut out = BufWriter::new(std::fs::File::create(root.join("gait-trace.csv")).unwrap());
-        writeln!(out, "seconds,snapshot,phase,roll,speed,left_weight,right_weight,left_x,left_y,left_z,right_x,right_y,right_z,pelvis_x,pelvis_y,pelvis_z,chest_qx,chest_qy,chest_qz,chest_qw").unwrap();
+        writeln!(out, "seconds,snapshot,phase,roll,speed,left_weight,right_weight,left_x,left_y,left_z,right_x,right_y,right_z,pelvis_x,pelvis_y,pelvis_z,chest_qx,chest_qy,chest_qz,chest_qw,left_anchor_x,left_anchor_y,left_anchor_z,right_anchor_x,right_anchor_y,right_anchor_z,left_confirmed_x,left_confirmed_y,left_confirmed_z,right_confirmed_x,right_confirmed_y,right_confirmed_z").unwrap();
         out
     });
     let [vx, _, vz] = actor.pose.velocity;
@@ -57,6 +66,8 @@ pub(super) fn trace_observer(
         .chain(right.translation.to_array())
         .chain(pelvis.translation.to_array())
         .chain(chest.rotation.to_array())
+        .chain(anchors.into_iter().flat_map(|v| v.to_array()))
+        .chain(confirmed.into_iter().flat_map(|v| v.to_array()))
     {
         write!(out, ",{value:.6}").unwrap();
     }

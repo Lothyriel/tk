@@ -60,6 +60,7 @@ pub(crate) struct PoseCache {
     raid: u32,
     poses: HashMap<u64, PoseState>,
     roots: HashMap<u64, Transform>,
+    world_foot_anchors: HashMap<u64, [Vec3; 2]>,
     last_live: HashMap<(u64, Segment), Transform>,
 }
 
@@ -76,6 +77,12 @@ impl PoseCache {
 
     pub(crate) fn presented_bone(&self, id: u64, segment: Segment) -> Option<Transform> {
         self.last_live.get(&(id, segment)).copied()
+    }
+
+    pub(crate) fn presented_foot_anchors(&self, id: u64) -> Option<[Vec3; 2]> {
+        let root = self.roots.get(&id)?;
+        let pose = self.poses.get(&id)?;
+        Some(pose.feet.map(|foot| root.transform_point(foot.into())))
     }
 }
 #[derive(Component)]
@@ -538,6 +545,9 @@ fn interpolate(
     let alpha = 1.0 - (-time.delta_secs() * 18.0).exp();
     for (mut t, mut target, client) in &mut actors {
         let snap = target.snap || t.translation.distance(target.position) > 4.0;
+        if snap {
+            cache.world_foot_anchors.remove(&client.id);
+        }
         t.translation = if snap {
             target.position
         } else {
@@ -765,6 +775,7 @@ fn animate(
     if cache.raid != session.raid.raid_id {
         cache.poses.clear();
         cache.roots.clear();
+        cache.world_foot_anchors.clear();
         cache.last_live.clear();
         cache.accepted_rigs.clear();
         cache.raid = session.raid.raid_id;
@@ -774,7 +785,11 @@ fn animate(
     let mut rigs = HashMap::new();
     let mut postures = HashMap::new();
     let mut posture_errors = HashMap::new();
+    let cache = &mut *cache;
     for p in &session.players {
+        let confirmed_root = Transform::from_translation(p.pos.into())
+            .with_rotation(Quat::from_rotation_y(p.rot.yaw));
+        let root = cache.roots.get(&p.id).copied().unwrap_or(confirmed_root);
         let state = cache.poses.entry(p.id).or_insert_with(|| p.pose.clone());
         state.crouch += (p.pose.crouch - state.crouch) * alpha;
         state.velocity = Vec3::from(state.velocity)
@@ -815,10 +830,19 @@ fn animate(
         state.acceleration = p.pose.acceleration;
         state.turn_rate += (p.pose.turn_rate - state.turn_rate) * alpha;
         let foot_alpha = 1.0 - (-time.delta_secs() * 18.0).exp();
+        let confirmed = p
+            .pose
+            .feet
+            .map(|foot| confirmed_root.transform_point(foot.into()));
+        let anchors = cache.world_foot_anchors.entry(p.id).or_insert(confirmed);
+        if p.pose.physical.is_some() || !p.pose.grounded || !p.alive {
+            *anchors = confirmed;
+        }
+        let inverse_rotation = root.rotation.inverse();
         for i in 0..2 {
-            state.feet[i] = Vec3::from(state.feet[i])
-                .lerp(p.pose.feet[i].into(), foot_alpha)
-                .into();
+            // Filter the contact independently of root motion and yaw.
+            anchors[i] = anchors[i].lerp(confirmed[i], foot_alpha);
+            state.feet[i] = (inverse_rotation * (anchors[i] - root.translation)).into();
             state.foot_weight[i] += (p.pose.foot_weight[i] - state.foot_weight[i]) * foot_alpha;
             state.foot_normal[i] = p.pose.foot_normal[i];
             let delta = p.pose.foot_yaw[i] - state.foot_yaw[i];
@@ -865,10 +889,6 @@ fn animate(
             }
         }
         if p.alive && p.pose.physical.is_none() {
-            let root = cache.roots.get(&p.id).copied().unwrap_or_else(|| {
-                Transform::from_translation(p.pos.into())
-                    .with_rotation(Quat::from_rotation_y(p.rot.yaw))
-            });
             for segment in SEGMENTS {
                 if p.body.anatomy.missing & (1 << segment.index()) == 0 {
                     cache.last_live.insert(
