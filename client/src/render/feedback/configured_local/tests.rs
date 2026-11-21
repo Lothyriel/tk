@@ -63,6 +63,7 @@ fn configured_local_inspect_frames_real_assembly_and_returns_continuously() {
                     .translation(),
             );
             let mut sides = [false; 2];
+            let mut side_range = [1.0_f32, -1.0_f32];
             for frame in 0..=fps * 4 {
                 let fraction = (frame as f32 / fps as f32 / 2.8).min(1.0);
                 {
@@ -76,9 +77,21 @@ fn configured_local_inspect_frames_real_assembly_and_returns_continuously() {
                 let world = f.app.world();
                 let response = &world.resource::<Feedback>().responses[&7];
                 let action = response.action.unwrap();
-                let side = (action.root.rotation * Vec3::NEG_Z).x;
-                sides[0] |= side > 0.45;
-                sides[1] |= side < -0.45;
+                let receiver = world
+                    .get::<GlobalTransform>(named(&f.app, f.root, "receiver"))
+                    .unwrap();
+                let eye = world
+                    .get::<GlobalTransform>(f.camera)
+                    .unwrap()
+                    .translation();
+                // Test the real receiver faces against the eye direction, not
+                // an assumed yaw angle: an external inspection also rolls it.
+                let side =
+                    (receiver.rotation() * Vec3::X).dot((eye - receiver.translation()).normalize());
+                sides[0] |= side > 0.15;
+                sides[1] |= side < -0.15;
+                side_range[0] = side_range[0].min(side);
+                side_range[1] = side_range[1].max(side);
                 assert_eq!(action.magazine_grip, 0.0);
                 assert_eq!(action.control_grip, 0.0);
                 assert_eq!(
@@ -105,7 +118,7 @@ fn configured_local_inspect_frames_real_assembly_and_returns_continuously() {
             }
             assert!(
                 sides.into_iter().all(|side| side),
-                "both receiver sides must be presented"
+                "both receiver sides must be presented: {side_range:?}"
             );
             assert!(
                 f.app.world().resource::<Feedback>().responses[&7]

@@ -14,6 +14,9 @@ pub(super) struct Sequence {
     pub ads_captures: u8,
     pub mechanism_captures: u8,
     observer_captures: u8,
+    inspect_captures: u8,
+    observer_inspect: bool,
+    inspect_ammo: Option<(u32, u32, bool)>,
     clock: Clock,
     selector: Selector,
     next_click: f64,
@@ -50,7 +53,7 @@ impl Sequence {
             magazine_size,
         } = *frame;
         assert!(
-            elapsed < 150.0,
+            elapsed < 180.0,
             "animation route timed out at {}",
             self.clock.value
         );
@@ -61,7 +64,7 @@ impl Sequence {
         if !self.started {
             return true;
         }
-        if self.clock.value >= 29.0 {
+        if self.clock.value >= 36.0 {
             input.weapon = EquipmentSlot::Primary;
             self.selector.select(input, local, catalog::FireMode::Safe);
             self.complete = Self::signalled(local) && other.is_some_and(Self::signalled);
@@ -98,6 +101,17 @@ impl Sequence {
                     local.pose.ads > 0.85 && (world_fov - 44.0).abs() < 2.0,
                 ),
                 (28.8, local.pose.ads < 0.08),
+                (
+                    29.2,
+                    local.mechanics.kind == Some(catalog::ManipulationKind::Inspect),
+                ),
+                (32.0, ready(local, Primary)),
+                (
+                    33.2,
+                    local.mechanics.kind == Some(catalog::ManipulationKind::Inspect),
+                ),
+                (33.9, ready(local, Primary) && local.pose.ads > 0.5),
+                (34.7, ready(local, Primary) && local.pose.ads < 0.08),
             ],
         );
         let t = self.clock.value;
@@ -111,7 +125,8 @@ impl Sequence {
         input.aim = (0.18..1.1).contains(&t)
             || (7.5..8.3).contains(&t)
             || (14.35..15.0).contains(&t)
-            || (26.8..28.6).contains(&t);
+            || (26.8..28.6).contains(&t)
+            || (33.6..34.2).contains(&t);
         if (2.0..5.5).contains(&t) && local.ammo_in_mag > 0 && elapsed >= self.next_click {
             input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
             self.next_click = elapsed + f64::from(local.weapon_id.spec().seconds_per_shot()) + 0.04;
@@ -140,6 +155,34 @@ impl Sequence {
                     self.pistol_before = local.ammo_in_mag;
                     input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
                 }
+            }
+        }
+        for (bit, at) in [(7, 29.0), (8, 33.0), (9, 33.6)] {
+            if t >= at && self.actions & (1 << bit) == 0 {
+                self.actions |= 1 << bit;
+                input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
+                self.inspect_ammo.get_or_insert((
+                    local.ammo_in_mag,
+                    local.reserve_ammo,
+                    local.mechanics.chambered,
+                ));
+            }
+        }
+        if let Some(before) = self.inspect_ammo {
+            assert_eq!(
+                (
+                    local.ammo_in_mag,
+                    local.reserve_ammo,
+                    local.mechanics.chambered
+                ),
+                before,
+                "inspect/ADS cancellation must preserve physical ammunition"
+            );
+            if t >= 34.7 {
+                assert!(
+                    local.mechanics.kind.is_none(),
+                    "blocked inspect replayed after ADS release"
+                );
             }
         }
         false
@@ -210,6 +253,17 @@ pub(super) fn drive(
                     );
                 }
             }
+            if other.mechanics.kind == Some(catalog::ManipulationKind::Inspect)
+                && (0.23..0.78).contains(&other.mechanics.fraction)
+                && !sequence.observer_inspect
+            {
+                sequence.observer_inspect = true;
+                capture(commands, "remote-primary-inspect");
+                info!(
+                    "REMOTE INSPECT EVIDENCE fraction={}",
+                    other.mechanics.fraction
+                );
+            }
         }
         if sequence.complete {
             assert_eq!(
@@ -220,6 +274,11 @@ pub(super) fn drive(
                 sequence.observer_captures, 0b1111,
                 "both remote weapons require ADS and reload evidence"
             );
+            assert_eq!(
+                sequence.inspect_captures, 0b11,
+                "both inspect sides require native evidence"
+            );
+            assert!(sequence.observer_inspect, "remote inspect must be observed");
         }
         return true;
     }
@@ -237,6 +296,24 @@ pub(super) fn drive(
     input.run = (15.0..16.0).contains(&t);
     // ADS_PROOF_BEGIN
     let fraction = local.mechanics.fraction;
+    if local.mechanics.kind == Some(catalog::ManipulationKind::Inspect) {
+        for (index, (range, name)) in [
+            (0.30..0.40, "primary-inspect-side-a"),
+            (0.76..0.85, "primary-inspect-side-b"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if range.contains(&fraction) && sequence.inspect_captures & (1 << index) == 0 {
+                sequence.inspect_captures |= 1 << index;
+                capture(commands, name);
+                info!(
+                    "INSPECT EVIDENCE {name} fraction={fraction} ammo={} reserve={}",
+                    local.ammo_in_mag, local.reserve_ammo
+                );
+            }
+        }
+    }
     let mechanism_index = if local.weapon == WeaponKind::Pistol {
         0
     } else {

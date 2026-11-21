@@ -164,27 +164,31 @@ pub(crate) fn assert_magwell_clear(world: &World, palm: Entity, lower: Entity, f
         let half = (max - min) * 0.5;
         for triangle in indices.as_chunks::<3>().0 {
             let p: [Vec3; 3] = std::array::from_fn(|i| points[triangle[i]] - centre);
-            let edges = [p[1] - p[0], p[2] - p[1], p[0] - p[2]];
-            // Triangle/box separating-axis test, including edge intersections:
-            // checking only vertices misses a thin wall crossing a finger face.
-            let separated = [Vec3::X, Vec3::Y, Vec3::Z, edges[0].cross(edges[1])]
-                .into_iter()
-                .chain(
-                    edges
-                        .into_iter()
-                        .flat_map(|edge| [Vec3::X, Vec3::Y, Vec3::Z].map(|axis| edge.cross(axis))),
-                )
-                .any(|axis| {
-                    let projections = p.map(|point| point.dot(axis));
-                    let radius = half.dot(axis.abs());
-                    projections.into_iter().fold(f32::INFINITY, f32::min) > radius
-                        || projections.into_iter().fold(f32::NEG_INFINITY, f32::max) < -radius
-                });
             assert!(
-                separated,
+                !triangle_intersects_box(p, half),
                 "support glove triangle penetrates magwell at {fraction}, weights={weights:?}, points={:?}",
                 p.map(|point| point + centre)
             );
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn triangle_intersects_box(p: [Vec3; 3], half: Vec3) -> bool {
+    let edges = [p[1] - p[0], p[2] - p[1], p[0] - p[2]];
+    // Box is centred at zero. Include edge axes: a finger face can cross a
+    // thin wall without any of its vertices being inside that wall.
+    ![Vec3::X, Vec3::Y, Vec3::Z, edges[0].cross(edges[1])]
+        .into_iter()
+        .chain(
+            edges
+                .into_iter()
+                .flat_map(|edge| [Vec3::X, Vec3::Y, Vec3::Z].map(|axis| edge.cross(axis))),
+        )
+        .any(|axis| {
+            let projections = p.map(|point| point.dot(axis));
+            let radius = half.dot(axis.abs());
+            projections.into_iter().fold(f32::INFINITY, f32::min) > radius
+                || projections.into_iter().fold(f32::NEG_INFINITY, f32::max) < -radius
+        })
 }
