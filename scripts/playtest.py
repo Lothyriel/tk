@@ -58,9 +58,10 @@ def main():
         parser.error("--viewport requires --pov")
     if args.pov_hz and args.pov != "stop-lean":
         parser.error("--pov-hz requires --pov stop-lean")
-    if args.pov and (args.animation_review or args.configure_weapons or args.video
+    if args.pov and (args.animation_review or args.configure_weapons
+                     or (args.video and (args.pov != "stop-lean" or args.clients != 1 or args.pov_hz))
                      or (args.clients == 2 and args.pov != "stop-lean")):
-        parser.error("--pov is standalone; only stop-lean supports a second client")
+        parser.error("--pov is standalone; only stop-lean supports a second client or solo video without --pov-hz")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
     assert args.weapon_debug or args.weapon_lod == "auto", "--weapon-lod requires --weapon-debug"
     assert not (args.configure_weapons and args.weapon_kit), "Panel acceptance must not seed server fixtures"
@@ -220,6 +221,8 @@ def main():
             settings["resolution"] = [width, height]
         settings["seconds_to_evidence"] = float(proof[1])
         (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        if args.video:
+            subprocess.run([sys.executable, str(root / "scripts/encode_playtest_video.py"), str(output)], check=True)
         result = f"PASS: native POV {args.pov}, real UDP, evidence at {proof[1]}s\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
