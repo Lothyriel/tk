@@ -196,6 +196,35 @@ pub(super) fn resolve_eye_lean(
     }
 }
 
+// Arena gameplay reference, not an adjustment to the rendered camera.
+const M4A1_GAME_ZERO: f32 = 20.0;
+
+fn shot_direction(
+    spec: &common::catalog::ResolvedWeapon,
+    rotation: Quat,
+    ads: f32,
+    dt: f32,
+) -> Vec3 {
+    let forward = rotation * Vec3::NEG_Z;
+    let weight = common::weapon_animation::ease(ads);
+    if weight == 0.0 || spec.definition != WeaponId::M4A1 {
+        return forward;
+    }
+    let outlet = common::weapon_animation::resolved_muzzle_offset(spec, 1.0);
+    let to_target = rotation * (Vec3::NEG_Z * M4A1_GAME_ZERO - outlet);
+    let mut offset = to_target;
+    for _ in 0..3 {
+        let t = offset.length() / spec.muzzle_speed;
+        // Flight updates velocity before moving. Interpolate the gravity
+        // displacement on the same piecewise-linear path as the ray casts.
+        let ticks = t / dt;
+        let whole = ticks.floor();
+        let drop = PROJECTILE_GRAVITY * dt * dt * (whole + 1.0) * (whole * 0.5 + ticks.fract());
+        offset = to_target + Vec3::Y * drop;
+    }
+    forward.lerp(offset.normalize(), weight).normalize()
+}
+
 pub(super) fn weapons_tick(
     mut commands: Commands,
     time: Res<Time>,
@@ -248,15 +277,12 @@ pub(super) fn weapons_tick(
             ..input.camera
         });
         let rotation = Quat::from(&camera);
-        let direction = rotation * -Vec3::Z;
+        let spec = arsenal.current().spec();
+        let direction = shot_direction(spec, rotation, pose.ads, time.delta_secs());
         let eye = neutral_eye(transform, movement)
             + transform.rotation * common::humanoid::aim_lean_offset(pose.aim_roll);
-        let muzzle = eye
-            + rotation
-                * common::weapon_animation::resolved_muzzle_offset(
-                    arsenal.current().spec(),
-                    pose.ads,
-                );
+        let muzzle =
+            eye + rotation * common::weapon_animation::resolved_muzzle_offset(spec, pose.ads);
         // Resolve actual eye-to-muzzle contacts in projectiles_tick. A broad
         // movement capsule must neither redirect a clear offset ray to the eye
         // nor let the device outlet spawn beyond real anatomy/concrete at point blank.
@@ -266,7 +292,7 @@ pub(super) fn weapons_tick(
             Projectile {
                 id,
                 weapon,
-                velocity: direction * arsenal.current().spec().muzzle_speed,
+                velocity: direction * spec.muzzle_speed,
                 damage: arsenal.loadout.ammo.damage(arsenal.current().spec()),
                 penetration: arsenal.loadout.ammo.penetration(arsenal.current().spec()),
                 lifetime: PROJECTILE_LIFETIME,
