@@ -260,9 +260,17 @@ pub fn evaluate_pose_with_action(
     let stride = (speed / 5.5).clamp(0.0, 1.0);
     let crouch = state.crouch.clamp(0.0, 1.0);
     let bob = (phase * 2.0).cos() * 0.022 * stride;
+    // Lead the next support by about 5% of a stride cycle. This shifts
+    // the pelvis inside the stance, without moving either world contact.
+    let support_shift = if state.grounded && !falling {
+        let amplitude = 0.035 * (speed / crate::PLAYER_WALK_SPEED).min(1.0);
+        -(phase + 0.32).sin() * amplitude * (1.0 - 0.25 * crouch)
+    } else {
+        0.0
+    };
     // Actor root already lowers 0.3 m with the KCC capsule. Knees make up the remaining bend.
     let hip = Vec3::new(
-        state.lean[0] * 0.07,
+        state.lean[0] * 0.07 + support_shift,
         -0.23 + bob - crouch * 0.04 - state.landing * 0.05,
         state.lean[1] * 0.06,
     );
@@ -602,6 +610,53 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn pelvis_transfers_toward_the_next_support_without_moving_planted_feet() {
+        let mut state = PoseState {
+            grounded: true,
+            velocity: [0.0, 0.0, -3.25],
+            feet: [[-0.13, -0.84, -0.12], [0.13, -0.84, 0.12]],
+            foot_weight: [1.0; 2],
+            foot_normal: [[0.0, 1.0, 0.0]; 2],
+            ..default()
+        };
+        let mut previous_x: Option<f32> = None;
+        for sample in 0..=128 {
+            state.phase = std::f32::consts::TAU * sample as f32 / 128.0;
+            let rig = evaluate_pose(&state, 1.0, 1.0);
+            let x = rig[Segment::Pelvis.index()].position[0];
+            if let Some(previous) = previous_x {
+                assert!((x - previous).abs() < 0.003);
+            }
+            previous_x = Some(x);
+            if sample == 20 || sample == 84 {
+                let sign = if sample == 20 { -1.0 } else { 1.0 };
+                assert!(x * sign > 0.015, "pelvis did not load its support: {x}");
+            }
+            if sample == 60 || sample == 124 {
+                let sign = if sample == 60 { 1.0 } else { -1.0 };
+                assert!(
+                    x * sign > 0.002,
+                    "pelvis did not lead the next contact: {x}"
+                );
+            }
+            for (i, segment) in [Segment::LeftFoot, Segment::RightFoot]
+                .into_iter()
+                .enumerate()
+            {
+                assert!(
+                    Vec3::from(rig[segment.index()].position).distance(state.feet[i].into())
+                        < 0.001
+                );
+            }
+        }
+        state.velocity = [0.0; 3];
+        assert_eq!(
+            evaluate_pose(&state, 1.0, 1.0)[Segment::Pelvis.index()].position[0],
+            0.0
+        );
+    }
+
     #[test]
     fn planted_feet_remain_at_contacts_through_turns_steps_and_landing() {
         for crouch in [0.0, 1.0] {
