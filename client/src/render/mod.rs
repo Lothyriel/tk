@@ -11,6 +11,7 @@ pub(crate) mod actors;
 mod blood;
 mod destruction;
 pub(crate) mod feedback;
+pub(crate) mod shot_audio;
 pub(crate) mod voxel;
 mod weapons;
 
@@ -23,6 +24,7 @@ impl bevy::prelude::Plugin for Plugin {
         app.add_plugins(blood::Plugin);
         app.add_plugins(destruction::Plugin);
         app.add_plugins(feedback::Plugin);
+        app.add_plugins(shot_audio::Plugin);
         app.add_plugins((voxel::Plugin, voxel::debug::Plugin));
         let startup_systems = (
             spawn_view_model,
@@ -238,6 +240,7 @@ fn world_camera() -> impl Bundle {
         LocalView,
         BaseLocalOffset(Vec3::ZERO),
         WorldModelCamera,
+        bevy::audio::SpatialListener::new(0.18),
         Camera3d::default(),
         Msaa::Off,
         bevy::pbr::ScreenSpaceAmbientOcclusion {
