@@ -47,6 +47,7 @@ impl bevy::prelude::Plugin for Plugin {
                     live_body::begin_falls,
                     live_body::advance,
                     physx_tick,
+                    simulation::resolve_eye_lean,
                     weapons_tick,
                     sync_actor_colliders,
                 )

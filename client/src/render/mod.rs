@@ -622,12 +622,15 @@ fn sync_local_view(
     player_input: Res<LocalInput>,
     feedback: Option<Res<feedback::Feedback>>,
     id: Option<Res<PlayerId>>,
-    session: Option<Res<ClientSession>>,
-    time: Option<Res<Time<Real>>>,
-    view_settings: Option<Res<ViewSettings>>,
+    presentation: (
+        Option<Res<ClientSession>>,
+        Option<Res<Time<Real>>>,
+        Option<Res<ViewSettings>>,
+    ),
     player_visual_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     mut query: Query<(&BaseLocalOffset, &mut Transform), With<LocalView>>,
 ) {
+    let (session, time, view_settings) = presentation;
     let camera = match (feedback, id) {
         (Some(feedback), Some(id)) => feedback.camera(id.0, player_input.camera),
         _ => player_input.camera,
@@ -650,12 +653,14 @@ fn sync_local_view(
         )
     });
     let vertical_offset = crouch * PLAYER_CROUCH_VIEW_OFFSET;
-    let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, camera.roll);
+    let lean = motion.map_or(player_input.camera.roll, |pose| pose.roll);
+    let recoil_roll = camera.roll - player_input.camera.roll;
+    let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, lean + recoil_roll);
 
     for (base_offset, mut transform) in query.iter_mut() {
         transform.rotation = rotation;
         transform.translation = base_offset.0
-            + common::humanoid::aim_lean_offset(player_input.camera.roll)
+            + common::humanoid::aim_lean_offset(lean)
             + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset + bob);
     }
 }

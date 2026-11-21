@@ -394,11 +394,18 @@ fn drive(
             let visual_settled = visual_ready
                 && now - *driver.pov_visual_since.get_or_insert(now) >= pov::VIEW_WARMUP_SECONDS;
             let ready = local.pose.grounded && visual_settled;
-            let capture_roll = local.pose.aim_roll;
             let name = match preset.as_str() {
                 "ads" => driver.pov_ads.advance(elapsed, ready, ads, world_fov),
                 "inspect" => driver.pov_inspect.advance(elapsed, ready, local.mechanics),
-                "stop-lean" => driver.pov_stop_lean.advance(elapsed, ready, local),
+                "stop-lean" => {
+                    // The capture runs after Present; allow the interpolation
+                    // buffer to catch up before taking a static stance/roll cue.
+                    let settled = session.local_motion.sample(now).is_some_and(|pose| {
+                        (pose.roll - local.pose.aim_roll).abs() < 0.01
+                            && (pose.crouch - f32::from(u8::from(local.crouched))).abs() < 0.01
+                    });
+                    driver.pov_stop_lean.advance(elapsed, ready && settled, local)
+                }
                 _ => panic!("Unknown POV preset: {preset}"),
             }
             .unwrap_or_else(|error| {
@@ -426,11 +433,6 @@ fn drive(
             }
             if preset == "stop-lean" {
                 driver.pov_stop_lean.input(&mut input);
-                if name.is_some() {
-                    // Present runs after Input in this frame. Do not replace
-                    // the confirmed roll with the next cue before readback.
-                    input.camera.roll = capture_roll;
-                }
             }
             if (driver.pov_ads == pov::Ads::Finish
                 || driver.pov_inspect == pov::Inspect::Finish
