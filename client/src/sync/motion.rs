@@ -291,6 +291,61 @@ mod tests {
     }
 
     #[test]
+    fn local_camera_motion_replays_the_same_brake_and_lean_at_30_and_165_hz() {
+        use super::{INTERPOLATION_DELAY, LocalMotion, LocalMotionPose};
+
+        // Replay identical confirmed samples; unlike the native live route,
+        // render cadence cannot change when authority receives the brake cue.
+        let path = |t: f32| {
+            let braking = (t - 0.5).clamp(0.0, 0.5);
+            let z = -(5.5 * t.min(0.5) + 5.5 * braking - 5.5 * braking * braking);
+            let roll = if t < 1.5 {
+                0.6 * (t - 1.0).max(0.0)
+            } else if t < 2.5 {
+                0.3 - 0.6 * (t - 1.5)
+            } else {
+                (-0.3 + 0.6 * (t - 2.5)).min(0.0)
+            };
+            (z, roll)
+        };
+        for fps in [30, 165] {
+            let mut motion = LocalMotion::default();
+            let mut next_sample = 0;
+            let mut last_roll = 0.0_f32;
+            for frame in 0..=fps * 4 {
+                let now = f64::from(frame) / f64::from(fps);
+                while f64::from(next_sample) / 60.0 <= now {
+                    let stamp = f64::from(next_sample) / 60.0;
+                    let (z, roll) = path(stamp as f32);
+                    motion.record(
+                        stamp as f32,
+                        LocalMotionPose {
+                            position: Vec3::new(0.0, 1.0, z),
+                            crouch: 0.0,
+                            stride_phase: 0.0,
+                            stride_speed: 0.0,
+                            ads: 0.0,
+                            roll,
+                        },
+                        stamp,
+                        false,
+                    );
+                    next_sample += 1;
+                }
+                let sample = motion.sample(now).unwrap();
+                let (expected_z, expected_roll) = path((now - INTERPOLATION_DELAY).max(0.0) as f32);
+                // Linear interpolation of a constant-acceleration segment
+                // contributes at most a * snapshot_dt² / 8 (< 0.4 mm).
+                assert!((sample.position.z - expected_z).abs() < 0.0004);
+                assert!((sample.roll - expected_roll).abs() < 0.00001);
+                assert!((sample.roll - last_roll).abs() <= 0.6 / fps as f32 + 0.00001);
+                last_roll = sample.roll;
+            }
+            assert_eq!(last_roll, 0.0);
+        }
+    }
+
+    #[test]
     fn local_camera_motion_samples_the_confirmed_3d_path_with_a_50ms_delay() {
         use super::{LocalMotion, LocalMotionPose};
         let mut motion = LocalMotion::default();
