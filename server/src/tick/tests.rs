@@ -1325,6 +1325,42 @@ fn next_deploy_restores_separated_anatomy_and_clears_fragments_corpses_and_effec
 }
 
 #[test]
+fn walk_start_does_not_replace_a_still_loaded_anchor() {
+    use common::humanoid::PoseState;
+    let (mut app, player, _) = physical_fixture();
+    let contacts = |app: &App| {
+        let root = app.world().get::<Transform>(player).unwrap();
+        let pose = app.world().get::<PoseState>(player).unwrap();
+        [0, 1].map(|i| {
+            (
+                pose.foot_weight[i],
+                root.transform_point(pose.feet[i].into()),
+            )
+        })
+    };
+    let mut before = contacts(&app);
+    assert!(before.iter().all(|(weight, _)| *weight > 0.95));
+    app.world_mut()
+        .get_mut::<ClientInput>(player)
+        .unwrap()
+        .forward = true;
+    let mut loaded = 0;
+    for _ in 0..64 {
+        held_steps(&mut app, player, 1);
+        let after = contacts(&app);
+        for ((wa, a), (wb, b)) in before.into_iter().zip(after) {
+            if wa > 0.8 && wb > 0.8 {
+                let drift = a.distance(b);
+                assert!(drift < 0.01, "loaded anchor jumped {drift:.3} m");
+                loaded += 1;
+            }
+        }
+        before = after;
+    }
+    assert!(loaded > 20);
+}
+
+#[test]
 fn walking_onto_a_low_step_acquires_a_supported_foot() {
     use common::humanoid::{PoseState, Segment, evaluate_pose};
     let (mut app, player, _) = physical_fixture();
