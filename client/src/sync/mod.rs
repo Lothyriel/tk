@@ -215,6 +215,15 @@ fn recv_players_pos(
                 motion::LocalMotionPose {
                     position: player.pos.into(),
                     crouch: f32::from(u8::from(player.crouched)),
+                    stride_phase: player.pose.phase,
+                    stride_speed: if player.pose.grounded
+                        && player.pose.mode == common::humanoid::PhysicalMode::Standing
+                    {
+                        player.pose.velocity[0].hypot(player.pose.velocity[2])
+                    } else {
+                        0.0
+                    },
+                    ads: player.pose.ads,
                 },
                 time.elapsed_secs_f64(),
                 reset,

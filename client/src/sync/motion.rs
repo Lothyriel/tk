@@ -17,6 +17,9 @@ struct Sample {
 pub(crate) struct LocalMotionPose {
     pub position: Vec3,
     pub crouch: f32,
+    pub stride_phase: f32,
+    pub stride_speed: f32,
+    pub ads: f32,
 }
 
 /// Presentation history only. Gameplay/HUD retain the newest authoritative session.
@@ -57,9 +60,18 @@ impl LocalMotion {
             if time <= next.time {
                 let alpha =
                     ((time - previous.time) / (next.time - previous.time)).clamp(0.0, 1.0) as f32;
+                use std::f32::consts::{PI, TAU};
+                let phase_delta =
+                    (next.pose.stride_phase - previous.pose.stride_phase + PI).rem_euclid(TAU) - PI;
                 return Some(LocalMotionPose {
                     position: previous.pose.position.lerp(next.pose.position, alpha),
                     crouch: previous.pose.crouch.lerp(next.pose.crouch, alpha),
+                    stride_phase: previous.pose.stride_phase + phase_delta * alpha,
+                    stride_speed: previous
+                        .pose
+                        .stride_speed
+                        .lerp(next.pose.stride_speed, alpha),
+                    ads: previous.pose.ads.lerp(next.pose.ads, alpha),
                 });
             }
             previous = next;
@@ -283,10 +295,16 @@ mod tests {
         let standing = LocalMotionPose {
             position: Vec3::new(0.0, 1.0, 0.0),
             crouch: 0.0,
+            stride_phase: std::f32::consts::TAU - 0.2,
+            stride_speed: 3.0,
+            ads: 0.0,
         };
         let crouched = LocalMotionPose {
             position: Vec3::new(2.0, 0.7, -1.0),
             crouch: 1.0,
+            stride_phase: 0.2,
+            stride_speed: 0.0,
+            ads: 1.0,
         };
         motion.record(1.0, standing, 10.0, false);
         motion.record(1.04, crouched, 10.04, false);
@@ -298,6 +316,10 @@ mod tests {
                         + sample.crouch * common::PLAYER_CROUCH_VIEW_OFFSET)
         };
         assert!((motion.sample(10.07).unwrap().crouch - 0.5).abs() < 0.00001);
+        let middle = motion.sample(10.07).unwrap();
+        assert!((middle.stride_phase - std::f32::consts::TAU).abs() < 0.00001);
+        assert!((middle.stride_speed - 1.5).abs() < 0.00001);
+        assert!((middle.ads - 0.5).abs() < 0.00001);
         assert!(eye(10.07).distance(eye(10.0).lerp(eye(20.0), 0.5)) < 0.00001);
         assert_eq!(motion.sample(10.0).unwrap().position, standing.position);
         assert_eq!(motion.sample(20.0).unwrap().position, crouched.position);
