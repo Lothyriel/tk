@@ -17,11 +17,17 @@ class GaitMetricsTests(unittest.TestCase):
                 writer = csv.writer(stream)
                 writer.writerow(fields)
                 for i in range(32):
+                    weight = {1: 0.98, 17: 0.98}.get(i, 1.0)
                     writer.writerow([
                         i / 60, i, 3.25 if i < 16 else 5.5,
-                        1.0, i * 0.001, 0, 0, 0.1, i, 0, 0,
+                        weight, i * 0.001, 0, 0, 0.1, i, 0, 0,
                     ])
             metrics = gait_metrics(path)
             for speed in ("walk", "run"):
                 self.assertEqual(metrics[speed]["loaded_pairs"], 15)
                 self.assertAlmostEqual(metrics[speed]["max_displacement_m"], 0.001)
+                transitions = metrics[speed]["by_weight_transition"]
+                self.assertEqual(
+                    {phase: metrics["pairs"] for phase, metrics in transitions.items()},
+                    {"loading": 1, "steady": 13, "releasing": 1},
+                )
