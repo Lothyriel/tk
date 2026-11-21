@@ -908,6 +908,67 @@ mod view_tests {
     }
 
     #[test]
+    fn local_cameras_use_confirmed_lean_without_delaying_mouse_look() {
+        let mut app = App::new();
+        let mut session = ClientSession::default();
+        session.local_motion.record(
+            1.0,
+            crate::sync::LocalMotionPose {
+                position: Vec3::ZERO,
+                crouch: 1.0,
+                stride_phase: 0.0,
+                stride_speed: 0.0,
+                ads: 0.0,
+                roll: 0.22,
+            },
+            0.0,
+            false,
+        );
+        app.add_plugins(TransformPlugin)
+            .insert_resource(session)
+            .init_resource::<Time<Real>>()
+            .init_resource::<LocalInput>()
+            .add_systems(Update, (sync_local_player_rotation, sync_local_view));
+        let root = app
+            .world_mut()
+            .spawn((
+                LocalPlayer,
+                PlayerVisualState::default(),
+                Transform::default(),
+            ))
+            .id();
+        let cameras = [0, 1].map(|_| {
+            app.world_mut()
+                .spawn((
+                    LocalView,
+                    BaseLocalOffset(Vec3::ZERO),
+                    Transform::default(),
+                    ChildOf(root),
+                ))
+                .id()
+        });
+
+        // No fresh packet arrives as the player turns; requested roll has
+        // already reversed but neither rendered camera may use that request.
+        for (yaw, pitch) in [(0.0, 0.0), (0.38, -0.21)] {
+            app.world_mut().resource_mut::<LocalInput>().camera = common::CameraInput {
+                yaw,
+                pitch,
+                roll: -0.3,
+            };
+            app.update();
+            let expected = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.22);
+            let eye = Quat::from_rotation_y(yaw)
+                * Vec3::new(-0.154, PLAYER_VIEW_HEIGHT + PLAYER_CROUCH_VIEW_OFFSET, 0.0);
+            for camera in cameras {
+                let transform = app.world().get::<GlobalTransform>(camera).unwrap();
+                assert!(transform.rotation().dot(expected).abs() > 0.99999);
+                assert!(transform.translation().distance(eye) < 0.00001);
+            }
+        }
+    }
+
+    #[test]
     fn budget_fallback_fall_and_getup_lower_sights_restore_fov_and_hide_the_weapon() {
         use common::humanoid::PhysicalMode;
         for mode in [PhysicalMode::Fallen, PhysicalMode::Recovering] {

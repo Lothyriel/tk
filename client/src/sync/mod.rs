@@ -11,6 +11,8 @@ use common::raid::{RaidPhase, RaidState, RaidStatus};
 
 pub(crate) mod cover;
 mod motion;
+#[cfg(test)]
+pub(crate) use motion::LocalMotionPose;
 
 #[derive(Debug, Default, Resource)]
 pub(crate) struct ClientSession {
