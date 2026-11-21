@@ -60,7 +60,7 @@ pub fn posture(
     cover: Option<f32>,
 ) -> Result<Posture, HandlingError> {
     let chest = Vec3::from(segments[Segment::Thorax.index()].position);
-    let preferred_root = preferred_root(state, chest, contacts.trigger, action);
+    let mut preferred_root = preferred_root(state, chest, contacts.trigger, action);
     let ads = if contacts.stock.is_some() && cover.is_some() {
         state.ads.clamp(0.0, 1.0)
     } else {
@@ -68,7 +68,18 @@ pub fn posture(
     };
     // Turn before closing the pocket: a square torso cannot reach the long
     // foregrip with the stock fixed to the shoulder.
-    let (turn, brace) = brace_weights(ads);
+    let (mut turn, brace) = brace_weights(ads);
+    if let (Some(stock), Some(_)) = (contacts.stock, cover) {
+        // Keep the receiver/stock beside the chest while unbraced. A square
+        // torso and centred hip grip put the buffer tube through its voxels.
+        turn = 1.0;
+        preferred_root.translation +=
+            Quat::from_rotation_x(state.aim_pitch) * Vec3::new(0.30, 0.0, -0.04) * (1.0 - ads);
+        let stock_from_trigger = stock.translation - contacts.trigger.translation;
+        preferred_root.translation += (Quat::from_rotation_x(state.aim_pitch) * stock_from_trigger
+            - preferred_root.rotation * stock_from_trigger)
+            * (1.0 - ads);
+    }
     let thorax = segments[Segment::Thorax.index()].transform();
     let target_rotation = Quat::from_rotation_x(state.aim_pitch)
         * thorax.rotation
