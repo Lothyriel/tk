@@ -406,6 +406,19 @@ fn spawn_world_model(
         ));
     }
     let full = materials.add(Color::srgb(1.0, 0.38, 0.045));
+    if common::map::pov_fixture() {
+        let step = common::map::POV_STEP;
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::from_size(Vec3::from(step.half_size) * 2.0))),
+            MeshMaterial3d(concrete.clone()),
+            Transform::from_translation(Vec3::from(step.center)),
+        ));
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(0.10, 0.10, 0.012))),
+            MeshMaterial3d(full.clone()),
+            Transform::from_translation(Vec3::from(common::map::POV_MARKER)),
+        ));
+    }
     let empty = materials.add(Color::srgb(0.27, 0.25, 0.22));
     for (i, position) in LOOT_POSITIONS.into_iter().enumerate() {
         let band_mesh = meshes.add(Cuboid::new(1.12, 0.06, 1.12));

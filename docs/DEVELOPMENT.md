@@ -75,8 +75,10 @@ python scripts/verify.py --package client --filter playtest::pov
 Use `--pov ads` para mirar e soltar, ou `--pov inspect` para confirmar início e
 retorno da inspeção. O preset `stop-lean` caminha, corre e freia diante da
 barreira baixa de concreto, agacha e inclina para ambos os lados. Os comandos
-passam pelo cliente e servidor UDP normais. A bancada solo não substitui o
-observador remoto nem o gate de rede. Os NPCs da raid continuam ativos.
+passam pelo cliente e servidor UDP normais. Somente com `--pov`, o cenário
+inclui um degrau estático e um marcador fixo na barreira, sem NPCs que possam
+alterar a pose por dano. A bancada solo não substitui o observador remoto nem
+o gate de rede.
 
 Compare capturas de diretórios separados com o mesmo kit e viewport. Confira
 `run-settings.json` para hashes dos binários e projeções e `client.log` para

@@ -9,6 +9,22 @@ pub const LOOT_POSITIONS: [[f32; 3]; 3] =
     [[-4.0, 0.55, 0.0], [4.0, 0.55, -6.0], [0.0, 0.55, -13.0]];
 pub const BOT_POSITIONS: [[f32; 3]; 2] = [[0.0, 1.05, -10.0], [8.0, 1.05, -6.0]];
 
+/// Static geometry for the opt-in POV fixture. Offset from the straight
+/// approach so the step stays visible without changing the braking surface.
+pub const POV_STEP: MapBlock = MapBlock {
+    center: [-0.95, 0.19, -1.75],
+    half_size: [0.35, 0.09, 0.32],
+    surface: SurfaceKind::Concrete,
+};
+pub const POV_MARKER: [f32; 3] = [0.0, 1.02, -2.392];
+
+pub fn pov_fixture() -> bool {
+    matches!(
+        std::env::var("TK_PLAYTEST_POV").as_deref(),
+        Ok("ads" | "inspect" | "stop-lean")
+    )
+}
+
 pub struct MapBlock {
     pub center: [f32; 3],
     pub half_size: [f32; 3],

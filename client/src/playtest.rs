@@ -354,7 +354,10 @@ fn drive(
                     .map(|part| part.definition.0)
                     .collect::<Vec<_>>()
             );
-            assert_eq!(session.players.iter().filter(|p| p.bot).count(), 2);
+            assert_eq!(
+                session.players.iter().filter(|p| p.bot).count(),
+                if pov_fixture() { 0 } else { 2 }
+            );
             capture(&mut commands, "raid");
             driver.advance(
                 if std::env::var_os("TK_PLAYTEST_POV").is_some() {
