@@ -193,4 +193,111 @@ mod tests {
         assert!(project(Vec3::new(0.0095, 0.0, 0.21), MIN, MAX).is_none());
         assert!(project(Vec3::new(0.0, 0.0, 0.04), MIN, MAX).is_none());
     }
+
+    #[test]
+    fn dot_sight_projects_authored_optic_at_different_viewport_aspects() {
+        use bevy::camera::CameraProjection;
+        use common::catalog::{AnchorKind, Attachment, DefinitionId, authored_rig, catalog};
+
+        let catalog = catalog();
+        let mut config = catalog.configuration(common::WeaponId::M4A1).unwrap();
+        let mut compact = config.clone();
+        for part in &mut compact.components {
+            if let Some(definition) = match part.node {
+                1 => Some(120),
+                2 => Some(122),
+                3 => Some(124),
+                4 => Some(126),
+                _ => None,
+            } {
+                part.definition = DefinitionId(definition);
+            }
+        }
+        let irons = catalog.resolve(&compact).unwrap().assembly;
+        config.components.extend([
+            Attachment {
+                node: 9,
+                definition: DefinitionId(132),
+                parent: None,
+                socket: "top".into(),
+                position: 3,
+            },
+            Attachment {
+                node: 10,
+                definition: DefinitionId(133),
+                parent: Some(9),
+                socket: "optic".into(),
+                position: 0,
+            },
+        ]);
+        let spec = catalog.resolve(&config).unwrap();
+        let part = spec
+            .assembly
+            .parts
+            .iter()
+            .find(|part| part.node == 10)
+            .unwrap();
+        let rig = authored_rig("m4a1_pro").unwrap();
+        let optic = spec.assembly.ads_from_root * part.pose;
+        let axis = optic * rig.sockets["sight.axis"].transform();
+        let to_axis = axis.to_matrix().inverse();
+        let corner = |label: &str| {
+            to_axis.transform_point3((optic * rig.sockets[label].transform()).translation)
+        };
+        let min = corner("sight.aperture_min");
+        let max = corner("sight.aperture_max");
+        let to_view = axis.to_matrix();
+        let centered_eye = to_axis.transform_point3(Vec3::ZERO);
+        let mut app = App::new();
+        let camera = app
+            .world_mut()
+            .spawn(super::super::view_model_camera())
+            .id();
+        let Projection::Perspective(base) = app.world().get::<Projection>(camera).unwrap() else {
+            panic!("expected the production perspective lens");
+        };
+        assert!((base.fov.to_degrees() - 65.0).abs() < 1e-4);
+        assert_eq!(base.near, 0.1);
+        for (width, height) in [(1200.0, 600.0), (900.0, 700.0), (600.0, 900.0)] {
+            let mut lens = base.clone();
+            lens.update(width, height);
+            let clip = lens.get_clip_from_view();
+            let ndc = |p: Vec3| {
+                let p = clip * p.extend(1.0);
+                p.truncate() / p.w
+            };
+            for anchor in [AnchorKind::RearIron, AnchorKind::FrontIron] {
+                let sight = ndc(irons
+                    .ads_from_root
+                    .transform_point(irons.anchors[&anchor].translation));
+                assert!(sight.truncate().length() < 0.004, "iron off centre");
+                assert!((0.0..=1.0).contains(&sight.z), "iron clipped");
+            }
+            for roll in [-0.3, 0.3] {
+                // Roll both the camera and the rig, then add a relative angular
+                // offset to make a hardcoded centre dot fail the comparison.
+                let roll = Quat::from_rotation_z(roll);
+                let aim = roll * Quat::from_rotation_y(0.055);
+                let direction = roll.inverse() * (aim * (axis.rotation * Vec3::NEG_Z));
+                let expected = ndc(direction).truncate();
+                assert!(expected.length() > 0.02);
+                for shift in [0.0, 0.007, -0.007] {
+                    let eye = centered_eye + Vec3::new(shift, -0.5 * shift, 0.0);
+                    let point = project(eye, min, max).unwrap();
+                    let view =
+                        |local| roll.inverse() * (aim * to_view.transform_vector3(local - eye));
+                    let projected = ndc(view(point));
+                    assert!(projected.truncate().distance(expected) < 1e-5);
+                    assert!((0.0..=1.0).contains(&projected.z), "dot clipped");
+                    // A decal glued to the lens would slide on screen as the eye moves.
+                    if shift != 0.0 {
+                        let decal = ndc(view(Vec3::new(0.0, 0.0, min.z)));
+                        assert!(projected.truncate().distance(decal.truncate()) > 0.01);
+                    }
+                }
+                assert!(project(centered_eye.with_x(max.x + 0.001), min, max).is_none());
+                assert!(project(centered_eye.with_x(min.x - 0.001), min, max).is_none());
+            }
+        }
+    }
 }
