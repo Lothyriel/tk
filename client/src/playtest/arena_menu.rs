@@ -125,7 +125,7 @@ struct Route {
     step: Step,
     since: f64,
     release: Option<KeyCode>,
-    release_mouse: bool,
+    release_mouse: Option<Vec2>,
     moved_mouse: bool,
     first_raid: Option<u32>,
     checked_return_focus: bool,
@@ -193,6 +193,7 @@ fn drive(
     widgets: Widgets,
     layout: Query<&UiGlobalTransform, With<Button>>,
     text: Query<&Text>,
+    editor: Res<crate::loadout::Editor>,
     (mut keyboard, mut mouse, mut window_events): KeysAndMouse,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -202,18 +203,26 @@ fn drive(
     let step = route.step;
     assert!(
         now - route.since < if step == Leave { 90.0 } else { 12.0 },
-        "Arena menu probe {probe:?} timed out at {step:?}. Use an Arena-capable build, a fresh solo server and a focused client."
+        "Arena menu probe {probe:?} timed out at {step:?}; workbench visible={}; target={:?}. Use an Arena-capable build, a fresh solo server and a focused client.",
+        editor.visible,
+        step.label()
+            .and_then(|label| presented_button(&widgets, &text, label)),
     );
     if let Some(key) = route.release.take() {
         keyboard.write(key_event(window_id, key, ButtonState::Released));
         return;
     }
-    if std::mem::take(&mut route.release_mouse) {
+    if let Some(position) = route.release_mouse.take() {
         let release = MouseButtonInput {
             button: MouseButton::Left,
             state: ButtonState::Released,
             window: window_id,
         };
+        window_events.write(WindowEvent::CursorMoved(CursorMoved {
+            window: window_id,
+            position,
+            delta: None,
+        }));
         mouse.write(release);
         window_events.write(WindowEvent::MouseButtonInput(release));
         return;
@@ -316,13 +325,21 @@ fn drive(
     assert!(menu.owns_input());
     assert_eq!(cursor.grab_mode, CursorGrabMode::None);
     if probe.mouse(step) {
+        let transform = layout.get(target).expect("laid-out menu button");
+        let position = (*transform * Vec2::ZERO) / window.scale_factor();
+        // Window events from the compositor may move the pointer between
+        // frames. Associate both synthetic button edges with the intended
+        // coordinates, while still using the real picking backend.
+        window_events.write(WindowEvent::CursorMoved(CursorMoved {
+            window: window_id,
+            position,
+            delta: None,
+        }));
         if !route.moved_mouse {
-            let transform = layout.get(target).expect("laid-out menu button");
-            window_events.write(WindowEvent::CursorMoved(CursorMoved {
-                window: window_id,
-                position: (*transform * Vec2::ZERO) / window.scale_factor(),
-                delta: None,
-            }));
+            debug!(
+                "ARENA MENU PROBE pointer {step:?} target={target:?} position={position:?} window={:?}",
+                window.size()
+            );
             route.moved_mouse = true;
             return;
         }
@@ -334,7 +351,7 @@ fn drive(
         mouse.write(press);
         window_events.write(WindowEvent::MouseButtonInput(press));
         route.moved_mouse = false;
-        route.release_mouse = true;
+        route.release_mouse = Some(position);
     } else {
         let focused = menu.focused_widget() == Some(target);
         if focused {
