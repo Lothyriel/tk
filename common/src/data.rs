@@ -22,6 +22,13 @@ pub fn renet_config() -> ConnectionConfig {
     };
     config.server_channels_config.push(channel.clone());
     config.client_channels_config.push(channel);
+    let inventory = ChannelConfig {
+        channel_id: crate::replication::inventory::CHANNEL,
+        max_memory_usage_bytes: 64 * 1024,
+        send_type: SendType::ReliableOrdered {
+            resend_time: std::time::Duration::from_millis(100),
+        },
+    };
     config.server_channels_config.push(ChannelConfig {
         channel_id: crate::replication::shots::SHOT_CHANNEL,
         max_memory_usage_bytes: 2 * 1024 * 1024,
@@ -56,6 +63,10 @@ pub fn renet_config() -> ConnectionConfig {
             2 => 1,
             _ => 2,
         });
+    // Append after sorting so private resync never queues ahead of existing
+    // input/control or the global snapshot in either direction.
+    config.server_channels_config.push(inventory.clone());
+    config.client_channels_config.push(inventory);
     config
 }
 

@@ -55,7 +55,7 @@ pub struct Area {
     bottom: u16,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum PlacementError {
     OutsideGrid,
     Occupied,
