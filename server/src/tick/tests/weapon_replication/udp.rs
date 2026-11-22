@@ -326,15 +326,25 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     assert_eq!(removals[0][0].items[0].id, item.id);
     assert!(removals[0][0].items[0].item.is_none());
     let public = drain(&mut late);
-    let [update] = public.as_slice() else {
-        panic!("expected one public ground update: {public:?}")
-    };
-    let UpdateBody::Ground(dropped) = &update.body else {
-        panic!("expected ground update")
-    };
-    assert_eq!(dropped.len(), items.len());
-    let dropped = &dropped[0];
-    assert_eq!((dropped.id, dropped.seed), (item.id, item.seed));
+    let trajectory: Vec<_> = public
+        .iter()
+        .map(|update| {
+            let UpdateBody::Ground(dropped) = &update.body else {
+                panic!("expected only public ground updates");
+            };
+            assert_eq!(dropped.len(), items.len());
+            assert_eq!((dropped[0].id, dropped[0].seed), (item.id, item.seed));
+            &dropped[0]
+        })
+        .collect();
+    assert!((3..=15).contains(&trajectory.len()));
+    let dropped = trajectory.last().unwrap();
+    assert!(trajectory[0].root[1] - dropped.root[1] > 0.8);
+    assert!(
+        trajectory
+            .windows(2)
+            .all(|pair| pair[0].root[1] > pair[1].root[1])
+    );
     assert_eq!(displayed(&first).carried, 0);
     let visual = &item_visuals()[S1_SEEDS[0]];
     let center = Vec3::from_array(dropped.root) + Vec3::from_array(visual.collider_center());

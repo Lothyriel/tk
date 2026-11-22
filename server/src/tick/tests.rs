@@ -583,6 +583,7 @@ fn ground_focus_checks_real_cover_reach_and_actor_state() {
                         source: CompartmentId(u64::MAX),
                         center: eye + Vec3::NEG_Z * distance,
                         half_extents: Vec3::splat(0.1),
+                        fall_speed: None,
                     }],
                 )
             })

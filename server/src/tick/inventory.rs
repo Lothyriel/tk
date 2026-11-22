@@ -33,10 +33,10 @@ const WORLD_SLOT_START: u64 = u64::MAX - S1_SEEDS.len() as u64 + 1;
 pub(super) struct WorldItem {
     pub id: ItemInstanceId,
     pub source: CompartmentId,
-    /// Static interaction volume. Keep it out of the physics broad phase
-    /// until a dropped item actually needs rigid-body simulation.
+    /// Query-only volume. Drops use swept gravity without adding solver bodies.
     pub half_extents: Vec3,
     pub center: Vec3,
+    pub fall_speed: Option<f32>,
 }
 
 /// Granted by authoritative interaction code, never by an inventory packet.
@@ -119,6 +119,7 @@ fn seed_world(items: &mut Vec<WorldItem>) -> Inventory {
             source,
             half_extents,
             center,
+            fall_speed: None,
         };
         debug!(item = ?item.id, slot = ?item.source, bounds = ?item.half_extents, center = ?item.center, seed, "placed raid item");
         items.push(item);
@@ -236,16 +237,53 @@ impl TargetSight<'_, '_> {
             }
             let center = start + down * hit.time_of_impact + Vec3::Y * 0.003;
             if items.iter().any(|item| {
-                (center - item.center)
+                (center.xz() - item.center.xz())
                     .abs()
-                    .cmplt(half + item.half_extents)
+                    .cmplt(half.xz() + item.half_extents.xz())
                     .all()
             }) {
                 continue;
             }
-            return Some(center);
+            return Some(start);
         }
         None
+    }
+
+    fn settle_drops(&self, items: &mut [WorldItem]) -> bool {
+        let Ok(context) = self.context.single() else {
+            return false;
+        };
+        let mut settled = false;
+        let filter = QueryFilter::new()
+            .groups(CollisionGroups::new(Group::ALL, Group::GROUP_1))
+            .exclude_sensors();
+        let dt = 1.0 / 128.0;
+        for item in items {
+            let Some(speed) = item.fall_speed else {
+                continue;
+            };
+            let speed = speed + 9.81 * dt;
+            let travel = Vec3::NEG_Y * (speed * dt);
+            let Vec3 { x, y, z } = item.half_extents;
+            let shape = Collider::cuboid(x, y, z);
+            if let Some((_, hit)) = context.cast_shape(
+                item.center,
+                Quat::IDENTITY,
+                travel,
+                &shape,
+                ShapeCastOptions::with_max_time_of_impact(1.0),
+                filter,
+            ) {
+                let fraction = (hit.time_of_impact - 0.003 / travel.length()).clamp(0.0, 1.0);
+                item.center += travel * fraction;
+                item.fall_speed = None;
+                settled = true;
+            } else {
+                item.center += travel;
+                item.fall_speed = Some(speed);
+            }
+        }
+        settled
     }
 
     fn pickup_input(&self, entity: Entity) -> Option<((u32, ItemInstanceId), bool)> {
@@ -300,11 +338,14 @@ impl TargetSight<'_, '_> {
             eye,
             direction,
             obstruction,
-            items.iter().map(|item| GroundTarget {
-                id: item.id,
-                center: item.center,
-                half_extents: item.half_extents,
-            }),
+            items
+                .iter()
+                .filter(|item| item.fall_speed.is_none())
+                .map(|item| GroundTarget {
+                    id: item.id,
+                    center: item.center,
+                    half_extents: item.half_extents,
+                }),
         )
     }
 }
@@ -347,6 +388,7 @@ fn process(
     sight: &TargetSight,
     state: &mut Endpoint,
 ) {
+    let settled = raid.phase == RaidPhase::Active && sight.settle_drops(&mut state.world_items);
     if state.raid != Some(raid.raid_id) {
         state.loot_ids.clear();
         state.raid = Some(raid.raid_id);
@@ -426,7 +468,17 @@ fn process(
                     }
                 })
                 .collect();
-            if peer.ground != items {
+            let membership_changed = peer.ground.len() != items.len()
+                || peer
+                    .ground
+                    .iter()
+                    .zip(&items)
+                    .any(|(old, new)| old.id != new.id);
+            // Send membership and final rest immediately, motion at 16 Hz.
+            // Do not flood the reliable private transaction channel at 128 Hz.
+            if (membership_changed || settled || state.window_tick.is_multiple_of(8))
+                && peer.ground != items
+            {
                 peer.ground.clone_from(&items);
                 send(server, client, peer.key, UpdateBody::Ground(items));
             }
@@ -552,6 +604,7 @@ fn process(
                             source,
                             center,
                             half_extents,
+                            fall_speed: Some(0.0),
                         });
                         state.world_items.sort_unstable_by_key(|entry| entry.id);
                         send(
