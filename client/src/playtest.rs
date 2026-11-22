@@ -176,6 +176,8 @@ fn capture_combat_hud(
 struct HudSwitch {
     primary: Option<(WeaponInstanceId, u64)>,
     complete: bool,
+    cleared_debrief: bool,
+    cleared_lobby: bool,
 }
 
 fn capture_combat_hud_switch(
@@ -186,7 +188,31 @@ fn capture_combat_hud_switch(
     hud: Single<&Text, With<crate::hud::RaidHud>>,
     mut switch: Local<HudSwitch>,
 ) {
-    if driver.step != Step::Animation || switch.complete {
+    if switch.complete {
+        let phase = match session.raid.phase {
+            RaidPhase::Debrief if !switch.cleared_debrief => {
+                switch.cleared_debrief = true;
+                "debrief"
+            }
+            RaidPhase::Lobby if switch.cleared_debrief && !switch.cleared_lobby => {
+                switch.cleared_lobby = true;
+                "lobby"
+            }
+            _ => return,
+        };
+        assert!(
+            !hud.contains("Chamber ") && !hud.contains("Magazine ") && !hud.contains("HP "),
+            "stale combat HUD in {phase} at snapshot {}: {}",
+            session.last_sequence,
+            hud.as_str(),
+        );
+        info!(
+            "COMBAT HUD CLEARED {phase} snapshot={}",
+            session.last_sequence
+        );
+        return;
+    }
+    if driver.step != Step::Animation {
         return;
     }
     let Some(actor) = session.local(player.0).filter(|actor| actor.alive) else {

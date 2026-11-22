@@ -995,6 +995,11 @@ def main():
             "from_item": int(source), "to_item": int(target), "before_snapshot": int(before),
             "snapshot": int(snapshot), "chamber": chamber, "magazine": magazine,
         }
+        cleared = re.findall(r"COMBAT HUD CLEARED (debrief|lobby) snapshot=(\d+)", client_text)
+        assert [phase for phase, _ in cleared] == ["debrief", "lobby"], cleared
+        debrief, lobby = (int(seq) for _, seq in cleared)
+        assert int(last) < debrief < lobby, cleared
+        settings["combat_hud_cleared"] = {"debrief": debrief, "lobby": lobby}
         for name in ("combat-hud-magazine-present", "combat-hud-magazine-absent", "combat-hud-switch"):
             path = output / f"{name}.png"
             data = path.read_bytes()
