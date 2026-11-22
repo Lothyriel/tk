@@ -52,6 +52,33 @@ pub enum ArchiveError {
     InvalidItem(ItemInstanceId, InventoryError),
 }
 
+impl std::fmt::Display for ArchiveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use ArchiveError::*;
+        write!(f, "inventory archive: ")?;
+        match self {
+            TooLarge => write!(f, "size: exceeds {MAX_BYTES} bytes"),
+            Malformed => write!(f, "encoding: malformed data"),
+            UnsupportedSchema(v) => write!(f, "schema_version: unsupported {v}"),
+            UnknownRevision(revision) => write!(f, "catalog_revision: unknown {revision:?}"),
+            InvalidLayout(id) => write!(f, "compartment {}: size: invalid layout", id.0),
+            Compartment(id, error) => write!(f, "compartment {}: id: {error:?}", id.0),
+            InvalidId(id) => write!(f, "item {}: id: invalid or duplicate", id.0),
+            InvalidItem(id, error) => {
+                let field = match error {
+                    InventoryError::UnknownDefinition => "definition",
+                    InventoryError::InvalidQuantity => "quantity",
+                    InventoryError::InvalidContents => "contents",
+                    _ => "location",
+                };
+                write!(f, "item {}: {field}: {error:?}", id.0)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ArchiveError {}
+
 impl Inventory {
     pub fn export_archive(&self) -> Result<bytes::Bytes, ArchiveError> {
         let layout = ArchiveDocument {

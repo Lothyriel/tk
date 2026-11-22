@@ -4,4 +4,6 @@
 
 Original import SHA-256: `7b60be06f2b476f8bce426fb7ed56d06fb58bab56033d712c57c8e9ad901be15`.
 
-TSV preserves the original authoring text and avoids maintaining a second copy of the data in RON. The shared Rust catalog exposes these rows as planning metadata, separately from active game definitions. The six S1 seed IDs select rows for the first slice; they do not enable item spawning, use, equipment, or attachment. Asset and instantiation checks belong at the point where definitions are promoted into gameplay.
+TSV preserves the original authoring text and avoids maintaining a second copy of the data in RON. The six S1 seed IDs select rows for the shared inventory fixtures; they do not enable item spawning, use, equipment, or attachment.
+
+`ActiveItems::validate` accepts an explicit list of item-to-visual bindings and resolves each logical asset key against the caller's validated visual catalog. Any invalid row rejects the entire list. Unlisted rows remain planned, even when they share a profile with a listed row. The visual pipeline owns asset validation and supplies the lookup; this shared layer does not load client files or wire gameplay. No production item bindings are shipped here.
