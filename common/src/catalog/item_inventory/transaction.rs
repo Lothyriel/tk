@@ -41,6 +41,35 @@ pub struct InventoryCommit {
 }
 
 impl Inventory {
+    pub(super) fn transaction_scope(
+        &self,
+        action: InventoryAction,
+        may_write: impl Fn(CompartmentId) -> bool,
+    ) -> Result<[CompartmentId; 2], TransactionError> {
+        let accessible = |id| {
+            self.get(id)
+                .map(|item| item.location.compartment)
+                .filter(|&compartment| may_write(compartment))
+                .ok_or(TransactionError::Unavailable)
+        };
+        match action {
+            InventoryAction::Move { item, destination }
+            | InventoryAction::Split {
+                item, destination, ..
+            } => {
+                let source = accessible(item)?;
+                let target = destination.compartment;
+                if !may_write(target) || !self.compartments.contains_key(&target) {
+                    return Err(TransactionError::Unavailable);
+                }
+                Ok([source, target])
+            }
+            InventoryAction::Merge { source, target } => {
+                Ok([accessible(source)?, accessible(target)?])
+            }
+        }
+    }
+
     /// Compartments are the authorization boundary, including across owners.
     /// The authority must check the current permissions for every operation.
     pub fn transact(
@@ -48,23 +77,11 @@ impl Inventory {
         action: InventoryAction,
         may_write: impl Fn(CompartmentId) -> bool,
     ) -> Result<InventoryCommit, TransactionError> {
-        let accessible = |id| {
-            self.get(id)
-                .copied()
-                .filter(|item| may_write(item.location.compartment))
-                .ok_or(TransactionError::Unavailable)
-        };
-        let destination_accessible = |destination: GridLocation| {
-            (may_write(destination.compartment)
-                && self.compartments.contains_key(&destination.compartment))
-            .then_some(())
-            .ok_or(TransactionError::Unavailable)
-        };
+        self.transaction_scope(action, may_write)?;
         let rule = TransactionError::Rule;
         let (id, before, secondary) = match action {
             InventoryAction::Move { item, destination } => {
-                let before = accessible(item)?;
-                destination_accessible(destination)?;
+                let before = self.item(item).map_err(rule)?;
                 self.move_item(item, destination).map_err(rule)?;
                 (item, before, None)
             }
@@ -73,14 +90,13 @@ impl Inventory {
                 quantity,
                 destination,
             } => {
-                let before = accessible(item)?;
-                destination_accessible(destination)?;
+                let before = self.item(item).map_err(rule)?;
                 let created = self.split(item, quantity, destination).map_err(rule)?;
                 (item, before, Some(self.change(created, None)))
             }
             InventoryAction::Merge { source, target } => {
-                let before = accessible(source)?;
-                let target_before = accessible(target)?;
+                let before = self.item(source).map_err(rule)?;
+                let target_before = self.item(target).map_err(rule)?;
                 self.merge(source, target).map_err(rule)?;
                 (
                     source,

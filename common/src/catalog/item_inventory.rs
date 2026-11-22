@@ -8,6 +8,11 @@ use std::collections::BTreeMap;
 
 mod archive;
 pub use archive::ArchiveError;
+mod authority;
+pub use authority::{
+    InventoryAuthority, InventoryOperation, OperationReply, OperationResult, OperationSession,
+    SessionKey, VersionedCompartment,
+};
 mod transaction;
 pub use transaction::{InventoryAction, InventoryChange, InventoryCommit, TransactionError};
 
