@@ -10,7 +10,7 @@ use bevy_renet2::prelude::RenetClient;
 use common::{
     EquipmentSlot, LocalInput, PlayerId, WeaponKind,
     combat::*,
-    raid::{MatchMode, RaidPhase, RaidStatus},
+    raid::{MatchMode, RaidPhase, RaidStatus, SIMULATION_HZ},
 };
 
 use crate::{ClientSystems, input::inventory_panel::Panel, loadout, sync::ClientSession};
@@ -476,10 +476,10 @@ fn route(
             }
         }
         Some(Action::Mode) => {
-            input.mode = if input.mode == MatchMode::Raid {
-                MatchMode::ArenaSolo
-            } else {
-                MatchMode::Raid
+            input.mode = match input.mode {
+                MatchMode::Raid => MatchMode::ArenaSolo,
+                MatchMode::ArenaSolo => MatchMode::ArenaPvp,
+                MatchMode::ArenaPvp => MatchMode::Raid,
             };
         }
         Some(Action::Bench) => {
@@ -572,7 +572,8 @@ fn present(
     } else {
         Display::Flex
     };
-    let participant = session.local(id.0).map(|actor| &actor.participant);
+    let actor = session.local(id.0);
+    let participant = actor.map(|actor| &actor.participant);
     let ready = participant.is_some_and(|p| p.ready);
     let pending = menu.pending.is_some() || editor.pending.is_some();
     let editable = !pending && editor.editable(&session, id.0);
@@ -594,7 +595,11 @@ fn present(
                     session.raid.seconds_left
                 )
             } else if ready {
-                "Ready · Kit locked".into()
+                if session.raid.mode == MatchMode::ArenaPvp {
+                    "Ready | Waiting for second player | Kit locked".into()
+                } else {
+                    "Ready | Kit locked".into()
+                }
             } else if input.mode == MatchMode::ArenaSolo
                 && session.players.iter().filter(|p| !p.bot).count() > 1
             {
@@ -611,10 +616,11 @@ fn present(
             if menu.pending.is_some() {
                 "ARENA | Leaving duel...".into()
             } else if participant.is_some_and(|p| p.status == RaidStatus::Dead) {
-                if session.raid.seconds_left > 0.0 {
+                let ticks = actor.map_or(0, |actor| actor.respawn_ticks);
+                if ticks > 0 {
                     format!(
                         "ARENA | Eliminated\nRespawn in {:.1}s",
-                        session.raid.seconds_left
+                        f32::from(ticks) / f32::from(SIMULATION_HZ)
                     )
                 } else {
                     "ARENA | Eliminated\nWaiting for a clear spawn".into()
@@ -728,10 +734,10 @@ fn present(
 }
 
 fn mode_name(mode: MatchMode) -> &'static str {
-    if mode == MatchMode::ArenaSolo {
-        "Arena Solo"
-    } else {
-        "Raid"
+    match mode {
+        MatchMode::Raid => "Raid",
+        MatchMode::ArenaSolo => "Arena Solo",
+        MatchMode::ArenaPvp => "Arena PvP 1v1",
     }
 }
 
@@ -1024,7 +1030,7 @@ mod tests {
             let mut session = app.world_mut().resource_mut::<ClientSession>();
             session.raid.phase = RaidPhase::Active;
             session.raid.mode = MatchMode::ArenaSolo;
-            session.raid.seconds_left = 2.5;
+            session.players[0].respawn_ticks = 320;
             session.players[0].participant.last_command = 1;
             session.players[0].participant.fail(RaidStatus::Dead);
         }

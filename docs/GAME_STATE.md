@@ -99,6 +99,10 @@ To verify the simulated duel over local UDP with a rendered client, run
 `python scripts/playtest.py --arena-solo`. This route drives ordinary client
 inputs; it does not replace testing the menu with mouse and keyboard.
 
+For **Arena PvP 1v1**, two clients select the same mode and ready up. There are
+no bots. Other clients wait for the next lobby. Leaving or disconnecting returns
+the other combatant to the lobby, where a new pair can prepare another duel.
+
 ## Controls
 
 | Input | Action |
