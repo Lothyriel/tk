@@ -3,6 +3,7 @@ mod arena;
 mod configured_anatomy;
 mod recoil;
 mod stance;
+mod stumble;
 mod weapon_replication;
 
 #[test]

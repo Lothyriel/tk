@@ -275,12 +275,18 @@ pub fn evaluate_pose_with_action(
         -0.23 + bob - crouch * 0.04 - state.landing * 0.05,
         state.lean[1] * 0.06,
     );
+    let stumble = if state.mode == PhysicalMode::Stumbling {
+        let t = (state.mode_time / 0.65).clamp(0.0, 1.0);
+        (std::f32::consts::PI * t).sin().max(0.0)
+    } else {
+        0.0
+    };
     let lean_offset = aim_lean_offset(state.aim_roll);
     let chest =
         hip + Vec3::new(
             state.lean[0] * 0.025,
-            0.43 - crouch * 0.14,
-            -crouch * 0.12 - state.lean[1] * 0.05,
+            0.43 - crouch * 0.14 - stumble * 0.05,
+            -crouch * 0.12 - state.lean[1] * 0.05 - stumble * 0.09,
         ) + lean_offset;
     let aim = Quat::from_rotation_x(state.aim_pitch);
     result[Pelvis.index()].position = hip.into();

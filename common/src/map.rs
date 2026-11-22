@@ -93,6 +93,18 @@ pub const BLOCKS: &[MapBlock] = &[
         half_size: [1.0, 0.55, 1.0],
         surface: SurfaceKind::Concrete,
     },
+    // West training lane: a passable step and, in a separate lane, a low
+    // blocking obstacle. Both sit on the same ground as the rest of the yard.
+    MapBlock {
+        center: [-14.0, 0.19, 2.0],
+        half_size: [0.75, 0.09, 0.50],
+        surface: SurfaceKind::Concrete,
+    },
+    MapBlock {
+        center: [-16.0, 0.32, 2.0],
+        half_size: [0.75, 0.22, 0.50],
+        surface: SurfaceKind::Concrete,
+    },
 ];
 
 /// Full destruction state fits in 22 bytes, preserving the snapshot budget.
@@ -117,9 +129,9 @@ pub fn destroyed_ids(mask: &DestroyedCells) -> Vec<u16> {
         .collect()
 }
 
-/// Interior cover only. The floor, arena boundary and loot stay indestructible.
+/// Interior cover only. The boundary, loot and training lane stay indestructible.
 pub fn destructible(block_index: usize) -> bool {
-    (5..BLOCKS.len()).contains(&block_index)
+    (5..9).contains(&block_index)
 }
 
 #[derive(Debug, Clone)]

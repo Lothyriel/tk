@@ -132,6 +132,12 @@ For less first-person camera movement, launch the client with
 `TK_CAMERA_BOB=reduced` or `TK_CAMERA_BOB=off`. This changes only the
 cosmetic step motion, not stance, mouse aim, or collision.
 
+Sprint straight into a low blocking obstacle and the character briefly
+stumbles. Walking, climbing a passable step or running into a high wall
+does not trigger it. Holding against the same obstacle won't restart the
+reaction. Compare the west training lanes at `x -14` (step) and `x -16`
+(low block), both near `z 2`.
+
 Inspect now presents both sides of the equipped assembly while preserving its
 ammunition and grips. Equip/unequip presentation follows the server's action
 clock and slot marker. Hip/inspect framing uses the actual configured bounds
