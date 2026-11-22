@@ -32,6 +32,7 @@ impl bevy::prelude::Plugin for Plugin {
         app.insert_resource(store)
             .insert_resource(preferences)
             .insert_resource(UiScale(preferences.ui_scale()))
+            .insert_resource(bevy::audio::GlobalVolume::new(preferences.volume()))
             .init_resource::<Menu>()
             .add_message::<Activation>()
             .add_message::<PointerActivation>()
@@ -139,6 +140,7 @@ enum Action {
     MouseMore,
     ReloadKey,
     UiScaleCycle,
+    VolumeCycle,
     Defaults,
     Revert,
     ApplySettings,
@@ -250,6 +252,7 @@ fn setup(mut commands: Commands) {
                 Action::MouseMore,
                 Action::ReloadKey,
                 Action::UiScaleCycle,
+                Action::VolumeCycle,
                 Action::Defaults,
                 Action::Revert,
                 Action::ApplySettings,
@@ -337,6 +340,7 @@ fn available(
                     | Action::MouseMore
                     | Action::ReloadKey
                     | Action::UiScaleCycle
+                    | Action::VolumeCycle
                     | Action::Defaults
                     | Action::Revert
                     | Action::ApplySettings
@@ -369,6 +373,13 @@ fn available(
     (shown, shown && enabled)
 }
 
+type PreferenceResources<'w> = (
+    ResMut<'w, Preferences>,
+    Res<'w, Store>,
+    ResMut<'w, UiScale>,
+    ResMut<'w, bevy::audio::GlobalVolume>,
+);
+
 #[allow(clippy::too_many_arguments)] // Independent Bevy system parameters.
 fn route(
     (keys, window): (
@@ -389,7 +400,7 @@ fn route(
     mut pointer: MessageReader<PointerActivation>,
     mut activations: MessageWriter<Activation>,
     mut exit: MessageWriter<AppExit>,
-    (mut preferences, store, mut ui_scale): (ResMut<Preferences>, Res<Store>, ResMut<UiScale>),
+    (mut preferences, store, mut ui_scale, mut volume): PreferenceResources,
     mut connection: Option<ResMut<Connection>>,
 ) {
     let old = menu.surface;
@@ -647,6 +658,7 @@ fn route(
                         100
                     };
                 }
+                Action::VolumeCycle => draft.volume_percent = (draft.volume_percent + 25) % 125,
                 Action::Defaults => *draft = Preferences::default(),
                 Action::Revert => *draft = *preferences,
                 Action::ApplySettings => {
@@ -656,6 +668,9 @@ fn route(
                     } else {
                         if preferences.ui_scale_percent != draft.ui_scale_percent {
                             ui_scale.0 = draft.ui_scale();
+                        }
+                        if preferences.volume_percent != draft.volume_percent {
+                            volume.volume = draft.volume();
                         }
                         *preferences = *draft;
                         "Applied and saved."
@@ -894,6 +909,10 @@ fn present(
                     "UI scale: {}% (cycle)",
                     menu.settings.unwrap_or_default().ui_scale_percent
                 ),
+                Action::VolumeCycle => format!(
+                    "New sounds: {}% (cycle)",
+                    menu.settings.unwrap_or_default().volume_percent
+                ),
                 Action::Revert => "Revert unapplied changes".into(),
                 Action::ApplySettings => "Apply and save".into(),
                 Action::BackSettings => "Back (discard draft)".into(),
@@ -1058,6 +1077,7 @@ mod tests {
         let settings = button(&mut app, Action::Settings);
         let fov_more = button(&mut app, Action::FovMore);
         let scale = button(&mut app, Action::UiScaleCycle);
+        let volume = button(&mut app, Action::VolumeCycle);
         let apply = button(&mut app, Action::ApplySettings);
         let revert = button(&mut app, Action::Revert);
         click(&mut app, settings);
@@ -1083,12 +1103,32 @@ mod tests {
             125
         );
         assert_eq!(app.world().resource::<UiScale>().0, 1.0);
+        click(&mut app, volume);
+        app.update();
+        assert!(
+            (app.world()
+                .resource::<bevy::audio::GlobalVolume>()
+                .volume
+                .to_linear()
+                - 1.0)
+                .abs()
+                < f32::EPSILON
+        );
         click(&mut app, apply);
         app.update();
         assert_eq!(app.world().resource::<Preferences>().fov, 75);
         assert_eq!(app.world().resource::<UiScale>().0, 1.25);
         let saved: Preferences = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved.ui_scale_percent, 125);
+        assert_eq!(saved.volume_percent, 0);
+        assert!(
+            app.world()
+                .resource::<bevy::audio::GlobalVolume>()
+                .volume
+                .to_linear()
+                .abs()
+                < f32::EPSILON
+        );
         assert!(path.exists());
         key(&mut app, KeyCode::Escape);
         assert_eq!(app.world().resource::<Menu>().selected, Some(settings));

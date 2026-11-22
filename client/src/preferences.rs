@@ -49,6 +49,7 @@ pub(crate) struct Preferences {
     pub sensitivity_percent: u16,
     pub reload: Reload,
     pub ui_scale_percent: u16,
+    pub volume_percent: u16,
 }
 
 impl Default for Preferences {
@@ -58,6 +59,7 @@ impl Default for Preferences {
             sensitivity_percent: 100,
             reload: Reload::R,
             ui_scale_percent: 100,
+            volume_percent: 100,
         }
     }
 }
@@ -71,10 +73,15 @@ impl Preferences {
         f32::from(self.ui_scale_percent) / 100.0
     }
 
+    pub(crate) fn volume(self) -> bevy::audio::Volume {
+        bevy::audio::Volume::Linear(f32::from(self.volume_percent) / 100.0)
+    }
+
     fn valid(self) -> bool {
         (20..=160).contains(&self.fov)
             && (25..=300).contains(&self.sensitivity_percent)
             && matches!(self.ui_scale_percent, 100 | 125)
+            && matches!(self.volume_percent, 0 | 25 | 50 | 75 | 100)
     }
 }
 
@@ -180,6 +187,7 @@ mod tests {
             sensitivity_percent: 125,
             reload: Reload::LeftBracket,
             ui_scale_percent: 125,
+            volume_percent: 50,
         };
         assert_eq!(Store::load(&path), (Preferences::default(), false));
         store.save(prefs).unwrap();
@@ -191,6 +199,7 @@ mod tests {
             r#"{"reload":"KeyF"}"#,
             r#"{"sensitivity_percent":301}"#,
             r#"{"ui_scale_percent":200}"#,
+            r#"{"volume_percent":101}"#,
             r#"{"fov":null}"#,
         ] {
             fs::write(&path, invalid).unwrap();

@@ -143,7 +143,7 @@ cosmetic step motion, not stance, mouse aim, or collision.
 
 Open **Preferences** from an unready lobby or the local pause menu to change
 vertical FOV, mouse sensitivity, UI scale (100% or 125%), or the reload key
-(**R**, **[**, or **]**).
+(**R**, **[**, or **]**). Volume changes apply to newly played sounds.
 **Apply and save** writes the choices to `~/.config/tk/preferences.json`
 (or `$XDG_CONFIG_HOME/tk/preferences.json`; `TK_PREFERENCES_PATH` overrides the
 file path). **Revert** restores the last applied choices in the draft;
