@@ -83,7 +83,7 @@ impl bevy::prelude::Plugin for Plugin {
         }
         let stride_bench = matches!(
             std::env::var("TK_PLAYTEST_POV").as_deref(),
-            Ok("stop-lean" | "armed-stride")
+            Ok("stop-lean" | "armed-stride" | "strafe-reversal")
         );
         if stride_bench && std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1") {
             app.add_systems(PostUpdate, pov::trace_observer);
@@ -212,6 +212,7 @@ struct Driver {
     pov_stumble: pov::Stumble,
     pov_fault: fault::Route,
     pov_stride: pov::ArmedStride,
+    pov_reversal: pov::StrafeReversal,
     pov_turn: f32,
     pov_stop_lean_roll: f32,
     pov_lean_since: f64,
@@ -536,6 +537,29 @@ fn drive(
         }
         Step::Pov => {
             let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");
+            if preset == "strafe-reversal" {
+                let elapsed = now - driver.since;
+                assert!(elapsed < 12.0, "strafe reversal did not complete");
+                let actor = if peer {
+                    let Some(actor) = session.players.iter().find(|p| p.id != id.0 && !p.bot)
+                    else {
+                        return;
+                    };
+                    actor
+                } else {
+                    local
+                };
+                input.camera = CameraInput::default();
+                if driver.pov_reversal.update(elapsed, actor, peer, &mut input) {
+                    if peer {
+                        info!("POV OBSERVER PASS");
+                    } else {
+                        info!("POV PASS {preset} t={now:.3}");
+                    }
+                    exit.write(AppExit::Success);
+                }
+                return;
+            }
             let armed = preset == "armed-stride";
             let prone = preset == "prone";
             let stumble = preset == "stumble";

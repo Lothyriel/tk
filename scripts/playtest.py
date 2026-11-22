@@ -19,9 +19,10 @@ import sys
 import time
 
 if __package__:
-    from . import inventory_frame_windows
+    from . import inventory_frame_windows, strafe_reversal
 else:
     import inventory_frame_windows
+    import strafe_reversal
 
 
 POV_CAPTURES = {
@@ -29,6 +30,7 @@ POV_CAPTURES = {
     "inspect": ("rest", "inspect", "return"),
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "armed-stride": ("rest", "walk", "run", "turn", "moving-ads", "return"),
+    "strafe-reversal": (),
     "prone": ("rest", "prone", "refused", "clear", "return"),
     "stumble": ("rest", "stumble", "contact", "return"),
     "action-fault": ("rest", "fault", "recovering", "interrupted", "persisted", "return"),
@@ -39,6 +41,7 @@ POV_CAPTURES = {
 DUAL_POV = {
     "stop-lean": ("run", "left", "right", "return"),
     "armed-stride": ("turn", "moving-ads", "return"),
+    "strafe-reversal": (),
     "prone": ("prone", "refused", "return"),
     "stumble": ("stumble", "contact", "return"),
     "action-fault": POV_CAPTURES["action-fault"],
@@ -416,14 +419,16 @@ def main():
         parser.error("--inventory-grid requires --voxel-loot --no-capture with one client and no video")
     if args.voxel_loot and args.pov:
         parser.error("--voxel-loot requires the full raid route")
-    if args.no_capture and (args.video or args.pov or args.weapon_debug):
+    if args.no_capture and (args.video or (args.pov and args.pov != "strafe-reversal") or args.weapon_debug):
         parser.error("--no-capture is for the plain raid or animation review, not visual evidence modes")
     if args.audio and not (args.clients == 2 and (args.no_capture or args.pov == "action-fault")):
         parser.error("--audio requires --clients 2 and either --no-capture or --pov action-fault")
-    if (args.pov_hz or args.pov_drop_every) and args.pov not in {"stop-lean", "armed-stride"}:
-        parser.error("POV cadence/loss options require stop-lean or armed-stride")
-    if args.pov_peer_lossless and (args.pov != "armed-stride" or args.clients != 2):
-        parser.error("--pov-peer-lossless requires dual armed-stride")
+    if (args.pov_hz or args.pov_drop_every) and args.pov not in {"stop-lean", "armed-stride", "strafe-reversal"}:
+        parser.error("POV cadence/loss options require stop-lean, armed-stride or strafe-reversal")
+    if args.pov_peer_lossless and (args.pov not in {"armed-stride", "strafe-reversal"} or args.clients != 2):
+        parser.error("--pov-peer-lossless requires dual armed-stride or strafe-reversal")
+    if args.pov == "strafe-reversal" and not (args.clients == 2 and args.no_capture and not args.audio):
+        parser.error("strafe-reversal requires --clients 2 --no-capture without audio")
     if args.pov and (args.animation_review or args.configure_weapons
                      or (args.video and (args.pov != "stop-lean" or args.clients != 1 or args.pov_hz))
                      or (args.clients == 2 and args.pov not in DUAL_POV)):
@@ -528,6 +533,9 @@ def main():
         env["TK_PLAYTEST_AUDIO"] = "1"
     if args.pov:
         env["TK_PLAYTEST_POV"] = args.pov
+    env.pop("TK_PLAYTEST_STRAFE_TRACE", None)
+    if args.pov == "strafe-reversal":
+        env["TK_PLAYTEST_STRAFE_TRACE"] = "1"
     if args.pov == "action-fault":
         env["TK_FIXTURE_ACTION_FAULT"] = "1"
     if args.viewport:
@@ -791,12 +799,21 @@ def main():
             assert name == names[0] or settings["resolution"] == [width, height]
             settings["resolution"] = [width, height]
         settings["seconds_to_evidence"] = float(proof[1])
+        if args.pov == "strafe-reversal":
+            settings["observer_reversal"] = strafe_reversal.analyze(
+                strafe_reversal.read_trace(peer / "strafe-reversal.csv"))
         (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
         if args.video:
             subprocess.run([sys.executable, str(root / "scripts/encode_playtest_video.py"), str(output)], check=True)
-        result = f"PASS: native POV {args.pov}, real UDP, evidence at {proof[1]}s\n"
+        if args.pov == "strafe-reversal":
+            measurement = settings["observer_reversal"]
+            result = f"STRAFE REVERSAL: {measurement['coverage']}; route complete, see run-settings.json\n"
+        else:
+            result = f"PASS: native POV {args.pov}, real UDP, evidence at {proof[1]}s\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
+        if args.pov == "strafe-reversal" and measurement["coverage"] != "measured":
+            return 1
         return
     assert "PLAYTEST PASS" in client_text, f"Missing completion proof: {output / 'client.log'}"
     if args.configure_weapons:

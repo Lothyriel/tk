@@ -315,6 +315,17 @@ de frame time nem valida naturalidade em movimento.
 
 ### Inversão lateral em pé — contrato de telemetria (TAR-97)
 
+Execute em UDP local com dois clientes nativos, sem gravar mídia:
+
+```sh
+python scripts/playtest.py --pov strafe-reversal --clients 2 --no-capture \
+  --pov-peer-lossless --viewport 900x700 --pov-hz 60 --output "$OUT"
+```
+
+Use uma saída nova. Remova `--pov-peer-lossless` para descartar cada
+terceiro snapshot no observador. `run-settings.json` guarda o resultado
+mesmo quando a rota termina mas a cobertura é insuficiente.
+
 `python scripts/strafe_reversal.py "$OUT/peer/strafe-reversal.csv"` analisa
 um CSV normalizado; não executa a rota. `TK_PLAYTEST_STRAFE_TRACE=1` no
 processo do observador acrescenta `strafe-reversal.csv` em `TK_PLAYTEST_DIR`
@@ -340,8 +351,9 @@ Colunas obrigatórias (extras são ignoradas):
 | `left_confirmed_{x,y,z}`, `right_confirmed_{x,y,z}` | Âncoras do snapshot aceito, transformadas para o mesmo espaço mundial. |
 | `chest_qx`, `chest_qy`, `chest_qz`, `chest_qw` | Quaternion unitário do tórax apresentado em espaço mundial. |
 
-O JSON delimita a reversão pela última amostra positiva antes da primeira
-negativa; zero pode ser observado ou pulado. A janela exige snapshot novo,
+O JSON delimita a reversão pela última amostra acima de +0,25 m/s antes da
+primeira abaixo de −0,25 m/s. A zona morta exclui oscilações residuais
+antes do strafe. A janela exige snapshot novo,
 yaw fixo (tolerância de 0,001 rad), Standing, grounded, sem crouch e sem
 intervalos entre quadros de 50 ms ou mais. Saltos de sequência são
 diagnosticados separadamente: não implicam lacuna no relógio de apresentação.

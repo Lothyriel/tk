@@ -32,6 +32,15 @@ def trace():
 
 
 class StrafeReversalTests(unittest.TestCase):
+    def test_rejects_near_zero_sign_changes_before_the_actual_reversal(self):
+        rows = [
+            sample(-0.02, 8, 0.0016, 0, 0, 0),
+            sample(-0.01, 9, -0.000001, 0, 0, 0),
+        ]
+        self.assertEqual(analyze(rows)["coverage"], "insufficient")
+        bracket = analyze(rows + trace())["bracket"]
+        self.assertEqual((bracket["from"]["snapshot"], bracket["to"]["snapshot"]), (10, 13))
+
     def test_measures_matched_endpoints_and_sign_invariant_chest_turn(self):
         report = analyze(trace())
         self.assertEqual(report["coverage"], "measured")

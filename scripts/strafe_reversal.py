@@ -9,6 +9,7 @@ from pathlib import Path
 MAX_PAIR_SECONDS = 0.05
 LOADED_WEIGHT = 0.95
 YAW_TOLERANCE_RAD = 0.001
+MIN_LATERAL_SPEED = 0.25
 SIDES = ("left", "right")
 CHEST_AXES = ("qx", "qy", "qz", "qw")
 
@@ -79,9 +80,9 @@ def analyze(rows):
 
     start = None
     for stop, row in enumerate(rows):
-        if row["lateral_velocity"] > 0:
+        if row["lateral_velocity"] > MIN_LATERAL_SPEED:
             start = stop
-        elif row["lateral_velocity"] < 0 and start is not None:
+        elif row["lateral_velocity"] < -MIN_LATERAL_SPEED and start is not None:
             break
     else:
         return dict(report, reason="no_positive_to_negative_bracket")

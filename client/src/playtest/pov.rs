@@ -12,6 +12,51 @@ use std::{
 const GAIT_HEADER: &str = "seconds,snapshot,phase,roll,speed,left_weight,right_weight,left_x,left_y,left_z,right_x,right_y,right_z,pelvis_x,pelvis_y,pelvis_z,chest_qx,chest_qy,chest_qz,chest_qw,left_anchor_x,left_anchor_y,left_anchor_z,right_anchor_x,right_anchor_y,right_anchor_z,left_confirmed_x,left_confirmed_y,left_confirmed_z,right_confirmed_x,right_confirmed_y,right_confirmed_z";
 const STRAFE_FIELDS: &str = ",actor_id,yaw,standing,grounded,crouched,lateral_velocity";
 
+/// Test-only right-to-left strafe at fixed yaw. Use confirmed speed rather
+/// than a local animation cue to choose when to reverse and stop.
+#[derive(Default)]
+pub(super) struct StrafeReversal {
+    stage: u8,
+    stopped_since: Option<f64>,
+}
+
+impl StrafeReversal {
+    pub(super) fn update(
+        &mut self,
+        elapsed: f64,
+        actor: &ClientData,
+        observer: bool,
+        input: &mut common::ClientInput,
+    ) -> bool {
+        // Separate the leader from the adjacent spawn before lateral motion.
+        if elapsed < 0.5 && !observer {
+            input.forward = true;
+        }
+        if elapsed < 1.5 || !actor.pose.grounded {
+            return false;
+        }
+        let speed = actor.pose.velocity[0]; // Actor yaw is fixed at zero.
+        // The leader controls the speed at which it sends the next input.
+        // The observer confirms direction, not that it sampled that exact peak.
+        let threshold = if observer { 0.25 } else { 2.0 };
+        match self.stage {
+            0 if speed > threshold => self.stage = 1,
+            1 if speed < -threshold => self.stage = 2,
+            _ => (),
+        }
+        if !observer {
+            input.right = self.stage == 0;
+            input.left = self.stage == 1;
+        }
+        if self.stage == 2 && speed.abs() < 0.05 {
+            elapsed - *self.stopped_since.get_or_insert(elapsed) > if observer { 0.75 } else { 1.5 }
+        } else {
+            self.stopped_since = None;
+            false
+        }
+    }
+}
+
 pub(super) struct ObserverFiles {
     gait: BufWriter<std::fs::File>,
     strafe: Option<BufWriter<std::fs::File>>,
