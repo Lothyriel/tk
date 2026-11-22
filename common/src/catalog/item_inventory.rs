@@ -27,6 +27,32 @@ pub struct ItemInstance {
     pub condition: Condition,
     pub quantity: u16,
     pub location: GridLocation,
+    pub contents: ItemContents,
+}
+
+/// Per-unit state, independent of stack quantity. S1 does not expose use or
+/// magazine loading actions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub enum ItemContents {
+    None,
+    Dressing { sealed: bool },
+    Water { millilitres: u16 },
+    EmptyMagazine,
+}
+
+impl ItemContents {
+    const WATER_CAPACITY_ML: u16 = 500;
+
+    fn initial(definition: &PlannedItem<'_>) -> Self {
+        match definition.profile {
+            "med_bleed" => Self::Dressing { sealed: true },
+            "food" => Self::Water {
+                millilitres: Self::WATER_CAPACITY_ML,
+            },
+            "magazine" => Self::EmptyMagazine,
+            _ => Self::None,
+        }
+    }
 }
 
 impl ItemInstance {
@@ -48,11 +74,33 @@ impl ItemInstance {
             condition,
             quantity,
             location,
+            contents: ItemContents::initial(definition),
         })
     }
 
+    fn with_contents(mut self, contents: ItemContents) -> Result<Self, InventoryError> {
+        let valid = match (self.contents, contents) {
+            (ItemContents::Water { .. }, ItemContents::Water { millilitres }) => {
+                millilitres <= ItemContents::WATER_CAPACITY_ML
+            }
+            (ItemContents::Dressing { .. }, ItemContents::Dressing { .. }) => true,
+            (initial, supplied) => initial == supplied,
+        };
+        if !valid {
+            return Err(InventoryError::InvalidContents);
+        }
+        self.contents = contents;
+        Ok(self)
+    }
+
     pub fn mass_g(self) -> u64 {
-        u64::from(self.quantity) * u64::from(self.definition.mass_g)
+        let missing_g = match self.contents {
+            ItemContents::Water { millilitres } => {
+                u32::from(ItemContents::WATER_CAPACITY_ML.saturating_sub(millilitres))
+            }
+            _ => 0,
+        };
+        u64::from(self.quantity) * u64::from(self.definition.mass_g.saturating_sub(missing_g))
     }
 }
 
@@ -64,6 +112,7 @@ pub enum InventoryError {
     DuplicateCompartment,
     FilteredOut,
     InvalidQuantity,
+    InvalidContents,
     SameItem,
     IncompatibleStack,
     StackFull,
@@ -118,6 +167,20 @@ impl Inventory {
         )?)
     }
 
+    pub fn insert_seed_with_contents(
+        &mut self,
+        definition: &str,
+        condition: Condition,
+        quantity: u16,
+        location: GridLocation,
+        contents: ItemContents,
+    ) -> Result<ItemInstanceId, InventoryError> {
+        self.insert(
+            ItemInstance::seed(definition, condition, quantity, location)?
+                .with_contents(contents)?,
+        )
+    }
+
     pub fn move_item(
         &mut self,
         id: ItemInstanceId,
@@ -161,7 +224,10 @@ impl Inventory {
         }
         let mut from = self.item(source)?;
         let mut into = self.item(target)?;
-        if from.definition.id != into.definition.id || from.condition != into.condition {
+        if from.definition.id != into.definition.id
+            || from.condition != into.condition
+            || from.contents != into.contents
+        {
             return Err(InventoryError::IncompatibleStack);
         }
         let moved = from.quantity.min(into.definition.stack_max - into.quantity);
