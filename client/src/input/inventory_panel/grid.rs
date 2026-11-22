@@ -82,6 +82,8 @@ const CONTEXT_ACTIONS: [(ContextAction, &str); 3] = [
     (ContextAction::Close, "Close"),
 ];
 
+pub(super) mod close_ack;
+
 #[derive(SystemParam)]
 pub(in crate::input) struct PointerInput<'w, 's> {
     buttons: Option<Res<'w, ButtonInput<MouseButton>>>,

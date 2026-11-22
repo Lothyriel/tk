@@ -20,6 +20,15 @@ fn main() {
     let grid_review =
         grid_pointer || std::env::args().any(|argument| argument == "--inventory-grid-review");
     let voxel_grid = playtest && std::env::var_os("TK_PLAYTEST_INVENTORY_GRID").is_some();
+    let close_ack = std::env::args().any(|arg| arg == "--inventory-grid-close-ack");
+    assert!(
+        !close_ack
+            || (voxel_grid
+                && !grid_review
+                && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("1")
+                && std::env::var_os("TK_PLAYTEST_INVENTORY_TELEMETRY").is_none()),
+        "close/ACK diagnostic requires the plain solo grid route"
+    );
     assert!(
         !grid_inspect || (grid_pointer && voxel_grid),
         "grid inspection requires the solo pointer review route"
@@ -98,6 +107,9 @@ fn main() {
     }
     if let Some(probe) = arena_menu_probe {
         app.add_plugins(probe);
+    }
+    if close_ack {
+        app.add_plugins(input::inventory_panel::CloseAckPlugin);
     }
     if grid_review {
         app.add_plugins(input::inventory_panel::GridReview {

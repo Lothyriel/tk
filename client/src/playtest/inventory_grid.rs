@@ -186,16 +186,19 @@ fn destination(
         })
 }
 
+type ReviewControls<'w> = (
+    MessageWriter<'w, AppExit>,
+    Option<Res<'w, crate::input::inventory_panel::PointerRoute>>,
+    Option<Res<'w, UiScale>>,
+    Option<Res<'w, crate::input::inventory_panel::CloseAck>>,
+);
+
 fn drive(
     mut probe: ResMut<Probe>,
     (session, player, inventory, panel, input, time): Live,
     window: Single<(Entity, &Window), With<PrimaryWindow>>,
     mut keyboard: MessageWriter<KeyboardInput>,
-    (mut exit, pointer, scale): (
-        MessageWriter<AppExit>,
-        Option<Res<crate::input::inventory_panel::PointerRoute>>,
-        Option<Res<UiScale>>,
-    ),
+    (mut exit, pointer, scale, close_ack): ReviewControls,
 ) {
     if probe.finished || (probe.integrated && !probe.requested) {
         return;
@@ -296,6 +299,21 @@ fn drive(
         }
         return;
     }
+    let diagnostic_move = close_ack.is_some()
+        && probe.keys.is_empty()
+        && probe
+            .check
+            .as_ref()
+            .is_some_and(|check| matches!(check.step, Step::Move));
+    if diagnostic_move && !close_ack.as_ref().is_some_and(|route| route.finished()) {
+        assert!(
+            probe
+                .run
+                .is_some_and(|(_, start, _)| time.elapsed_secs_f64() - start < 20.0),
+            "GRID CLOSE ACK did not complete; inspect ordering trace"
+        );
+        return;
+    }
     if probe.closing {
         assert!(
             !panel.open,
@@ -357,7 +375,7 @@ fn drive(
     let mut actual: Items = grid.items.iter().cloned().collect();
     if let Some(check) = probe.check.take() {
         if grid.version.revision < check.revision
-            || panel.grid_feedback() != Some(check.step.feedback())
+            || (!diagnostic_move && panel.grid_feedback() != Some(check.step.feedback()))
         {
             probe.check = Some(check);
             return;

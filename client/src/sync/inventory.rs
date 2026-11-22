@@ -40,6 +40,14 @@ pub(crate) struct OperationFinished {
 }
 
 impl State {
+    pub(crate) fn last_operation_id(&self) -> u64 {
+        self.last_operation
+    }
+
+    pub(crate) fn pending_operation_id(&self) -> Option<u64> {
+        self.pending.map(|op| op.id)
+    }
+
     pub(crate) fn grid_session(&self) -> Option<SessionKey> {
         self.session
     }

@@ -5,6 +5,7 @@ use common::{PlayerId, catalog::ItemInstanceId, replication::inventory::CHANNEL}
 
 use crate::sync::{ClientSession, inventory::State};
 pub(super) mod grid;
+pub(crate) use grid::close_ack::{CloseAck, CloseAckPlugin};
 pub(crate) use grid::{GridFont, GridReview, PointerRoute};
 
 #[derive(Default, Resource)]
@@ -40,7 +41,11 @@ pub(super) fn update(
     window: Single<&Window, With<PrimaryWindow>>,
     (mut inventory, mut client): (ResMut<State>, ResMut<RenetClient>),
     mut panel: ResMut<Panel>,
-    (menu, pointer): (Option<Res<crate::menu::Menu>>, grid::PointerInput),
+    (menu, pointer, diagnostic): (
+        Option<Res<crate::menu::Menu>>,
+        grid::PointerInput,
+        Option<ResMut<CloseAck>>,
+    ),
 ) {
     panel.consumed_escape = false;
     if !window.focused
@@ -68,6 +73,9 @@ pub(super) fn update(
     }
     if keys.just_pressed(KeyCode::Tab) && panel.context.is_none() {
         if panel.open {
+            if let Some(mut diagnostic) = diagnostic {
+                diagnostic.on_tab_close(&panel, &inventory);
+            }
             *panel = Panel::default();
             return;
         }

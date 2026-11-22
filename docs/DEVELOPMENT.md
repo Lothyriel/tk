@@ -99,6 +99,22 @@ evidência pendente; não congele o estado, simule confirmação ou atrase o
 servidor para obter a imagem. `inside` não substitui revisão de legibilidade,
 foco, sobreposição ou áudio. Não há injeção de input nem vídeo neste modo.
 
+#### Diagnóstico de fechamento durante uma movimentação pendente
+
+Em execução coordenada, com diretório novo:
+
+```sh
+python scripts/playtest.py --voxel-loot --inventory-grid --no-capture \
+  --inventory-grid-close-ack --output "$HOME/tmp/tar77-close-ack"
+```
+
+Após observar o ghost pending no layout, a sonda envia Tab no próximo
+frame, sem atrasar a resposta do servidor. O painel reabre somente após
+ACK e revisão confirmada, sem reenviar a operação. `evidence.json` separa
+`CLOSE_BEFORE_ACK` de `ACK_FIRST_NOT_OBSERVED` e `DELTA_FIRST_NOT_OBSERVED`.
+Os últimos dois resultados não comprovam fechamento durante pending,
+mesmo quando a raid termina normalmente. Não é teste de desconexão.
+
 #### Disputa de coleta (dois clientes)
 
 Em execução coordenada, com diretório novo:

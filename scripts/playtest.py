@@ -208,6 +208,32 @@ def loot_contest_evidence(client_logs, server_log):
             "winner": winner, "owned_quantities": views, "ground_removed_in_both_views": True}
 
 
+def grid_close_ack_evidence(log):
+    rows = re.findall(
+        r"GRID CLOSE ACK (\w+) raid=(\d+) session=(\d+) op=(\d+) item=(\d+) revision=(\d+) frame=(\d+)$",
+        log, re.MULTILINE,
+    )
+    required = {"submitted", "pending_presented", "tab_close", "ack_applied", "delta_applied", "reopened"}
+    if (len(rows) != 7 or {row[0] for row in rows[:-1]} != required
+            or any(row[1:6] != rows[0][1:6] for row in rows)):
+        raise ValueError("Expected one complete close/ACK trace for the same operation")
+    stages = [row[0] for row in rows]
+    frames = [int(row[6]) for row in rows]
+    submit, pending, close, ack, delta, reopened = map(
+        stages.index, ("submitted", "pending_presented", "tab_close", "ack_applied", "delta_applied", "reopened"))
+    if (frames != sorted(frames) or frames[close] != frames[pending] + 1
+            or not (submit < pending < min(close, ack, delta) and max(close, ack, delta) < reopened)
+            or frames[reopened] <= max(frames[i] for i in (close, ack, delta))):
+        raise ValueError("Invalid close/ACK frame or event order")
+    status = ("ACK_FIRST_NOT_OBSERVED" if ack < close else
+              "DELTA_FIRST_NOT_OBSERVED" if delta < close else "CLOSE_BEFORE_ACK")
+    if stages[-1] != status:
+        raise ValueError("Close/ACK outcome disagrees with trace ordering")
+    return dict(zip(("raid", "session", "operation", "item", "starting_revision"), map(int, rows[0][1:6]))) | {
+        "status": status, "frames": dict(zip(stages, frames)),
+    }
+
+
 def grid_review_evidence(directory, client_log, viewport, scale, pointer_checkpoint=False, inspect=False):
     states = ("idle", "drag-valid", "drag-invalid", "pending", "hover", "context")
     observed = {}
@@ -304,6 +330,8 @@ def main():
                         help="Capture hover and context before keyboard grid operations")
     parser.add_argument("--inventory-grid-inspect", action="store_true",
                         help="Inspect from the context menu before keyboard grid operations")
+    parser.add_argument("--inventory-grid-close-ack", action="store_true",
+                        help="Diagnose Tab close versus the original server reply during one solo grid move")
     parser.add_argument("--inventory-telemetry", action="store_true",
                         help="Measure application payloads and Linux process RSS during the solo grid route")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
@@ -363,6 +391,10 @@ def main():
         and not (grid_review or args.inventory_telemetry)
     ):
         parser.error("--inventory-grid-bench requires --inventory-grid --viewport 1280x800 without review or telemetry")
+    if args.inventory_grid_close_ack and not (args.inventory_grid and not grid_review
+                                               and not args.inventory_telemetry
+                                               and not args.inventory_grid_bench):
+        parser.error("--inventory-grid-close-ack requires the plain solo --inventory-grid route")
     if args.loot_contest and not (
         args.voxel_loot and args.clients == 2 and args.no_capture and not args.video
         and not args.animation_review and not args.audio and not args.configure_weapons and not args.weapon_kit
@@ -559,6 +591,7 @@ def main():
         "inventory_grid_review_scale": args.inventory_grid_review_scale,
         "inventory_grid_pointer_checkpoint": args.inventory_grid_pointer_checkpoint,
         "inventory_grid_inspect": args.inventory_grid_inspect,
+        "inventory_grid_close_ack": args.inventory_grid_close_ack,
         "inventory_telemetry": args.inventory_telemetry,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "clean_art": args.clean_art,
@@ -594,6 +627,8 @@ def main():
                     log = (client_output / "client.log").open("w", encoding="utf-8")
                     logs.append(log)
                     client_args = [str(client_path), "--playtest"]
+                    if args.inventory_grid_close_ack:
+                        client_args.append("--inventory-grid-close-ack")
                     if grid_review:
                         client_args.append("--inventory-grid-review")
                         if args.inventory_grid_pointer_checkpoint:
@@ -841,6 +876,9 @@ def main():
         assert evidence["client_performance"], "Missing frame time evidence"
         if args.inventory_grid_bench:
             evidence["inventory_frame_windows"] = inventory_frame_windows.analyze(client_text.splitlines())
+        if args.inventory_grid_close_ack:
+            diagnostic = grid_close_ack_evidence(client_text)
+            evidence["grid_close_ack"] = diagnostic
         if args.inventory_telemetry:
             assert all(any(row[name] for row in memory_samples) for name in ("client", "server")), (
                 "Missing process memory samples"
@@ -858,7 +896,9 @@ def main():
                 for row in [*review["observed"].values(), *review.get("inspection", [])] if row["png"]
             ]
         (output / "evidence.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
-        if grid_review:
+        if args.inventory_grid_close_ack:
+            result = f"GRID CLOSE ACK: {diagnostic['status']} (solo raid completed; see evidence.json)\n"
+        elif grid_review:
             assert not review["findings"], "\n".join(review["findings"])
             result = "PASS: native UDP raid with partial static grid evidence (see evidence.json)\n"
         else:
