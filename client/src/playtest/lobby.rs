@@ -7,12 +7,9 @@ use crate::loadout::{
     ui::Action,
 };
 use bevy::{
-    camera::NormalizedRenderTarget,
-    picking::{
-        backend::HitData,
-        events::{Pointer, PointerClick},
-        pointer::{Location, PointerButton, PointerId},
-    },
+    camera::RenderTarget,
+    picking::pointer::{Location, PointerAction, PointerButton, PointerId, PointerInput},
+    ui::UiGlobalTransform,
     window::{PrimaryWindow, WindowRef},
 };
 
@@ -32,6 +29,7 @@ pub(super) struct Sequence {
 #[derive(Default)]
 struct Review {
     stage: u8,
+    pointer_step: usize,
     baseline: Option<((u64, u32), Transform)>,
 }
 
@@ -44,13 +42,14 @@ pub(super) struct ReviewViews<'w, 's> {
         'w,
         's,
         (
-            Entity,
             &'static crate::menu::BenchFocusTarget,
             &'static Node,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
             &'static BackgroundColor,
         ),
     >,
-    window: Query<'w, 's, Entity, With<PrimaryWindow>>,
+    window: Query<'w, 's, (Entity, &'static Window), With<PrimaryWindow>>,
 }
 
 fn review_plan(actions: &[Action]) -> Vec<Action> {
@@ -63,25 +62,6 @@ fn review_plan(actions: &[Action]) -> Vec<Action> {
         .collect()
 }
 
-fn click_marker(commands: &mut Commands, entity: Entity, window: Entity) {
-    commands.trigger(PointerClick {
-        entity,
-        pointer: Pointer::new(
-            PointerId::Mouse,
-            Location {
-                target: NormalizedRenderTarget::Window(
-                    WindowRef::Entity(window).normalize(None).unwrap(),
-                ),
-                position: Vec2::ZERO,
-            },
-        ),
-        button: PointerButton::Primary,
-        hit: HitData::new(window, 0.0, None, None),
-        duration: std::time::Duration::ZERO,
-        count: 1,
-    });
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive(
     mut commands: Commands,
@@ -90,6 +70,7 @@ pub(super) fn drive(
     mut editor: ResMut<Editor>,
     buttons: Query<(Entity, &Action)>,
     mut activations: MessageWriter<crate::menu::Activation>,
+    mut pointer: MessageWriter<PointerInput>,
     mut sequence: Local<Sequence>,
     views: ReviewViews,
 ) {
@@ -161,18 +142,39 @@ pub(super) fn drive(
                 .find(|(_, action)| **action == Action::Part(0))
                 .unwrap()
                 .0;
-            let Some((marker, _, _, tint)) = views
-                .markers
-                .iter()
-                .find(|(_, target, node, _)| target.0 == button && node.display != Display::None)
+            let Some((_, _, _, transform, tint)) =
+                views.markers.iter().find(|(target, node, computed, ..)| {
+                    target.0 == button
+                        && node.display != Display::None
+                        && computed.size().min_element() > 0.0
+                })
             else {
                 return;
             };
             if next_stage == 0 {
                 assert_eq!(editor.draft.as_ref(), Some(&kit));
-                click_marker(&mut commands, marker, views.window.single().unwrap());
-                sequence.review.stage = 1;
-                sequence.next = now + 0.18;
+                let (entity, window) = views.window.single().unwrap();
+                let location = Location {
+                    target: RenderTarget::Window(WindowRef::Entity(entity))
+                        .normalize(Some(entity))
+                        .unwrap(),
+                    position: (*transform * Vec2::ZERO) / window.scale_factor(),
+                };
+                let actions = [
+                    PointerAction::Move { delta: Vec2::ZERO },
+                    PointerAction::Press(PointerButton::Primary),
+                    PointerAction::Release(PointerButton::Primary),
+                ];
+                pointer.write(PointerInput::new(
+                    PointerId::Mouse,
+                    location,
+                    actions[sequence.review.pointer_step],
+                ));
+                sequence.review.pointer_step += 1;
+                if sequence.review.pointer_step == actions.len() {
+                    sequence.review.stage = 1;
+                    sequence.next = now + 0.18;
+                }
                 return;
             }
             assert_eq!(views.menu.focused_widget(), Some(button));
