@@ -48,6 +48,136 @@ fn fixture() -> Inventory {
 }
 
 #[test]
+fn item_inventory_projection_is_private_and_keeps_the_commit_revision() {
+    let mut inventory = fixture();
+    let from = at(1, 0, 0);
+    let to = at(2, 1, 0);
+    let item = inventory
+        .insert_seed("med.bandage", Condition::Damaged, 2, from)
+        .unwrap();
+    let key = SessionKey {
+        raid_epoch: 1,
+        session_epoch: 2,
+    };
+    let mut session = OperationSession::new(key);
+    let mut authority = InventoryAuthority::new(key.raid_epoch, inventory);
+    let request = InventoryOperation {
+        session: key,
+        id: 1,
+        expected: [
+            VersionedCompartment {
+                id: from.compartment,
+                revision: 0,
+            },
+            VersionedCompartment {
+                id: to.compartment,
+                revision: 0,
+            },
+        ],
+        action: InventoryAction::Move {
+            item,
+            destination: to,
+        },
+    };
+    let commit = authority
+        .apply(&mut session, request, |_| true)
+        .commit
+        .unwrap();
+    let source = commit.project(key, |id| id == from.compartment);
+    assert_eq!(
+        source,
+        vec![CompartmentDelta {
+            version: VersionedCompartment {
+                id: from.compartment,
+                revision: 1
+            },
+            items: vec![ItemDelta {
+                id: item,
+                item: None
+            }],
+        }]
+    );
+    let target = commit.project(key, |id| id == to.compartment);
+    assert_eq!(target.len(), 1);
+    let snapshot = authority
+        .snapshot(to.compartment, |id| id == to.compartment)
+        .unwrap();
+    assert_eq!(target[0].version, snapshot.version);
+    assert_eq!(target[0].items[0].item.as_ref(), Some(&snapshot.items[0].1));
+    assert_eq!(snapshot.items[0].1.placement, to.placement);
+    assert_eq!(snapshot.items[0].1.quantity, 2);
+    assert_eq!(commit.project(key, |_| true).len(), 2);
+    assert!(commit.project(key, |_| false).is_empty());
+    assert!(commit
+        .project(
+            SessionKey {
+                raid_epoch: 0,
+                ..key
+            },
+            |_| true
+        )
+        .is_empty());
+    assert_eq!(
+        authority.snapshot(to.compartment, |_| false),
+        Err(SnapshotError::Unavailable)
+    );
+
+    let next = authority
+        .apply(
+            &mut session,
+            InventoryOperation {
+                id: 2,
+                expected: [snapshot.version; 2],
+                action: InventoryAction::Move {
+                    item,
+                    destination: at(2, 0, 0),
+                },
+                ..request
+            },
+            |_| true,
+        )
+        .commit
+        .unwrap()
+        .project(key, |_| true);
+    assert_eq!(next.len(), 1);
+    assert_eq!(next[0].version.revision, 2);
+    assert_eq!(commit.project(key, |id| id == to.compartment), target);
+    let encoded = crate::data::encode(&target);
+    assert_eq!(
+        crate::data::try_decode::<Vec<CompartmentDelta>>(&encoded).unwrap(),
+        target
+    );
+}
+
+#[test]
+fn item_inventory_projection_snapshot_does_not_truncate() {
+    let mut inventory = Inventory::default();
+    let id = CompartmentId(1);
+    inventory
+        .register_compartment(id, Footprint::new(17, 16).unwrap(), None)
+        .unwrap();
+    for index in 0..257 {
+        inventory
+            .insert_seed(
+                "med.bandage",
+                Condition::Intact,
+                1,
+                at(1, (index % 17) as u8, (index / 17) as u8),
+            )
+            .unwrap();
+    }
+    let authority = InventoryAuthority::new(1, inventory);
+    assert_eq!(
+        authority.snapshot(id, |_| false),
+        Err(SnapshotError::Unavailable)
+    );
+    assert_eq!(
+        authority.snapshot(id, |_| true),
+        Err(SnapshotError::TooManyItems)
+    );
+}
+
+#[test]
 fn item_inventory_operation_replays_result_without_repeating_commit() {
     let mut inventory = fixture();
     let own = at(1, 0, 0);

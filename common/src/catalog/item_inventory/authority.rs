@@ -42,7 +42,7 @@ pub struct OperationReply {
     pub result: OperationResult,
     /// Only a fresh successful operation produces a receipt. In particular,
     /// replaying an acknowledgement cannot publish another state change.
-    pub commit: Option<InventoryCommit>,
+    pub commit: Option<VersionedCommit>,
 }
 
 /// One stream per authenticated connection. The server supplies a fresh key
@@ -136,7 +136,7 @@ impl InventoryAuthority {
         &mut self,
         request: InventoryOperation,
         may_write: impl Fn(CompartmentId) -> bool,
-    ) -> Result<InventoryCommit, OperationResult> {
+    ) -> Result<VersionedCommit, OperationResult> {
         let rejected = OperationResult::Rejected;
         let scope = self
             .inventory
@@ -159,6 +159,11 @@ impl InventoryAuthority {
         for (id, revision) in scope.into_iter().zip(next) {
             self.revisions.insert(id, revision);
         }
-        Ok(commit)
+        Ok(VersionedCommit::new(
+            request.session.raid_epoch,
+            scope,
+            next,
+            commit,
+        ))
     }
 }
