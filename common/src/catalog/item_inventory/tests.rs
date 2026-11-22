@@ -48,6 +48,110 @@ fn fixture() -> Inventory {
 }
 
 #[test]
+fn item_inventory_replica_recovers_an_atomic_transfer_after_a_missing_delta() {
+    let mut inventory = fixture();
+    let from = at(1, 0, 0);
+    let intermediate = at(1, 1, 0);
+    let to = at(2, 1, 0);
+    let item = inventory
+        .insert_seed("med.bandage", Condition::Damaged, 2, from)
+        .unwrap();
+    let key = SessionKey {
+        raid_epoch: 1,
+        session_epoch: 2,
+    };
+    let mut session = OperationSession::new(key);
+    let mut authority = InventoryAuthority::new(key.raid_epoch, inventory);
+    let mut replica = InventoryReplica::new(key);
+    let version = |id, revision| VersionedCompartment { id, revision };
+    let a0 = version(from.compartment, 0);
+    let b0 = version(to.compartment, 0);
+    let a1 = version(from.compartment, 1);
+    let snapshot = |authority: &InventoryAuthority, id| authority.snapshot(id, |_| true).unwrap();
+    for id in [from.compartment, to.compartment] {
+        assert_eq!(
+            replica.apply_snapshot(key, snapshot(&authority, id)),
+            ReplicaUpdate::Applied
+        );
+    }
+    let first = InventoryOperation {
+        session: key,
+        id: 1,
+        expected: [a0; 2],
+        action: InventoryAction::Move {
+            item,
+            destination: intermediate,
+        },
+    };
+    let missed = authority
+        .apply(&mut session, first, |_| true)
+        .commit
+        .unwrap();
+    let second = InventoryOperation {
+        id: 2,
+        expected: [a1, b0],
+        action: InventoryAction::Move {
+            item,
+            destination: to,
+        },
+        ..first
+    };
+    let transfer = authority
+        .apply(&mut session, second, |_| true)
+        .commit
+        .unwrap();
+    let transfer_bytes = crate::data::encode(&transfer.project(key, |_| true));
+    let delivered = || crate::data::try_decode::<Vec<CompartmentDelta>>(&transfer_bytes).unwrap();
+    assert_eq!(
+        replica.apply_deltas(key, delivered()),
+        ReplicaUpdate::Resync(vec![from.compartment, to.compartment])
+    );
+    assert_eq!(replica.get(from.compartment).unwrap().version, a0);
+    assert!(replica.get(to.compartment).unwrap().items.is_empty());
+    let stale_snapshot = InventorySnapshot {
+        version: a0,
+        size: [4, 4],
+        items: vec![],
+    };
+    assert_eq!(
+        replica.apply_deltas(key, missed.project(key, |_| true)),
+        ReplicaUpdate::Applied
+    );
+    assert_eq!(
+        replica.apply_deltas(key, delivered()),
+        ReplicaUpdate::Applied
+    );
+    assert_eq!(
+        replica.apply_deltas(key, delivered()),
+        ReplicaUpdate::Ignored
+    );
+    assert_eq!(
+        replica.apply_snapshot(key, stale_snapshot),
+        ReplicaUpdate::Ignored
+    );
+    for id in [from.compartment, to.compartment] {
+        assert_eq!(replica.get(id), Some(&snapshot(&authority, id)));
+    }
+    let new_key = SessionKey {
+        session_epoch: 3,
+        ..key
+    };
+    let mut reconnected = InventoryReplica::new(new_key);
+    assert_eq!(
+        reconnected.apply_deltas(key, delivered()),
+        ReplicaUpdate::Ignored
+    );
+    assert_eq!(
+        reconnected.apply_snapshot(new_key, snapshot(&authority, to.compartment)),
+        ReplicaUpdate::Applied
+    );
+    reconnected.close(key, to.compartment);
+    assert!(reconnected.get(to.compartment).is_some());
+    reconnected.close(new_key, to.compartment);
+    assert!(reconnected.get(to.compartment).is_none());
+}
+
+#[test]
 fn item_inventory_projection_is_private_and_keeps_the_commit_revision() {
     let mut inventory = fixture();
     let from = at(1, 0, 0);
