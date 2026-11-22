@@ -148,6 +148,14 @@ pub struct Inventory {
 }
 
 impl Inventory {
+    /// Begin an empty collection without reissuing IDs from this authority.
+    pub fn empty_successor(&self) -> Self {
+        Self {
+            last_id: self.last_id,
+            ..Self::default()
+        }
+    }
+
     pub fn register_compartment(
         &mut self,
         id: CompartmentId,

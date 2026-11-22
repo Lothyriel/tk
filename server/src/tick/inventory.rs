@@ -82,8 +82,7 @@ impl std::fmt::Debug for Endpoint {
     }
 }
 
-fn seed_world(items: &mut Vec<WorldItem>) -> Inventory {
-    let mut inventory = Inventory::default();
+fn seed_world(inventory: &mut Inventory, items: &mut Vec<WorldItem>) {
     for (index, seed) in S1_SEEDS.into_iter().enumerate() {
         let source = CompartmentId(WORLD_SLOT_START + index as u64);
         let visual = &item_visuals()[seed];
@@ -125,7 +124,6 @@ fn seed_world(items: &mut Vec<WorldItem>) -> Inventory {
         debug!(item = ?item.id, slot = ?item.source, bounds = ?item.half_extents, center = ?item.center, seed, "placed raid item");
         items.push(item);
     }
-    inventory
 }
 
 #[cfg(test)]
@@ -358,6 +356,14 @@ impl TargetSight<'_, '_> {
 }
 
 impl Endpoint {
+    fn empty_inventory(&self) -> Inventory {
+        self.authority
+            .as_ref()
+            .map_or_else(Inventory::default, |authority| {
+                authority.inventory().empty_successor()
+            })
+    }
+
     pub(super) fn carried(&self, raid: &RaidState, client: u64) -> u32 {
         if !raid.loot_active() || self.raid != Some(raid.raid_id) {
             return 0;
@@ -378,7 +384,8 @@ impl Endpoint {
             self.world_items.clear();
         }
         if raid.loot_active() && self.raid != Some(raid.raid_id) {
-            let inventory = seed_world(&mut self.world_items);
+            let mut inventory = self.empty_inventory();
+            seed_world(&mut inventory, &mut self.world_items);
             self.loot_ids = self.world_items.iter().map(|item| item.id).collect();
             self.raid = Some(raid.raid_id);
             self.authority = Some(InventoryAuthority::new(u64::from(raid.raid_id), inventory));
@@ -401,7 +408,7 @@ fn process(
         state.raid = Some(raid.raid_id);
         state.authority = Some(InventoryAuthority::new(
             u64::from(raid.raid_id),
-            Default::default(),
+            state.empty_inventory(),
         ));
         state.peers.clear();
     }
@@ -707,7 +714,8 @@ mod tests {
     #[test]
     fn ground_pickup_removes_only_after_commit_and_only_once() {
         let mut world = Vec::new();
-        let mut inventory = seed_world(&mut world);
+        let mut inventory = Inventory::default();
+        seed_world(&mut inventory, &mut world);
         let item = world[0].id;
         let source = world[0].source;
         let original = *inventory.get(item).unwrap();
@@ -781,7 +789,11 @@ mod tests {
         }
         endpoint.sync_world(&raid);
         assert_eq!(endpoint.world_items.len(), S1_SEEDS.len());
+        let previous_ids = endpoint.loot_ids.clone();
         raid.phase = RaidPhase::Debrief;
+        endpoint.sync_world(&raid);
+        assert!(endpoint.world_items.is_empty());
+        raid.phase = RaidPhase::Lobby;
         endpoint.sync_world(&raid);
         assert!(endpoint.world_items.is_empty());
         raid.raid_id = 2;
@@ -789,6 +801,15 @@ mod tests {
         endpoint.sync_world(&raid);
         assert_eq!(endpoint.raid, Some(2));
         assert_eq!(endpoint.world_items.len(), S1_SEEDS.len());
+        let inventory = endpoint.authority.as_ref().unwrap().inventory();
+        assert!(previous_ids.iter().all(|id| inventory.get(*id).is_none()));
+        for (previous, item) in previous_ids.into_iter().zip(&endpoint.world_items) {
+            assert!(item.id.0 > previous.0);
+            assert_eq!(
+                inventory.get(item.id).unwrap().location.compartment,
+                item.source
+            );
+        }
     }
 
     #[test]

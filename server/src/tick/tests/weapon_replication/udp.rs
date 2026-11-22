@@ -528,6 +528,39 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
         assert_eq!(updates[0].body, UpdateBody::Ground(vec![]));
         assert!(peer.dropped.load(Ordering::Relaxed) > 0);
     }
+
+    first.input.interact = false;
+    first.input.pickup_focus = None;
+    first.input.lobby_sequence = 2;
+    harness.pump(&mut [&mut first, &mut late], 96);
+    assert_eq!(
+        harness.app.world().resource::<RaidState>().phase,
+        RaidPhase::Lobby
+    );
+    first.input.lobby_sequence = 3;
+    late.input.lobby_sequence = 1;
+    harness.pump(&mut [&mut first, &mut late], 512);
+    assert_eq!(
+        harness.app.world().resource::<RaidState>().phase,
+        RaidPhase::Active
+    );
+    for peer in [&mut first, &mut late] {
+        let updates = drain(peer);
+        let next = updates
+            .iter()
+            .find_map(|update| match &update.body {
+                UpdateBody::Ground(ground) if ground.len() == S1_SEEDS.len() => {
+                    assert_eq!(update.session.raid_epoch, u64::from(epoch) + 1);
+                    Some(ground)
+                }
+                _ => None,
+            })
+            .expect("fresh ground publication");
+        for (old, new) in items.iter().zip(next) {
+            assert_eq!(old.seed, new.seed);
+            assert!(items.iter().all(|old| old.id != new.id));
+        }
+    }
 }
 
 #[test]
