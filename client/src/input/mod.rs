@@ -4,7 +4,7 @@ use bevy::{
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
-use common::{combat::*, raid::*, *};
+use common::*;
 
 use crate::{ClientSystems, sync::ClientSession};
 pub(crate) mod inventory_panel;
@@ -14,14 +14,24 @@ pub struct Plugin;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub(crate) struct InputCapture;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub(crate) struct InventoryInput;
+
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LocalInput>()
             .init_resource::<inventory_panel::Panel>()
             .add_systems(
                 Update,
-                (inventory_panel::update, cursor_control, keyboard, mouse)
+                inventory_panel::update
+                    .in_set(InventoryInput)
+                    .in_set(ClientSystems::Input),
+            )
+            .add_systems(
+                Update,
+                (cursor_control, keyboard, mouse)
                     .chain()
+                    .after(InventoryInput)
                     .in_set(InputCapture)
                     .in_set(ClientSystems::Input),
             );
@@ -29,59 +39,63 @@ impl bevy::prelude::Plugin for Plugin {
 }
 
 fn cursor_control(
-    keyboard: Res<ButtonInput<KeyCode>>,
     session: Res<ClientSession>,
     id: Res<PlayerId>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
-    mut was_active: Local<bool>,
-    panel: Option<Res<inventory_panel::Panel>>,
+    menu: Res<crate::menu::Menu>,
 ) {
-    let active = session.playing(id.0);
-    if active && !*was_active {
-        cursor.grab_mode = CursorGrabMode::Locked;
-    }
-    if !active {
-        cursor.grab_mode = CursorGrabMode::None;
-    }
-    if active
-        && keyboard.just_pressed(KeyCode::Escape)
-        && !panel.is_some_and(|panel| panel.consumed_escape)
-    {
-        cursor.grab_mode = if cursor.grab_mode == CursorGrabMode::None {
-            CursorGrabMode::Locked
-        } else {
-            CursorGrabMode::None
-        };
-    }
-    cursor.visible = cursor.grab_mode == CursorGrabMode::None;
-    *was_active = active;
+    let captured = session.playing(id.0) && !menu.owns_input();
+    cursor.grab_mode = if captured {
+        CursorGrabMode::Locked
+    } else {
+        CursorGrabMode::None
+    };
+    cursor.visible = !captured;
 }
 
 #[derive(SystemParam)]
 struct InputOverlays<'w> {
-    editor: Option<Res<'w, crate::loadout::Editor>>,
     inventory: Option<Res<'w, crate::sync::inventory::State>>,
     panel: Option<Res<'w, inventory_panel::Panel>>,
+    menu: Option<Res<'w, crate::menu::Menu>>,
+}
+
+/// A press that began on a UI surface must not turn into a held raid action
+/// after a deploy/resume, or after closing another overlay.
+#[derive(Default)]
+struct GameplayPress {
+    fire_blocked: bool,
+    aim_blocked: bool,
+}
+
+fn gameplay_allowed(
+    session: &ClientSession,
+    id: u64,
+    now: f64,
+    window: &Window,
+    cursor: &CursorOptions,
+) -> bool {
+    session.playing(id)
+        && window.focused
+        && cursor.grab_mode != CursorGrabMode::None
+        && now - session.last_received < 2.0
 }
 
 fn keyboard(
     (keys, buttons): (Res<ButtonInput<KeyCode>>, Res<ButtonInput<MouseButton>>),
-    session: Res<ClientSession>,
-    id: Res<PlayerId>,
-    time: Res<Time<Real>>,
+    (session, id, time): (Res<ClientSession>, Res<PlayerId>, Res<Time<Real>>),
     window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
+    mut presses: Local<GameplayPress>,
     InputOverlays {
-        editor,
         inventory,
         panel,
+        menu,
     }: InputOverlays,
 ) {
     let active = !panel.is_some_and(|panel| panel.open)
-        && session.playing(id.0)
-        && window.0.focused
-        && window.1.grab_mode != CursorGrabMode::None
-        && time.elapsed_secs_f64() - session.last_received < 2.0;
+        && !menu.is_some_and(|menu| menu.blocks_gameplay())
+        && gameplay_allowed(&session, id.0, time.elapsed_secs_f64(), window.0, window.1);
     input.forward = active && keys.pressed(KeyCode::KeyW);
     input.backward = active && keys.pressed(KeyCode::KeyS);
     input.left = active && keys.pressed(KeyCode::KeyA);
@@ -97,9 +111,13 @@ fn keyboard(
         input.pickup_focus =
             inventory.and_then(|state| state.focused_ground(raid).map(|item| (raid, item.id)));
     }
-    input.fire = active && buttons.pressed(MouseButton::Left);
-    input.aim = active && buttons.pressed(MouseButton::Right);
-    if active && buttons.just_pressed(MouseButton::Left) {
+    let fire = buttons.pressed(MouseButton::Left);
+    let aim = buttons.pressed(MouseButton::Right);
+    presses.fire_blocked = fire && (!active || presses.fire_blocked);
+    presses.aim_blocked = aim && (!active || presses.aim_blocked);
+    input.fire = active && fire && !presses.fire_blocked;
+    input.aim = active && aim && !presses.aim_blocked;
+    if input.fire && buttons.just_pressed(MouseButton::Left) {
         input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
     }
     if active && keys.just_pressed(KeyCode::KeyR) {
@@ -117,54 +135,11 @@ fn keyboard(
         active && keys.pressed(KeyCode::KeyE),
         time.delta_secs(),
     );
-    let editing = editor.is_some_and(|editor| editor.visible || editor.pending.is_some());
-    if keys.just_pressed(KeyCode::Enter) && !editing {
-        input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
+    if active && keys.just_pressed(KeyCode::Digit1) {
+        input.weapon = EquipmentSlot::Primary;
     }
-    if let Some(local) = session.local(id.0) {
-        if keys.just_pressed(KeyCode::Enter)
-            && !editing
-            && session.raid.phase == RaidPhase::Lobby
-            && !local.participant.ready
-        {
-            input.weapon = EquipmentSlot::Primary;
-        }
-        if active && keys.just_pressed(KeyCode::Digit1) {
-            input.weapon = EquipmentSlot::Primary;
-        }
-        if active && keys.just_pressed(KeyCode::Digit2) {
-            input.weapon = EquipmentSlot::Sidearm;
-        }
-        if session.raid.phase == RaidPhase::Lobby && !local.participant.ready && !editing {
-            if keys.just_pressed(KeyCode::KeyG) {
-                let primaries: Vec<_> = common::catalog::catalog()
-                    .weapons()
-                    .filter(|weapon| weapon.class != WeaponKind::Pistol)
-                    .map(|weapon| weapon.definition)
-                    .collect();
-                if let Some(index) = primaries.iter().position(|id| *id == input.loadout.primary) {
-                    input.loadout.primary = primaries[(index + 1) % primaries.len()];
-                }
-                input.weapon = EquipmentSlot::Primary;
-            }
-            if keys.just_pressed(KeyCode::KeyB) {
-                input.loadout.ammo = if input.loadout.ammo == AmmoKind::Ball {
-                    AmmoKind::Ap
-                } else {
-                    AmmoKind::Ball
-                };
-            }
-            if keys.just_pressed(KeyCode::KeyH) {
-                input.loadout.armor = match input.loadout.armor {
-                    ArmorKind::None => ArmorKind::Light,
-                    ArmorKind::Light => ArmorKind::Heavy,
-                    ArmorKind::Heavy => ArmorKind::None,
-                };
-            }
-            if keys.just_pressed(KeyCode::KeyJ) {
-                input.loadout.helmet = !input.loadout.helmet;
-            }
-        }
+    if active && keys.just_pressed(KeyCode::Digit2) {
+        input.weapon = EquipmentSlot::Sidearm;
     }
 }
 
@@ -180,11 +155,18 @@ pub(crate) fn step_lean(roll: f32, left: bool, right: bool, dt: f32) -> f32 {
 
 fn mouse(
     motion: Res<AccumulatedMouseMotion>,
-    cursor: Single<&CursorOptions, With<PrimaryWindow>>,
+    window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
+    (session, id, time): (Res<ClientSession>, Res<PlayerId>, Res<Time<Real>>),
     mut input: ResMut<LocalInput>,
-    panel: Option<Res<inventory_panel::Panel>>,
+    (panel, menu): (
+        Option<Res<inventory_panel::Panel>>,
+        Option<Res<crate::menu::Menu>>,
+    ),
 ) {
-    if cursor.grab_mode == CursorGrabMode::None || panel.is_some_and(|panel| panel.open) {
+    if panel.is_some_and(|panel| panel.open)
+        || menu.is_some_and(|menu| menu.blocks_gameplay())
+        || !gameplay_allowed(&session, id.0, time.elapsed_secs_f64(), window.0, window.1)
+    {
         return;
     }
     let scale = if input.aim { 0.65 } else { 1.0 };
@@ -195,6 +177,7 @@ fn mouse(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::raid::*;
 
     fn input_app() -> App {
         let mut app = App::new();
@@ -335,43 +318,6 @@ mod tests {
     }
 
     #[test]
-    fn lobby_editor_blocks_ready_and_gear_keys_until_closed_and_confirmed() {
-        let mut app = input_app();
-        app.init_resource::<crate::loadout::Editor>();
-        for (visible, pending) in [(true, None), (false, Some(1))] {
-            {
-                let mut editor = app.world_mut().resource_mut::<crate::loadout::Editor>();
-                editor.visible = visible;
-                editor.pending = pending;
-            }
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            for key in [
-                KeyCode::Enter,
-                KeyCode::KeyG,
-                KeyCode::KeyB,
-                KeyCode::KeyH,
-                KeyCode::KeyJ,
-            ] {
-                keys.press(key);
-            }
-            app.update();
-            let input = app.world().resource::<LocalInput>();
-            assert_eq!(input.lobby_sequence, 0);
-            assert_eq!(input.loadout, Loadout::default());
-        }
-        app.world_mut()
-            .resource_mut::<crate::loadout::Editor>()
-            .pending = None;
-        app.update();
-        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 1);
-        assert_eq!(
-            app.world().resource::<LocalInput>().loadout.primary,
-            WeaponId::MP5
-        );
-    }
-
-    #[test]
     fn right_mouse_aim_is_held_only_during_captured_active_control() {
         let mut app = input_app();
         {
@@ -458,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn lobby_keys_select_equipment_and_ready_without_enabling_combat() {
+    fn lobby_keys_are_not_gameplay_or_hidden_ready_commands() {
         let mut app = input_app();
         {
             let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -479,12 +425,9 @@ mod tests {
             .press(MouseButton::Left);
         app.update();
         let input = app.world().resource::<LocalInput>();
-        assert_eq!(input.loadout.primary, WeaponId::MP5);
-        assert_eq!(input.loadout.ammo, AmmoKind::Ap);
-        assert_eq!(input.loadout.armor, ArmorKind::Heavy);
-        assert!(!input.loadout.helmet);
+        assert_eq!(input.loadout, common::combat::Loadout::default());
         assert_eq!(input.weapon, EquipmentSlot::Primary);
-        assert_eq!(input.lobby_sequence, 1);
+        assert_eq!(input.lobby_sequence, 0);
         assert!(!input.forward);
         assert!(!input.fire);
         assert!(!input.interact);
@@ -543,46 +486,5 @@ mod tests {
         assert_eq!(input.fire_pressed_sequence, 1);
         assert_eq!(input.reload_sequence, 1);
         assert_eq!((input.inspect_sequence, input.selector_sequence), (1, 1));
-    }
-
-    #[test]
-    fn cursor_automatically_tracks_raid_and_escape_toggles_capture() {
-        let mut app = input_app();
-        app.add_systems(Update, cursor_control.before(keyboard));
-        app.update();
-        let entity = app
-            .world_mut()
-            .query_filtered::<Entity, With<Window>>()
-            .single(app.world())
-            .unwrap();
-        assert_eq!(
-            app.world().get::<CursorOptions>(entity).unwrap().grab_mode,
-            CursorGrabMode::None
-        );
-        {
-            let mut session = app.world_mut().resource_mut::<ClientSession>();
-            session.raid.phase = RaidPhase::Active;
-            session.players[0].participant.begin();
-        }
-        app.update();
-        assert_eq!(
-            app.world().get::<CursorOptions>(entity).unwrap().grab_mode,
-            CursorGrabMode::Locked
-        );
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::Escape);
-        app.update();
-        assert_eq!(
-            app.world().get::<CursorOptions>(entity).unwrap().grab_mode,
-            CursorGrabMode::None
-        );
-        assert!(app.world().get::<CursorOptions>(entity).unwrap().visible);
-        app.world_mut().resource_mut::<ClientSession>().raid.phase = RaidPhase::Debrief;
-        app.update();
-        assert_eq!(
-            app.world().get::<CursorOptions>(entity).unwrap().grab_mode,
-            CursorGrabMode::None
-        );
     }
 }

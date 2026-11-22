@@ -14,6 +14,7 @@ use common::*;
 mod hud;
 mod input;
 mod loadout;
+mod menu;
 mod playtest;
 mod render;
 mod sync;
@@ -88,6 +89,7 @@ impl bevy::prelude::Plugin for ClientPlugin {
             .add_plugins(input::Plugin)
             .add_plugins(sync::Plugin)
             .add_plugins(loadout::Plugin)
+            .add_plugins(menu::Plugin)
             .insert_resource(PlayerId(client_id))
             .insert_resource(client)
             .insert_resource(transport);

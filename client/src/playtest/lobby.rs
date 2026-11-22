@@ -11,7 +11,6 @@ pub(super) fn enabled() -> bool {
 pub(super) struct Sequence {
     actions: Vec<Action>,
     index: usize,
-    pressed: Option<Entity>,
     next: f64,
     captured: bool,
 }
@@ -22,16 +21,13 @@ pub(super) fn drive(
     mut driver: ResMut<Driver>,
     mut editor: ResMut<Editor>,
     buttons: Query<(Entity, &Action)>,
+    mut activations: MessageWriter<crate::menu::Activation>,
     mut sequence: Local<Sequence>,
 ) {
     if !enabled() || driver.step != Step::Equip || driver.panel_configured {
         return;
     }
     let now = time.elapsed_secs_f64();
-    if let Some(entity) = sequence.pressed.take() {
-        commands.entity(entity).remove::<bevy::ui::Pressed>();
-        return;
-    }
     let Some(local) = session.local(id.0) else {
         return;
     };
@@ -75,8 +71,7 @@ pub(super) fn drive(
             .iter()
             .find(|(_, candidate)| *candidate == action)
             .expect("real panel button");
-        commands.entity(entity).insert(bevy::ui::Pressed);
-        sequence.pressed = Some(entity);
+        activations.write(crate::menu::Activation(entity));
         sequence.index += 1;
         sequence.next = now + 0.18;
         return;

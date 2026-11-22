@@ -1,5 +1,4 @@
 use super::*;
-use bevy::ui_widgets::Button;
 use common::catalog::{WeaponId, catalog};
 use editor::{ROWS, part_name};
 
@@ -22,10 +21,24 @@ pub(super) struct PartRow(usize);
 #[derive(Component)]
 pub(super) struct Status;
 
+impl Action {
+    pub(crate) fn order(self) -> u16 {
+        match self {
+            Self::Slot => 0,
+            Self::Reset => 1,
+            Self::Close => 2,
+            Self::Part(row) => 3 + 2 * row as u16,
+            Self::Position(row) => 4 + 2 * row as u16,
+            Self::Reserve(row) => 30 + row as u16,
+            Self::Apply => 33,
+        }
+    }
+}
+
 fn button(parent: &mut ChildSpawnerCommands, action: Action, label: &str, width: f32) {
     parent
         .spawn((
-            Button,
+            crate::menu::widget(action.order()),
             action,
             Node {
                 width: Val::Percent(width),
@@ -41,6 +54,7 @@ fn button(parent: &mut ChildSpawnerCommands, action: Action, label: &str, width:
                 Text::new(label),
                 TextFont::from_font_size(13.0),
                 TextColor(Color::srgb(0.9, 0.97, 1.0)),
+                Pickable::IGNORE,
             ));
         });
 }
@@ -60,12 +74,13 @@ pub(super) fn setup(mut commands: Commands, image: Res<preview::PreviewImage>) {
             .with_children(|parent| {
                 button(parent, Action::Slot, "Primary / Sidearm", 35.0);
                 button(parent, Action::Reset, "Discard draft", 30.0);
-                button(parent, Action::Close, "[V] Close", 30.0);
+                button(parent, Action::Close, "Back to lobby", 30.0);
             });
         parent.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(16.0), flex_grow: 1.0, min_height: Val::Px(0.0), ..default() })
             .with_children(|parent| {
-                parent.spawn(Node { width: Val::Percent(52.0), flex_direction: FlexDirection::Column,
+                parent.spawn((crate::menu::BenchScroll, bevy::ui_widgets::ScrollArea, Node { width: Val::Percent(52.0), flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(4.0), overflow: Overflow::scroll_y(), ..default() })
+                    )
                     .with_children(|parent| {
                         for (index, _) in ROWS.iter().enumerate() {
                             parent.spawn((PartRow(index), Node { column_gap: Val::Px(4.0), flex_shrink: 0.0, ..default() }))
@@ -98,7 +113,6 @@ pub(super) fn refresh(
     mut rows: Query<(&PartRow, &mut Node), Without<Panel>>,
     mut labels: Query<(&Label, &mut Text), Without<Status>>,
     mut status: Single<&mut Text, (With<Status>, Without<Label>)>,
-    mut buttons: Query<(&Action, &mut BackgroundColor)>,
     mut validation: Local<Option<(common::catalog::WeaponKit, String)>>,
 ) {
     panel.display = if editor.visible {
@@ -110,13 +124,6 @@ pub(super) fn refresh(
         return;
     }
     let enabled = editor.editable(&session, id.0);
-    for (action, mut color) in &mut buttons {
-        color.0 = if enabled || *action == Action::Close {
-            Color::srgb(0.09, 0.16, 0.22)
-        } else {
-            Color::srgb(0.06, 0.07, 0.08)
-        };
-    }
     let Some(kit) = &editor.draft else {
         ***status = "Waiting for confirmed equipment...".into();
         return;
@@ -153,7 +160,7 @@ pub(super) fn refresh(
                 index + 1,
                 part_name(kit.reserves.get(index).map_or(0, |p| p.0))
             ),
-            Action::Close => "[V] Close".into(),
+            Action::Close => "Back to lobby".into(),
             Action::Reset => "Discard draft".into(),
             Action::Apply => if editor.pending.is_some() {
                 "Awaiting confirmation"
@@ -195,6 +202,6 @@ pub(super) fn refresh(
             "LOCKED: ready/countdown/raid or pending request."
         },
         editor.status,
-        "Click a part/reserve to cycle. Position cycles rail slots.\nRemoving a parent removes its draft descendants.\nClose, then Enter to ready. F/Q/E remain raid controls."
+        "Click a control, or use Tab / arrows and Enter. Esc returns.\nRemoving a parent removes its draft descendants."
     );
 }

@@ -16,15 +16,42 @@ pub(crate) use editor::Editor;
 pub(crate) struct EditorInput;
 
 pub struct Plugin;
+
+#[cfg(test)]
+pub(crate) fn setup_test_widgets(app: &mut App) {
+    app.insert_resource(preview::PreviewImage(Handle::default()))
+        .init_resource::<Editor>()
+        .add_systems(Startup, ui::setup)
+        .add_systems(
+            Update,
+            synchronize
+                .in_set(ClientSystems::Input)
+                .before(crate::menu::MenuInput),
+        )
+        .add_systems(
+            Update,
+            interact
+                .in_set(ClientSystems::Input)
+                .after(crate::menu::MenuInput)
+                .before(crate::input::InputCapture),
+        )
+        .add_systems(Update, ui::refresh.in_set(ClientSystems::Present));
+}
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Editor>()
             .add_systems(Startup, (preview::setup, ui::setup).chain())
             .add_systems(
                 Update,
-                (synchronize, interact)
-                    .chain()
-                    .after(crate::input::InputCapture)
+                synchronize
+                    .before(crate::menu::MenuInput)
+                    .in_set(ClientSystems::Input),
+            )
+            .add_systems(
+                Update,
+                interact
+                    .after(crate::menu::MenuInput)
+                    .before(crate::input::InputCapture)
                     .in_set(EditorInput)
                     .in_set(ClientSystems::Input),
             )
@@ -35,32 +62,22 @@ impl bevy::prelude::Plugin for Plugin {
     }
 }
 
-fn synchronize(
-    mut editor: ResMut<Editor>,
-    session: Res<ClientSession>,
-    id: Res<PlayerId>,
-    keys: Res<ButtonInput<KeyCode>>,
-) {
+fn synchronize(mut editor: ResMut<Editor>, session: Res<ClientSession>, id: Res<PlayerId>) {
     editor.sync(&session, id.0);
-    if keys.just_pressed(KeyCode::KeyV)
-        && matches!(
-            session.raid.phase,
-            common::raid::RaidPhase::Lobby | common::raid::RaidPhase::Countdown
-        )
-    {
-        editor.visible = !editor.visible;
-    }
 }
 
 fn interact(
-    buttons: Query<&ui::Action, Added<bevy::ui::Pressed>>,
+    mut activations: MessageReader<crate::menu::Activation>,
+    buttons: Query<&ui::Action>,
     mut editor: ResMut<Editor>,
-    session: Res<ClientSession>,
-    id: Res<PlayerId>,
+    (session, id, time): (Res<ClientSession>, Res<PlayerId>, Res<Time<Real>>),
     mut client: ResMut<RenetClient>,
-    time: Res<Time<Real>>,
+    menu: Option<Res<crate::menu::Menu>>,
 ) {
-    for action in &buttons {
+    for activation in activations.read() {
+        let Ok(action) = buttons.get(activation.0) else {
+            continue;
+        };
         if !editor.visible {
             continue;
         }
@@ -69,6 +86,7 @@ fn interact(
             continue;
         }
         if !editor.editable(&session, id.0)
+            || menu.as_ref().is_some_and(|menu| menu.awaiting_lobby())
             || !client.is_connected()
             || time.elapsed_secs_f64() - session.last_received > 2.0
         {

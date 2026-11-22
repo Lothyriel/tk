@@ -35,7 +35,7 @@ fn fixture() -> (App, Arsenal, ConfigurationPublisher) {
         .insert_resource(client)
         .insert_resource(preview::PreviewImage(Handle::default()))
         .init_resource::<Editor>()
-        .init_resource::<ButtonInput<KeyCode>>()
+        .add_message::<crate::menu::Activation>()
         .add_systems(Startup, ui::setup)
         .add_systems(Update, (synchronize, interact).chain());
     app.update();
@@ -51,11 +51,8 @@ fn press(app: &mut App, action: ui::Action) {
         .find(|(_, current)| **current == action)
         .unwrap()
         .0;
-    app.world_mut().entity_mut(button).insert(bevy::ui::Pressed);
-    app.update();
     app.world_mut()
-        .entity_mut(button)
-        .remove::<bevy::ui::Pressed>();
+        .write_message(crate::menu::Activation(button));
     app.update();
 }
 

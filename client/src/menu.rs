@@ -1,0 +1,870 @@
+//! One foreground widget surface owns activation before gameplay input is sampled.
+use bevy::{
+    picking::{events::PointerClick, pointer::PointerButton},
+    prelude::*,
+    ui::{ScrollPosition, UiGlobalTransform},
+    ui_widgets::Button,
+    window::PrimaryWindow,
+};
+use bevy_renet2::prelude::RenetClient;
+use common::{EquipmentSlot, LocalInput, PlayerId, WeaponKind, combat::*, raid::RaidPhase};
+
+use crate::{ClientSystems, input::inventory_panel::Panel, loadout, sync::ClientSession};
+
+pub(crate) struct Plugin;
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct MenuInput;
+
+impl bevy::prelude::Plugin for Plugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Menu>()
+            .add_message::<Activation>()
+            .add_message::<PointerActivation>()
+            .add_observer(record_activation)
+            .add_systems(Startup, setup)
+            .add_systems(
+                Update,
+                route
+                    .after(crate::input::InventoryInput)
+                    .before(crate::input::InputCapture)
+                    .in_set(MenuInput)
+                    .in_set(ClientSystems::Input),
+            )
+            .add_systems(Update, present.in_set(ClientSystems::Present));
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Surface {
+    Connection,
+    Lobby,
+    Bench,
+    Playing,
+    Inventory,
+    Pause,
+    Waiting,
+    Debrief,
+}
+
+#[derive(Resource)]
+pub(crate) struct Menu {
+    surface: Surface,
+    paused: bool,
+    selected: Option<Entity>,
+    lobby_focus: Option<Entity>,
+    pending: Option<u32>,
+    transitioning_to_play: bool,
+}
+
+impl Default for Menu {
+    fn default() -> Self {
+        Self {
+            surface: Surface::Connection,
+            paused: false,
+            selected: None,
+            lobby_focus: None,
+            pending: None,
+            transitioning_to_play: false,
+        }
+    }
+}
+
+impl Menu {
+    pub(crate) fn owns_input(&self) -> bool {
+        self.surface != Surface::Playing
+    }
+
+    pub(crate) fn blocks_gameplay(&self) -> bool {
+        self.owns_input() || self.transitioning_to_play
+    }
+
+    pub(crate) fn paused(&self) -> bool {
+        self.paused
+    }
+
+    pub(crate) fn awaiting_lobby(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    pub(crate) fn replaces_hud(&self) -> bool {
+        !matches!(self.surface, Surface::Playing | Surface::Inventory)
+    }
+}
+
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+enum Action {
+    Ready,
+    Bench,
+    Primary,
+    Ammo,
+    Vest,
+    Helmet,
+    Return,
+    Resume,
+    Quit,
+}
+
+impl Action {
+    fn changes_kit(self) -> bool {
+        matches!(self, Self::Primary | Self::Ammo | Self::Vest | Self::Helmet)
+    }
+}
+
+#[derive(Component)]
+pub(crate) struct NavOrder(u16);
+
+#[derive(Component)]
+pub(crate) struct BenchScroll;
+
+#[derive(Message)]
+pub(crate) struct Activation(pub Entity);
+
+#[derive(Message)]
+struct PointerActivation(Entity);
+
+#[derive(Component)]
+struct Root;
+
+#[derive(Component)]
+struct Status;
+
+pub(crate) fn widget(order: u16) -> impl Bundle {
+    (
+        Button,
+        NavOrder(order),
+        Outline::new(Val::Px(2.0), Val::Px(-2.0), Color::NONE),
+    )
+}
+
+fn record_activation(
+    event: On<PointerClick>,
+    buttons: Query<&NavOrder>,
+    mut activations: MessageWriter<PointerActivation>,
+) {
+    if event.button == PointerButton::Primary && buttons.contains(event.entity) {
+        activations.write(PointerActivation(event.entity));
+    }
+}
+
+fn setup(mut commands: Commands) {
+    commands
+        .spawn((
+            Root,
+            GlobalZIndex(250),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(65.0),
+                left: Val::Px(18.0),
+                width: Val::Percent(42.0),
+                min_width: Val::Px(290.0),
+                max_width: Val::Px(490.0),
+                padding: UiRect::all(Val::Px(16.0)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.018, 0.032, 0.048)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((Status, Text::default(), TextFont::from_font_size(17.0)));
+            for (order, action) in [
+                Action::Ready,
+                Action::Bench,
+                Action::Primary,
+                Action::Ammo,
+                Action::Vest,
+                Action::Helmet,
+                Action::Return,
+                Action::Resume,
+                Action::Quit,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                parent
+                    .spawn((
+                        widget(order as u16),
+                        action,
+                        Node {
+                            display: Display::None,
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                            ..default()
+                        },
+                        BackgroundColor::default(),
+                    ))
+                    .with_child((
+                        Text::default(),
+                        TextFont::from_font_size(15.0),
+                        Pickable::IGNORE,
+                    ));
+            }
+        });
+}
+
+fn connection_ready(session: &ClientSession, id: u64, client: &RenetClient, now: f64) -> bool {
+    client.is_connected() && session.local(id).is_some() && now - session.last_received < 2.0
+}
+
+type WidgetQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static NavOrder,
+        Option<&'static Action>,
+        Option<&'static loadout::ui::Action>,
+    ),
+>;
+
+fn available(
+    surface: Surface,
+    action: Option<&Action>,
+    bench: Option<&loadout::ui::Action>,
+    editable: bool,
+    pending: bool,
+    kit: Option<&common::catalog::WeaponKit>,
+) -> (bool, bool) {
+    let shown = match surface {
+        Surface::Lobby => action.is_some_and(|action| {
+            matches!(action, Action::Ready | Action::Bench | Action::Quit) || action.changes_kit()
+        }),
+        Surface::Bench => match bench {
+            Some(loadout::ui::Action::Part(row) | loadout::ui::Action::Position(row)) => {
+                kit.is_some_and(|kit| kit.weapon.definition == common::WeaponId::M4A1 || *row == 0)
+            }
+            _ => bench.is_some(),
+        },
+        Surface::Pause => matches!(action, Some(Action::Resume | Action::Quit)),
+        Surface::Debrief => matches!(action, Some(Action::Return | Action::Quit)),
+        Surface::Waiting | Surface::Connection => action == Some(&Action::Quit),
+        Surface::Playing | Surface::Inventory => false,
+    };
+    let enabled = match action {
+        Some(Action::Ready | Action::Return) => !pending,
+        Some(action) if action.changes_kit() => editable,
+        Some(_) => true,
+        None => bench.is_some_and(|action| {
+            *action == loadout::ui::Action::Close || (editable && kit.is_some())
+        }),
+    };
+    (shown, shown && enabled)
+}
+
+#[allow(clippy::too_many_arguments)] // Independent Bevy system parameters.
+fn route(
+    (keys, window): (
+        Res<ButtonInput<KeyCode>>,
+        Single<&Window, With<PrimaryWindow>>,
+    ),
+    (session, id, client, time): (
+        Res<ClientSession>,
+        Res<PlayerId>,
+        Res<RenetClient>,
+        Res<Time<Real>>,
+    ),
+    mut menu: ResMut<Menu>,
+    mut editor: ResMut<loadout::Editor>,
+    mut panel: ResMut<Panel>,
+    mut input: ResMut<LocalInput>,
+    widgets: WidgetQuery,
+    mut pointer: MessageReader<PointerActivation>,
+    mut activations: MessageWriter<Activation>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let old = menu.surface;
+    let local = session.local(id.0);
+    if local.is_some_and(|p| Some(p.participant.last_command) == menu.pending) {
+        menu.pending = None;
+    }
+    let connected = connection_ready(&session, id.0, &client, time.elapsed_secs_f64());
+    let playing = connected && session.playing(id.0);
+    if !playing {
+        menu.paused = false;
+    }
+    if !connected {
+        editor.visible = false;
+    }
+    let lobby = connected && matches!(session.raid.phase, RaidPhase::Lobby | RaidPhase::Countdown);
+    let escape = window.focused && keys.just_pressed(KeyCode::Escape) && !panel.consumed_escape;
+    let bench_shortcut = lobby && window.focused && keys.just_pressed(KeyCode::KeyV);
+    let mut consumed = false;
+    if escape && editor.visible {
+        editor.visible = false;
+        consumed = true;
+    } else if bench_shortcut {
+        if !editor.visible {
+            menu.lobby_focus = widgets
+                .iter()
+                .find(|(_, _, action, _)| *action == Some(&Action::Bench))
+                .map(|(entity, ..)| entity);
+        }
+        editor.visible = !editor.visible;
+        consumed = true;
+    } else if escape && playing {
+        menu.paused = !menu.paused;
+        consumed = true;
+    }
+    menu.surface = if !connected {
+        Surface::Connection
+    } else if lobby && editor.visible {
+        Surface::Bench
+    } else if lobby {
+        Surface::Lobby
+    } else if session.raid.phase == RaidPhase::Debrief {
+        Surface::Debrief
+    } else if !playing {
+        Surface::Waiting
+    } else if menu.paused {
+        Surface::Pause
+    } else if panel.open {
+        Surface::Inventory
+    } else {
+        Surface::Playing
+    };
+    if menu.paused && panel.open {
+        *panel = Panel::default();
+    }
+    menu.transitioning_to_play = old != Surface::Playing && menu.surface == Surface::Playing;
+    if old != menu.surface {
+        menu.selected = if old == Surface::Bench && menu.surface == Surface::Lobby {
+            menu.lobby_focus.take()
+        } else {
+            None
+        };
+    }
+    let pending = menu.pending.is_some() || editor.pending.is_some();
+    let editable = connected && !pending && editor.editable(&session, id.0);
+    let mut candidates: Vec<_> = widgets
+        .iter()
+        .filter(|(_, _, action, bench)| {
+            let (shown, enabled) = available(
+                menu.surface,
+                *action,
+                *bench,
+                editable,
+                pending,
+                editor.draft.as_ref(),
+            );
+            enabled || (shown && pending && matches!(action, Some(Action::Ready | Action::Return)))
+        })
+        .collect();
+    candidates.sort_unstable_by_key(|(_, order, ..)| order.0);
+    let previous = menu.selected;
+    let clicked = pointer
+        .read()
+        .map(|event| event.0)
+        .filter(|entity| {
+            window.focused
+                && old == menu.surface
+                && !consumed
+                && candidates.iter().any(|entry| entry.0 == *entity)
+        })
+        .last();
+    let index = candidates
+        .iter()
+        .position(|entry| Some(entry.0) == previous);
+    let wants_previous = keys.just_pressed(KeyCode::ArrowUp)
+        || keys.just_pressed(KeyCode::ArrowLeft)
+        || keys.just_pressed(KeyCode::Tab)
+            && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
+    let wants_next = keys.just_pressed(KeyCode::ArrowDown)
+        || keys.just_pressed(KeyCode::ArrowRight)
+        || keys.just_pressed(KeyCode::Tab);
+    let navigated = window.focused && !consumed && (wants_previous || wants_next);
+    let len = candidates.len();
+    let index = match index {
+        Some(index) if navigated && wants_previous => (index + len - 1) % len,
+        Some(index) if navigated => (index + 1) % len,
+        Some(index) => index,
+        None => 0,
+    };
+    menu.selected = clicked.or_else(|| candidates.get(index).map(|entry| entry.0));
+    let key_activate = window.focused
+        && !consumed
+        && !navigated
+        && old == menu.surface
+        && previous == menu.selected
+        && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space));
+    let Some(entity) = clicked.or_else(|| key_activate.then_some(menu.selected).flatten()) else {
+        return;
+    };
+    let Ok((_, _, action, bench)) = widgets.get(entity) else {
+        return;
+    };
+    if !available(
+        menu.surface,
+        action,
+        bench,
+        editable,
+        pending,
+        editor.draft.as_ref(),
+    )
+    .1
+    {
+        return;
+    }
+    match action.copied() {
+        Some(Action::Ready | Action::Return) => {
+            input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
+            menu.pending = Some(input.lobby_sequence);
+            if lobby && local.is_some_and(|actor| !actor.participant.ready) {
+                input.weapon = EquipmentSlot::Primary;
+            }
+        }
+        Some(Action::Bench) => {
+            menu.lobby_focus = Some(entity);
+            menu.selected = widgets
+                .iter()
+                .find(|(_, _, _, action)| *action == Some(&loadout::ui::Action::Close))
+                .map(|(entity, ..)| entity);
+            menu.surface = Surface::Bench;
+            editor.visible = true;
+        }
+        Some(Action::Resume) => {
+            menu.paused = false;
+            // Gameplay remains blocked for the activation frame.
+        }
+        Some(Action::Quit) => {
+            exit.write(AppExit::Success);
+        }
+        Some(action) => change_kit(action, &mut input),
+        None if bench == Some(&loadout::ui::Action::Close) => {
+            editor.visible = false;
+            menu.surface = Surface::Lobby;
+            menu.selected = menu.lobby_focus.take();
+        }
+        None => {
+            activations.write(Activation(entity));
+        }
+    }
+}
+
+fn change_kit(action: Action, input: &mut LocalInput) {
+    match action {
+        Action::Primary => {
+            let primaries = common::catalog::catalog()
+                .weapons()
+                .filter(|weapon| weapon.class != WeaponKind::Pistol)
+                .map(|weapon| weapon.definition)
+                .collect::<Vec<_>>();
+            if let Some(index) = primaries.iter().position(|id| *id == input.loadout.primary) {
+                input.loadout.primary = primaries[(index + 1) % primaries.len()];
+            }
+            input.weapon = EquipmentSlot::Primary;
+        }
+        Action::Ammo => {
+            input.loadout.ammo = match input.loadout.ammo {
+                AmmoKind::Ball => AmmoKind::Ap,
+                AmmoKind::Ap => AmmoKind::Ball,
+            };
+        }
+        Action::Vest => {
+            input.loadout.armor = match input.loadout.armor {
+                ArmorKind::None => ArmorKind::Light,
+                ArmorKind::Light => ArmorKind::Heavy,
+                ArmorKind::Heavy => ArmorKind::None,
+            };
+        }
+        Action::Helmet => input.loadout.helmet = !input.loadout.helmet,
+        _ => unreachable!("only equipment actions reach kit changes"),
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // Independent presentation queries.
+fn present(
+    (session, id, input): (Res<ClientSession>, Res<PlayerId>, Res<LocalInput>),
+    client: Res<RenetClient>,
+    (menu, editor): (Res<Menu>, Res<loadout::Editor>),
+    mut root: Single<&mut Node, (With<Root>, Without<Action>)>,
+    mut status: Single<&mut Text, With<Status>>,
+    mut main: Query<(&Action, &Children, &mut Node), Without<Root>>,
+    mut labels: Query<&mut Text, Without<Status>>,
+    mut widgets: Query<
+        (
+            Entity,
+            Option<&Action>,
+            Option<&loadout::ui::Action>,
+            &mut Outline,
+            &mut BackgroundColor,
+        ),
+        With<NavOrder>,
+    >,
+    mut scroll: Query<(&ComputedNode, &UiGlobalTransform, &mut ScrollPosition), With<BenchScroll>>,
+    bounds: Query<(&ComputedNode, &UiGlobalTransform)>,
+    mut last_focus: Local<Option<Entity>>,
+) {
+    root.display = if matches!(
+        menu.surface,
+        Surface::Playing | Surface::Inventory | Surface::Bench
+    ) {
+        Display::None
+    } else {
+        Display::Flex
+    };
+    let participant = session.local(id.0).map(|actor| &actor.participant);
+    let ready = participant.is_some_and(|p| p.ready);
+    let pending = menu.pending.is_some() || editor.pending.is_some();
+    let editable = !pending && editor.editable(&session, id.0);
+    ***status = match menu.surface {
+        Surface::Lobby => format!(
+            "RAID / KIT PREPARATION\n{}\nTab / arrows: select · Enter / Space: activate",
+            if menu.pending.is_some() {
+                "Awaiting server confirmation".into()
+            } else if editor.pending.is_some() {
+                "Awaiting confirmed weapon kit".into()
+            } else if session.raid.phase == RaidPhase::Countdown {
+                format!(
+                    "Deploying in {:.1}s · Kit locked",
+                    session.raid.seconds_left
+                )
+            } else if ready {
+                "Ready · Kit locked".into()
+            } else {
+                "Choose free raid equipment".into()
+            }
+        ),
+        Surface::Pause => {
+            "LOCAL PAUSE\nServer and dangers continue.\nTab / arrows: select · Enter / Esc: resume"
+                .into()
+        }
+        Surface::Debrief | Surface::Waiting => {
+            let p = participant.expect("connection_ready requires a local participant");
+            let hint = if menu.pending.is_some() {
+                "Awaiting lobby confirmation"
+            } else if menu.surface == Surface::Debrief {
+                "Tab / arrows: select · Enter / Space: activate"
+            } else if p.status == common::raid::RaidStatus::Waiting {
+                "Raid in progress. Waiting for next lobby."
+            } else {
+                "Waiting for other participants. No respawn in this raid."
+            };
+            let title = if menu.surface == Surface::Debrief {
+                "DEBRIEF"
+            } else {
+                "RAID IN PROGRESS"
+            };
+            format!(
+                "{title}\nResult: {:?} · Secured: {}\n{hint}",
+                p.status, p.secured
+            )
+        }
+        Surface::Connection if client.is_disconnected() => format!(
+            "DISCONNECTED: {:?}\nQuit and restart to reconnect.",
+            client.disconnect_reason()
+        ),
+        Surface::Connection if client.is_connected() && participant.is_some() => {
+            "CONNECTION STALE\nWaiting for authoritative state.".into()
+        }
+        Surface::Connection => "CONNECTING\nStart the server with cargo run --bin server.".into(),
+        _ => String::new(),
+    };
+    for (action, children, mut node) in &mut main {
+        node.display = if available(menu.surface, Some(action), None, editable, pending, None).0 {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if let Ok(mut label) = labels.get_mut(children[0]) {
+            let loadout = participant
+                .filter(|p| p.ready)
+                .map_or(&input.loadout, |p| &p.loadout);
+            **label = match action {
+                Action::Ready if ready => "Cancel ready".into(),
+                Action::Ready => "Ready / deploy".into(),
+                Action::Bench => "Weapon workbench".into(),
+                Action::Primary => format!("Primary: {}", loadout.primary.spec().name),
+                Action::Ammo => format!("Ammo: {:?}", loadout.ammo),
+                Action::Vest => format!("Vest: {:?}", loadout.armor),
+                Action::Helmet => format!("Helmet: {}", if loadout.helmet { "On" } else { "Off" }),
+                Action::Return => "Return everyone to lobby".into(),
+                Action::Resume => "Resume".into(),
+                Action::Quit => "Quit client".into(),
+            };
+        }
+    }
+    for (entity, action, bench, mut outline, mut color) in &mut widgets {
+        let (shown, enabled) = available(
+            menu.surface,
+            action,
+            bench,
+            editable,
+            pending,
+            editor.draft.as_ref(),
+        );
+        let selected = shown && menu.selected == Some(entity);
+        outline.color = if selected {
+            Color::srgb(0.95, 0.83, 0.40)
+        } else {
+            Color::NONE
+        };
+        color.0 = if selected && enabled {
+            Color::srgb(0.19, 0.32, 0.40)
+        } else if enabled {
+            Color::srgb(0.09, 0.16, 0.22)
+        } else {
+            Color::srgb(0.06, 0.07, 0.08)
+        };
+    }
+    if *last_focus != menu.selected
+        && menu.surface == Surface::Bench
+        && let Some(entity) = menu.selected
+        && let Ok((_, _, Some(action), ..)) = widgets.get(entity)
+        && action.order() >= 3
+        && let Ok((item, item_transform)) = bounds.get(entity)
+        && let Ok((viewport, viewport_transform, mut offset)) = scroll.single_mut()
+    {
+        let (_, _, item_center) = item_transform.to_scale_angle_translation();
+        let (_, _, view_center) = viewport_transform.to_scale_angle_translation();
+        let delta = item_center.y - view_center.y;
+        let margin = (viewport.size().y - item.size().y).max(0.0) / 2.0;
+        offset.0.y += (delta - delta.clamp(-margin, margin)) * viewport.inverse_scale_factor();
+    }
+    *last_focus = menu.selected;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::{
+        camera::NormalizedRenderTarget,
+        input::mouse::AccumulatedMouseMotion,
+        picking::{
+            backend::HitData,
+            events::Pointer,
+            pointer::{Location, PointerId},
+        },
+        window::{CursorGrabMode, CursorOptions, WindowRef},
+    };
+    use common::ClientData;
+
+    fn fixture() -> App {
+        let mut app = App::new();
+        let mut client = RenetClient::new(common::data::renet_config(), false);
+        client.set_connected();
+        let mut session = ClientSession::default();
+        session.players.push(ClientData { id: 7, ..default() });
+        app.add_message::<AppExit>()
+            .insert_resource(session)
+            .insert_resource(client)
+            .insert_resource(PlayerId(7))
+            .init_resource::<crate::sync::inventory::State>()
+            .init_resource::<Time<Real>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .configure_sets(
+                Update,
+                (ClientSystems::Input, ClientSystems::Present).chain(),
+            )
+            .add_plugins((Plugin, crate::input::Plugin));
+        loadout::setup_test_widgets(&mut app);
+        app.world_mut().spawn((
+            PrimaryWindow,
+            Window {
+                focused: true,
+                ..default()
+            },
+            CursorOptions::default(),
+        ));
+        app.update();
+        app
+    }
+
+    fn button<T: Component + PartialEq>(app: &mut App, action: T) -> Entity {
+        let mut query = app.world_mut().query::<(Entity, &T)>();
+        query
+            .iter(app.world())
+            .find(|(_, candidate)| **candidate == action)
+            .unwrap()
+            .0
+    }
+
+    fn click(app: &mut App, entity: Entity) {
+        let mut query = app
+            .world_mut()
+            .query_filtered::<Entity, With<PrimaryWindow>>();
+        let window = query.single(app.world()).unwrap();
+        app.world_mut().trigger(PointerClick {
+            entity,
+            pointer: Pointer::new(
+                PointerId::Mouse,
+                Location {
+                    target: NormalizedRenderTarget::Window(
+                        WindowRef::Entity(window).normalize(None).unwrap(),
+                    ),
+                    position: Vec2::ZERO,
+                },
+            ),
+            button: PointerButton::Primary,
+            hit: HitData::new(window, 0.0, None, None),
+            duration: std::time::Duration::ZERO,
+            count: 1,
+        });
+    }
+
+    fn key(app: &mut App, key: KeyCode) {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset_all();
+        keys.press(key);
+        app.update();
+    }
+
+    fn focus(app: &App, expected: Entity) {
+        assert_eq!(app.world().resource::<Menu>().selected, Some(expected));
+        assert_ne!(
+            app.world().get::<Outline>(expected).unwrap().color,
+            Color::NONE
+        );
+    }
+
+    #[test]
+    fn menu_keyboard_workbench_back_restores_focus_without_ready() {
+        let mut app = fixture();
+        let ready = button(&mut app, Action::Ready);
+        let bench = button(&mut app, Action::Bench);
+        let back = button(&mut app, loadout::ui::Action::Close);
+        focus(&app, ready);
+        key(&mut app, KeyCode::Tab);
+        focus(&app, bench);
+        key(&mut app, KeyCode::Enter);
+        assert!(app.world().resource::<loadout::Editor>().visible);
+        focus(&app, back);
+        key(&mut app, KeyCode::Space);
+        focus(&app, bench);
+        assert!(!app.world().resource::<loadout::Editor>().visible);
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 0);
+        key(&mut app, KeyCode::ArrowUp);
+        focus(&app, ready);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 1);
+    }
+
+    #[test]
+    fn menu_pointer_and_key_coalesce_and_observe_ready_lock_and_next_raid() {
+        let mut app = fixture();
+        let bench = button(&mut app, Action::Bench);
+        let back = button(&mut app, loadout::ui::Action::Close);
+        let primary = button(&mut app, Action::Primary);
+        let ready = button(&mut app, Action::Ready);
+        click(&mut app, bench);
+        app.update();
+        app.update();
+        click(&mut app, back);
+        app.update();
+        focus(&app, bench);
+        click(&mut app, primary);
+        app.update();
+        let kit = app.world().resource::<LocalInput>().loadout;
+        assert_eq!(kit.primary, common::WeaponId::MP5);
+
+        click(&mut app, ready);
+        key(&mut app, KeyCode::Enter);
+        click(&mut app, ready);
+        key(&mut app, KeyCode::Enter);
+        click(&mut app, primary);
+        key(&mut app, KeyCode::KeyG);
+        let input = app.world().resource::<LocalInput>();
+        assert_eq!(input.lobby_sequence, 1);
+        assert_eq!(input.loadout, kit);
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Countdown;
+            session.players[0].participant.last_command = 1;
+            session.players[0].participant.ready = true;
+        }
+        click(&mut app, primary);
+        key(&mut app, KeyCode::KeyB);
+        assert_eq!(app.world().resource::<LocalInput>().loadout, kit);
+        click(&mut app, ready);
+        app.update();
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 2);
+
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Debrief;
+            session.players[0].participant.last_command = 2;
+        }
+        key(&mut app, KeyCode::Enter); // transition itself cannot retarget an activation
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 3);
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Lobby;
+            session.players[0].participant.last_command = 3;
+            session.players[0].participant.return_to_lobby();
+        }
+        app.update();
+        click(&mut app, ready);
+        app.update();
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 4);
+    }
+
+    #[test]
+    fn menu_pause_consumes_combat_clicks_and_escape_respects_inventory_first() {
+        let mut app = fixture();
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+        app.update();
+        key(&mut app, KeyCode::Tab);
+        assert!(app.world().resource::<Panel>().open);
+        key(&mut app, KeyCode::Escape);
+        assert!(!app.world().resource::<Panel>().open);
+        assert!(!app.world().resource::<Menu>().paused());
+        key(&mut app, KeyCode::Escape);
+        assert!(app.world().resource::<Menu>().paused());
+        let mut cursor = app.world_mut().query::<&CursorOptions>();
+        assert_eq!(
+            cursor.single(app.world()).unwrap().grab_mode,
+            CursorGrabMode::None
+        );
+        let resume = button(&mut app, Action::Resume);
+        let mut buttons = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        buttons.press(MouseButton::Left);
+        buttons.press(MouseButton::Right);
+        click(&mut app, resume);
+        key(&mut app, KeyCode::Enter);
+        app.update();
+        let input = app.world().resource::<LocalInput>();
+        assert!(!input.fire && !input.aim);
+        assert_eq!((input.fire_pressed_sequence, input.lobby_sequence), (0, 0));
+        assert_eq!(
+            cursor.single(app.world()).unwrap().grab_mode,
+            CursorGrabMode::Locked
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .reset_all();
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        assert!(app.world().resource::<LocalInput>().fire);
+    }
+
+    #[test]
+    fn menu_stale_state_cannot_ready_or_replay_hidden_clicks() {
+        let mut app = fixture();
+        let ready = button(&mut app, Action::Ready);
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs(3));
+        click(&mut app, ready);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(app.world().resource::<Menu>().surface, Surface::Connection);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<ClientSession>()
+            .last_received = 3.0;
+        app.update();
+        app.update();
+        focus(&app, ready);
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 0);
+    }
+}

@@ -539,9 +539,10 @@ fn spawn_lights(mut commands: Commands) {
 }
 
 fn change_fov(
-    (input, panel): (
+    (input, panel, menu): (
         Res<ButtonInput<KeyCode>>,
         Option<Res<crate::input::inventory_panel::Panel>>,
+        Option<Res<crate::menu::Menu>>,
     ),
     time: Res<Time>,
     mut settings: ResMut<ViewSettings>,
@@ -561,7 +562,8 @@ fn change_fov(
             );
         };
 
-        let world_zoom = !panel.is_some_and(|panel| panel.open);
+        let world_zoom = !panel.is_some_and(|panel| panel.open)
+            && !menu.is_some_and(|menu| menu.blocks_gameplay());
         if world_zoom && input.pressed(KeyCode::ArrowUp) {
             settings.world_fov -= 45.0_f32.to_radians() * time.delta_secs();
         }

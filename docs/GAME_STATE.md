@@ -9,7 +9,7 @@ flowchart TD
     launch["Launch client"] --> connect["Connect to server"]
     connect -->|"Lobby available"| gear["Choose equipment"]
     connect -->|"Raid in progress"| waiting["Wait for next raid"]
-    gear --> ready["Enter: ready"]
+    gear --> ready["Ready / deploy"]
     ready -->|"Everyone ready, solo allowed"| countdown["3-second countdown"]
     countdown -->|"Anyone cancels"| gear
     countdown --> active["Deploy: 5-minute raid"]
@@ -48,7 +48,7 @@ flowchart TD
     missing --> finished
     finished --> debrief["Debrief"]
     waiting --> debrief
-    debrief -->|"Enter: return everyone"| gear
+    debrief -->|"Return everyone to lobby"| gear
 ```
 
 ## Run a local playtest
@@ -73,13 +73,13 @@ Start additional clients in separate terminals to test multiplayer. All connecte
 
 ### First complete raid
 
-1. In the lobby, choose your equipment with **G/B/H/J**, then press **Enter**. Gear is locked while ready. Press Enter again during the countdown to cancel readiness.
+1. In the lobby, use the kit buttons to choose equipment, then activate **Ready / deploy**. Use **Cancel ready** to cancel before deployment. Gear is locked while ready or awaiting confirmation.
 2. After the three-second countdown, you spawn at approximately `x 0 / z 10`, looking toward negative Z. Find an **orange crate**; the nearest is at `x -4 / z 0`. Walk near it and press **F** to pick up one loot unit. A looted crate becomes gray for everyone and remains solid cover.
 
    Six voxel items sit beside the crates. Look at one within 2.25 m with a clear line of sight and press **F** when its name appears. The item stays on the ground if your grid has no space. Items still in your grid count toward extraction, as does loot from the crates.
 3. Two **red sentries** guard the yard. Shoot them or use cover. Brown panels and crates are penetrable wood; gray structures are bullet-stopping concrete. Shots break cells out of the wood panels and interior concrete cover. Other players can also hurt you.
 4. Return to the **green exit**, centered at `x 0 / z 15`. The HUD shows your position and distance to the exit. Bring at least one loot unit and hold **F** continuously for five seconds inside the green circle. Releasing F or leaving the zone resets progress.
-5. The result becomes **Extracted** and your loot is added to **Secured this session** exactly once. If other participants are still playing, wait for them to finish. In **Debrief**, press **Enter** to return everyone to the lobby, then ready up for another raid.
+5. The result becomes **Extracted** and your loot is added to **Secured this session** exactly once. If other participants are still playing, wait for them to finish. In **Debrief**, activate **Return everyone to lobby**, then ready up for another raid.
 
 There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed brain, severe blood loss or the five-minute timeout loses carried loot. Secured loot lasts for the current connection/server session.
 
@@ -87,10 +87,8 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 
 | Input | Action |
 | --- | --- |
-| Enter | Toggle readiness in lobby/countdown; return everyone to lobby from debrief |
-| G / B | In an unready lobby, choose M4A1 or SMG primary / Ball or AP ammo |
-| H / J | In an unready lobby, cycle no/light/heavy vest / toggle helmet |
-| V | Open/close the lobby weapon configurator; click parts, rail positions and reserves to cycle options, then Apply |
+| Click or Tab / arrows, Enter / Space | Activate a menu button; Tab / arrows move the outlined focus (Shift+Tab goes backward) |
+| V | Optional shortcut to open/close the weapon workbench in the lobby |
 | W, A, S, D | Move |
 | Mouse | Look |
 | Left Shift / Left Ctrl | Run / crouch |
@@ -105,7 +103,7 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | F | Collect nearby loot; hold in the exit to extract |
 | Tab / Up / Down / Delete | Open raid inventory, select an item, and request a drop; Tab or Esc closes the panel |
 | I in raid inventory | Inspect the selected item in first person. Arrow keys rotate, +/- zoom, R resets, and I or Esc returns to the list |
-| Escape | Release or recapture the cursor during a raid; lobby/debrief release it automatically |
+| Escape | Close the workbench, inspection or inventory first, or toggle the local pause menu during a raid. Pausing releases the cursor and suppresses local actions; the server and dangers continue |
 | Up / Down arrow | Narrow / widen the field of view |
 | F8 / F9 | Toggle weapon socket/pivot debug overlay / cycle inspection LOD while enabled |
 
@@ -121,13 +119,14 @@ without changing FOV. In-game handling review remains pending; see the
 
 ### Configure a weapon
 
-In the lobby, press **V**. Choose primary or sidearm, edit the draft and click
-**Apply**. The preview and its properties show only the server-confirmed kit.
+In the lobby, activate **Weapon workbench**. Choose primary or sidearm, edit the
+draft and activate **Apply**. The preview and its properties show only the server-confirmed kit.
 Invalid drafts show the resolver's dependency/interface/clearance reason.
 Removing an optional parent also removes its draft descendants; Apply commits
 the whole selection atomically. **Discard draft** restores the confirmed kit.
-Close the panel before pressing **Enter**. Ready/countdown/raid lock edits;
-pending confirmation also blocks readiness and equipment hotkeys.
+Use **Back to lobby** or Esc to close the workbench and restore focus to its
+lobby button. Ready/countdown/raid lock edits; a pending kit confirmation also
+blocks readiness and equipment changes.
 
 For a compact M4A1, select PMAG20, CTR position0, MOE SL, DD10.3 and A2.
 For a suppressed M4A1, select magazine30, CTR position5, RAS, FN14.5, SFMB,

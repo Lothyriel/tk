@@ -23,16 +23,16 @@ pub(crate) struct Inspection {
 
 pub(super) fn update(
     keys: Res<ButtonInput<KeyCode>>,
-    session: Res<ClientSession>,
-    player: Res<PlayerId>,
-    time: Res<Time<Real>>,
+    (session, player, time): (Res<ClientSession>, Res<PlayerId>, Res<Time<Real>>),
     window: Single<&Window, With<PrimaryWindow>>,
     (inventory, client): (Res<State>, ResMut<RenetClient>),
     mut panel: ResMut<Panel>,
+    menu: Option<Res<crate::menu::Menu>>,
 ) {
     let mut client = client;
     panel.consumed_escape = false;
     if !window.focused
+        || menu.is_some_and(|menu| menu.paused())
         || !client.is_connected()
         || !session.playing(player.0)
         || time.elapsed_secs_f64() - session.last_received >= 2.0

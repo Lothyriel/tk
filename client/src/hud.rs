@@ -93,12 +93,17 @@ fn update(
     input: Res<LocalInput>,
     id: Res<PlayerId>,
     client: Res<RenetClient>,
-    (inventory, panel): (
+    (inventory, panel, menu): (
         Res<crate::sync::inventory::State>,
         Res<crate::input::inventory_panel::Panel>,
+        Res<crate::menu::Menu>,
     ),
     mut hud: Single<&mut Text, With<RaidHud>>,
 ) {
+    if menu.replaces_hud() {
+        ***hud = String::new();
+        return;
+    }
     let connection = if client.is_disconnected() {
         format!(
             "DISCONNECTED: {:?}\nRestart the client to reconnect.",
@@ -171,7 +176,6 @@ fn describe(
     );
     if !connection.is_empty() {
         text.push_str(connection);
-        text.push_str("\nEsc: release / capture cursor");
         return text;
     }
     let Some(local) = session.local(id) else {
@@ -289,7 +293,7 @@ fn describe(
                 a.regions[3],a.regions[4],a.regions[5],a.regions[6],a.regions[2],a.blood,a.bleed_rate(),a.vigor,local.pose.mode,
                 a.last_region,a.last_organ,a.handling()*100.0,local.pose.left_support*100.0,local.pose.right_support*100.0));
             append_exit(&mut text, exit, p);
-            text.push_str("WASD move | Shift run | Ctrl crouch | Space jump\nLMB fire | Hold RMB aim | R reload | 1 primary / 2 pistol\nF loot / extract | Wood penetrable; concrete stops rounds. Esc: cursor.");
+            text.push_str("WASD move | Shift run | Ctrl crouch | Space jump\nLMB fire | Hold RMB aim | R reload | 1 primary / 2 pistol\nF loot / extract | Wood penetrable; concrete stops rounds. Esc: local pause.");
         }
         _ => {
             text.push_str(&format!(
@@ -297,13 +301,12 @@ fn describe(
                 session.raid.phase, p.status, p.secured, p.carried
             ));
             text.push_str(if session.raid.phase == RaidPhase::Debrief {
-                "\n[Enter] Return everyone to lobby\nChoose equipment and ready for another raid."
+                "\nReturn to lobby to prepare another raid."
             } else if p.status == RaidStatus::Waiting {
                 "\nRaid in progress. Waiting for next lobby."
             } else {
                 "\nWaiting for the other participants to finish.\nNo respawn in this raid."
             });
-            text.push_str("\nEsc: release / capture cursor");
         }
     }
     text
@@ -399,7 +402,7 @@ mod tests {
         let text = describe(&session, &Loadout::default(), 7, "", false);
         assert!(text.contains("Extracted"));
         assert!(text.contains("Secured this session: 2"));
-        assert!(text.contains("[Enter] Return everyone to lobby"));
+        assert!(text.contains("Return to lobby to prepare another raid."));
     }
 
     #[test]
