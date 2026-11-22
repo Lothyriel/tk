@@ -151,6 +151,10 @@ def main():
     # Old screenshots must never satisfy evidence checks for a new run.
     for name in ("lobby.png", "raid.png", "extracting.png", "debrief.png", "return-lobby.png", "result.txt"):
         (output / name).unlink(missing_ok=True)
+    if args.voxel_loot and not args.no_capture:
+        for directory in (output, output / "peer"):
+            for seed in range(6):
+                (directory / f"loot-ground-{seed}.png").unlink(missing_ok=True)
     if not args.no_build:
         # Isolated executable outputs never overwrite a player's running Windows binary.
         for binary in ("server", "client"):
@@ -411,6 +415,15 @@ def main():
         assert [width, height] == resolution, f"Native viewport changed during the run: {path}"
         evidence.append(f"{name}.png: {width}x{height}, {len(data)} bytes")
     settings["resolution"] = resolution
+    if args.voxel_loot:
+        for seed in range(6):
+            directory = output / "peer" if args.clients == 2 and seed in (2, 3, 5) else output
+            path = directory / f"loot-ground-{seed}.png"
+            data = path.read_bytes()
+            assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing ground-item capture: {path}"
+            width, height = struct.unpack(">II", data[16:24])
+            assert width >= 600 and height >= 400, f"Invalid capture: {path}"
+            evidence.append(f"{path.relative_to(output)}: {width}x{height}, {len(data)} bytes")
     (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
     if args.clients == 2:
         names = ["pose-idle", "pose-walk", "pose-run", "pose-strafe", "pose-crouch", "pose-jump", "pose-land", "pose-stop",

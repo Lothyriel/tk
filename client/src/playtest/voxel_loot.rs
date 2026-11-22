@@ -19,17 +19,22 @@ pub(super) struct Route {
     dropped: bool,
     approach: usize,
     return_leg: usize,
+    capture: Option<usize>,
+    capture_until: f64,
 }
 
 impl Route {
+    pub(super) fn take_capture(&mut self) -> Option<usize> {
+        self.capture.take()
+    }
+
     pub(super) fn tick(
         &mut self,
         input: &mut ClientInput,
         actor: &ClientData,
         inventory: &State,
         network: &mut RenetClient,
-        raid: u32,
-        peer: bool,
+        (raid, peer, now): (u32, bool, f64),
     ) -> bool {
         let dual = std::env::var("TK_PLAYTEST_CLIENTS").is_ok_and(|n| n == "2");
         let order: &[usize] = match (dual, peer) {
@@ -95,6 +100,7 @@ impl Route {
             self.index += 1;
             self.dropped = false;
             self.approach = 0;
+            self.capture_until = 0.0;
             return false;
         }
         if seed == 2 && self.approach == 0 {
@@ -134,6 +140,15 @@ impl Route {
             .focused_ground(raid)
             .is_some_and(|focus| focus.id == item.id)
         {
+            if std::env::var_os("TK_PLAYTEST_NO_CAPTURE").is_none() {
+                if self.capture_until == 0.0 {
+                    self.capture = Some(seed);
+                    self.capture_until = now + 0.15;
+                }
+                if now < self.capture_until {
+                    return false;
+                }
+            }
             input.interact = true;
             input.pickup_focus = Some((raid, item.id));
         }
