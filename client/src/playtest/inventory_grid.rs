@@ -191,8 +191,11 @@ fn drive(
     (session, player, inventory, panel, input, time): Live,
     window: Single<(Entity, &Window), With<PrimaryWindow>>,
     mut keyboard: MessageWriter<KeyboardInput>,
-    mut exit: MessageWriter<AppExit>,
-    scale: Option<Res<UiScale>>,
+    (mut exit, pointer, scale): (
+        MessageWriter<AppExit>,
+        Option<Res<crate::input::inventory_panel::PointerRoute>>,
+        Option<Res<UiScale>>,
+    ),
 ) {
     if probe.finished || (probe.integrated && !probe.requested) {
         return;
@@ -327,6 +330,9 @@ fn drive(
         assert!(!input.fire && !input.aim, "grid leaked combat input");
     }
     if !window.focused || !panel.open || panel.inspection.is_some() || !session.playing(player.0) {
+        return;
+    }
+    if pointer.is_some_and(|route| !route.finished()) {
         return;
     }
     let (Some(grid), Some(key), Some(selected)) = (

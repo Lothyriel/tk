@@ -101,6 +101,13 @@ foco, sobreposição ou áudio. Não há injeção de input nem vídeo neste mod
 
 #### Checkpoint de ponteiro (hover e contexto)
 
+Na rota solo de revisão descrita acima, adicione
+`--inventory-grid-pointer-checkpoint` ao comando Python para capturar hover
+e contexto do loot confirmado antes da primeira operação de teclado.
+Mantenha o cursor físico fora da grade e a janela em foco. A sonda usa
+Escape via Bevy para fechar apenas o contexto e continuar a rota; o harness
+exige as duas capturas e a ordem observada. Não combine com telemetria.
+
 Após coordenação, use o cliente normal com servidor real e diretório novo:
 
 ```sh

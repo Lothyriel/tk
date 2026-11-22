@@ -121,7 +121,7 @@ pub(in crate::input) struct Tile;
 pub(in crate::input) struct ItemTooltip;
 
 mod review;
-pub(crate) use review::GridReview;
+pub(crate) use review::{GridReview, PointerRoute};
 
 #[derive(Clone, Copy, Component)]
 enum GhostKind {

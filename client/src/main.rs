@@ -36,10 +36,6 @@ fn main() {
         "run the inventory grid probe without other playtest or review modes"
     );
     assert!(
-        !grid_pointer || !playtest,
-        "the inventory pointer checkpoint is standalone"
-    );
-    assert!(
         !grid_review
             || (!(grid_probe || item_review || arena_menu_probe.is_some())
                 && (!playtest || voxel_grid)),

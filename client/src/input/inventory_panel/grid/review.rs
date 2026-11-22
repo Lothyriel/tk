@@ -2,7 +2,11 @@
 use std::{collections::HashSet, path::PathBuf};
 
 use bevy::{
-    input::{ButtonState, InputSystems, mouse::MouseButtonInput},
+    input::{
+        ButtonState, InputSystems,
+        keyboard::{Key, KeyboardInput},
+        mouse::MouseButtonInput,
+    },
     render::view::screenshot::{Capturing, Screenshot, save_to_disk},
     ui::{UiGlobalTransform, UiSystems},
     window::InternalWindowState,
@@ -37,14 +41,17 @@ impl Plugin for GridReview {
             })
             .add_systems(PostUpdate, observe.after(UiSystems::PostLayout));
         if self.pointer_checkpoint {
-            app.init_resource::<PointerRoute>()
-                .add_systems(
-                    PreUpdate,
-                    pointer_checkpoint
-                        .before(InputSystems)
-                        .before(UiSystems::Focus),
-                )
-                .add_systems(PostUpdate, restore_pointer.after(observe));
+            app.insert_resource(PointerRoute {
+                close_context: self.automated,
+                ..default()
+            })
+            .add_systems(
+                PreUpdate,
+                pointer_checkpoint
+                    .before(InputSystems)
+                    .before(UiSystems::Focus),
+            )
+            .add_systems(PostUpdate, restore_pointer.after(observe));
         }
     }
 }
@@ -59,12 +66,20 @@ struct Output {
 struct Observed(HashSet<&'static str>);
 
 #[derive(Resource, Default)]
-struct PointerRoute {
+pub(crate) struct PointerRoute {
     target: Option<(SessionKey, VersionedCompartment, ItemInstanceId, f64)>,
     pressed: bool,
     released: bool,
     finished: bool,
+    close_context: bool,
+    escape_pressed: bool,
     saved_window_state: Option<InternalWindowState>,
+}
+
+impl PointerRoute {
+    pub(crate) fn finished(&self) -> bool {
+        self.finished
+    }
 }
 
 fn restore_pointer(
@@ -97,7 +112,10 @@ fn pointer_checkpoint(
     observed: Res<Observed>,
     board: Single<(&ComputedNode, &UiGlobalTransform, &RelativeCursorPosition), With<Board>>,
     mut window: Single<(Entity, &mut Window), With<PrimaryWindow>>,
-    mut mouse: MessageWriter<MouseButtonInput>,
+    (mut mouse, mut keyboard): (
+        MessageWriter<MouseButtonInput>,
+        MessageWriter<KeyboardInput>,
+    ),
 ) {
     if route.finished {
         return;
@@ -144,6 +162,24 @@ fn pointer_checkpoint(
         (old_key, version, target),
         "inventory changed during GRID POINTER checkpoint"
     );
+    let escape = |state| KeyboardInput {
+        key_code: KeyCode::Escape,
+        logical_key: Key::Escape,
+        state,
+        text: None,
+        repeat: false,
+        window: window.0,
+    };
+    if route.escape_pressed {
+        assert!(
+            panel.open && panel.context.is_none() && panel.consumed_escape,
+            "GRID POINTER Escape must close only the context menu"
+        );
+        keyboard.write(escape(ButtonState::Released));
+        info!("GRID POINTER context closed via Escape; resuming keyboard route");
+        route.finished = true;
+        return;
+    }
     if observed.0.contains("context") {
         assert!(route.pressed && observed.0.contains("hover"));
         assert!(panel.context.is_some_and(|context| context.item == target
@@ -153,7 +189,15 @@ fn pointer_checkpoint(
             "GRID POINTER hover/context observed for item={} revision={} (synthetic Bevy input)",
             target.0, version.revision
         );
-        route.finished = true;
+        if route.close_context {
+            keyboard.write(escape(ButtonState::Pressed));
+            route.escape_pressed = true;
+        } else {
+            route.finished = true;
+        }
+        return;
+    }
+    if route.close_context && !observed.0.contains("idle") {
         return;
     }
     let point = *transform * cell_center(grid.size, node.size(), item.placement);
@@ -341,7 +385,14 @@ fn observe(
         }
     };
     if matches!(state, "hover" | "context")
-        && (output.automated || pointer.is_some_and(|route| route.target.is_none()))
+        && match pointer.as_deref() {
+            Some(route) => {
+                route.target.is_none()
+                    || (route.close_context
+                        && (!seen.0.contains("idle") || (state == "context" && !route.pressed)))
+            }
+            None => output.automated,
+        }
     {
         return;
     }
