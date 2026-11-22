@@ -1,5 +1,22 @@
 # Desenvolvimento com Linear
 
+## Sonda opt-in da grade de inventário
+
+Após coordenação, inicie o servidor local normalmente e rode
+`cargo run --bin client -- --inventory-grid-probe`, sem outros modos de
+playtest/review. Entre em uma raid normal, colete a garrafa de água (1×2) e,
+para testar pilhas, colete a pilha de duas bandagens.
+Deixe espaço para mover a garrafa girada e, para split, uma célula livre.
+Abra a mochila com Tab e mantenha o cliente em foco, sem interagir.
+
+A sonda usa eventos sintéticos de teclado no fluxo Enter/setas/R da grade
+real. Espera o feedback reconciliado e a revisão confirmada pelo servidor
+para cada operação. Procure `GRID PROBE PASS move/rotate and split/merge` ou
+`GRID PROBE PASS move/rotate only`; no segundo caso o log marca split/merge
+como não exercitados. A sonda não semeia itens, não simula confirmação e
+não faz capturas. Não certifica mouse, teclado físico, legibilidade nem perda
+de pacotes.
+
 ## Entradas compartilhadas
 
 OpenCode e Codex descobrem skills do projeto em `.agents/skills/`.

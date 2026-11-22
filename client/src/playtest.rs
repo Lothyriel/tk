@@ -6,6 +6,7 @@ use crate::{ClientSystems, input::InputCapture, sync::ClientSession};
 mod animation;
 mod arena;
 mod asset_review;
+pub(crate) mod inventory_grid;
 mod lobby;
 mod mechanics;
 mod physical;

@@ -152,6 +152,10 @@ pub(super) fn update(
 }
 
 impl Panel {
+    pub(crate) fn grid_feedback(&self) -> Option<&'static str> {
+        self.feedback
+    }
+
     pub(crate) fn take_cue(&mut self) -> Option<InventoryCue> {
         self.cue.take()
     }

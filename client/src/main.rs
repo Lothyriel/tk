@@ -21,7 +21,12 @@ mod sync;
 
 fn main() {
     let playtest = std::env::args().any(|argument| argument == "--playtest");
+    let grid_probe = std::env::args().any(|argument| argument == "--inventory-grid-probe");
     let item_review = std::env::args().any(|argument| argument == "--item-review");
+    assert!(
+        !grid_probe || !(playtest || item_review),
+        "run the inventory grid probe without other playtest or review modes"
+    );
     let viewport = playtest.then(playtest::requested_viewport).flatten();
     let mut app = App::new();
     app.add_plugins(
@@ -64,6 +69,9 @@ fn main() {
     .add_plugins(hud::Plugin);
     if playtest {
         app.add_plugins(playtest::Plugin);
+    }
+    if grid_probe {
+        app.add_plugins(playtest::inventory_grid::Plugin);
     }
     app.run();
 }
