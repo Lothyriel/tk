@@ -107,10 +107,16 @@ fn update(
     } else {
         String::new()
     };
-    ***hud = describe(&session, &input.loadout, id.0, &connection);
+    ***hud = describe(&session, &input.loadout, id.0, &connection, input.aim);
 }
 
-fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &str) -> String {
+fn describe(
+    session: &ClientSession,
+    pending: &Loadout,
+    id: u64,
+    connection: &str,
+    aiming: bool,
+) -> String {
     let mut text = format!(
         "TK / EXTRACTION ALPHA   |   RAID {}\n",
         session.raid.raid_id
@@ -159,17 +165,43 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
         }
         RaidPhase::Active if p.status == RaidStatus::Active => {
             let body = &local.body;
+            let exit = Vec2::new(
+                local.pos[0] - EXTRACTION_CENTER[0],
+                local.pos[2] - EXTRACTION_CENTER[2],
+            )
+            .length();
+            // Keep the verbose controls and diagnostics clear of the sight
+            // during entry and until the replicated ADS pose has lowered.
+            if aiming || local.pose.ads > 0.02 {
+                text.push_str(&format!(
+                    "{:02}:{:02} | Head {:.0} | Thorax {:.0}\n{} / {:?} | {} + {}\nBlood {:.0}% (-{:.2}/s) | Loot {}",
+                    session.raid.seconds_left as u32 / 60,
+                    session.raid.seconds_left as u32 % 60,
+                    body.parts[0],
+                    body.parts[1],
+                    local.weapon_id.spec().name,
+                    p.loadout.ammo,
+                    local.ammo_in_mag,
+                    local.reserve_ammo,
+                    body.anatomy.blood,
+                    body.anatomy.bleed_rate(),
+                    p.carried,
+                ));
+                if body.anatomy.capacity(Region::RightArm) <= 0.0 {
+                    text.push_str("\nTrigger arm disabled");
+                }
+                if local.reload_remaining() > 0.0 {
+                    text.push_str("\nReloading");
+                }
+                append_exit(&mut text, exit, p);
+                return text;
+            }
             let nearest = LOOT_POSITIONS
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| session.raid.loot_available[*i])
                 .map(|(_, pos)| Vec3::from(*pos).distance(Vec3::from(local.pos)))
                 .fold(f32::INFINITY, f32::min);
-            let exit = Vec2::new(
-                local.pos[0] - EXTRACTION_CENTER[0],
-                local.pos[2] - EXTRACTION_CENTER[2],
-            )
-            .length();
             text.push_str(&format!(
                 "IN RAID   {:02}:{:02}\nHead {:>2.0}/35  Thorax {:>2.0}/85  Arms {:>2.0}/60  Legs {:>2.0}/70\nVest {:.0} | Helmet {:.0} | Last hit: {:?}\n{} / {:?}   {} + {} reserve {}\nLoot {} | Secured {} | Exit {:.1}m\nPosition x {:.1} / z {:.1} | Exit x 0 / z 15\n",
                 session.raid.seconds_left as u32 / 60, session.raid.seconds_left as u32 % 60,
@@ -208,14 +240,7 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
             text.push_str(&format!("L/R arm {:.0}/{:.0} | L/R leg {:.0}/{:.0} | Abdomen {:.0}\nBlood {:.0}% (-{:.2}/s) Vigor {:.0}% | {:?}\nInjury {:?} / {:?} | Handling {:.0}% | Support {:.0}/{:.0}%\n",
                 a.regions[3],a.regions[4],a.regions[5],a.regions[6],a.regions[2],a.blood,a.bleed_rate(),a.vigor,local.pose.mode,
                 a.last_region,a.last_organ,a.handling()*100.0,local.pose.left_support*100.0,local.pose.right_support*100.0));
-            if exit <= EXTRACTION_RADIUS {
-                text.push_str(if p.carried == 0 {
-                    "EXIT: collect loot before extracting"
-                } else {
-                    "EXIT: HOLD F"
-                });
-                text.push_str(&format!("  {:.1} / 5.0s\n", p.extraction_seconds));
-            }
+            append_exit(&mut text, exit, p);
             text.push_str("WASD move | Shift run | Ctrl crouch | Space jump\nLMB fire | Hold RMB aim | R reload | 1 primary / 2 pistol\nF loot / extract | Wood penetrable; concrete stops rounds. Esc: cursor.");
         }
         _ => {
@@ -236,6 +261,20 @@ fn describe(session: &ClientSession, pending: &Loadout, id: u64, connection: &st
     text
 }
 
+fn append_exit(text: &mut String, distance: f32, participant: &Participant) {
+    if distance <= EXTRACTION_RADIUS {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(if participant.carried == 0 {
+            "EXIT: collect loot before extracting"
+        } else {
+            "EXIT: HOLD F"
+        });
+        text.push_str(&format!("  {:.1} / 5.0s\n", participant.extraction_seconds));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,14 +293,38 @@ mod tests {
         local.mechanics.magazine_inserted = true;
         session.players.push(local);
         assert!(
-            describe(&session, &Loadout::default(), 7, "").contains("Chamber loaded | Magazine 30")
+            describe(&session, &Loadout::default(), 7, "", false)
+                .contains("Chamber loaded | Magazine 30")
         );
         session.players[0].mechanics.magazine_inserted = false;
         session.players[0].ammo_in_mag = 1;
         assert!(
-            describe(&session, &Loadout::default(), 7, "")
+            describe(&session, &Loadout::default(), 7, "", false)
                 .contains("Chamber loaded | Magazine absent")
         );
+    }
+
+    #[test]
+    fn raid_hud_compacts_during_ads_entry_and_release_without_losing_exit() {
+        let mut session = ClientSession::default();
+        session.raid.phase = RaidPhase::Active;
+        let mut local = ClientData {
+            id: 7,
+            pos: EXTRACTION_CENTER,
+            ammo_in_mag: 23,
+            reserve_ammo: 47,
+            ..default()
+        };
+        local.participant.begin();
+        local.participant.carried = 1;
+        session.players.push(local);
+        let text = describe(&session, &Loadout::default(), 7, "", true);
+        assert!(text.contains("23 + 47") && text.contains("EXIT: HOLD F"));
+        assert!(!text.contains("WASD"));
+        session.players[0].pose.ads = 0.1;
+        assert_eq!(describe(&session, &Loadout::default(), 7, "", false), text);
+        session.players[0].pose.ads = 0.0;
+        assert!(describe(&session, &Loadout::default(), 7, "", false).contains("WASD"));
     }
 
     #[test]
@@ -277,7 +340,7 @@ mod tests {
         let mut session = ClientSession::default();
         let mut local = ClientData { id: 7, ..default() };
         session.players.push(local.clone());
-        let text = describe(&session, &Loadout::default(), 7, "");
+        let text = describe(&session, &Loadout::default(), 7, "", false);
         assert!(text.contains("LOBBY"));
         assert!(text.contains("Ready / deploy"));
         assert!(text.contains("[G] Primary"));
@@ -285,7 +348,7 @@ mod tests {
         local.participant.secured = 2;
         session.players[0] = local;
         session.raid.phase = RaidPhase::Debrief;
-        let text = describe(&session, &Loadout::default(), 7, "");
+        let text = describe(&session, &Loadout::default(), 7, "", false);
         assert!(text.contains("Extracted"));
         assert!(text.contains("Secured this session: 2"));
         assert!(text.contains("[Enter] Return everyone to lobby"));
@@ -298,6 +361,7 @@ mod tests {
             &Loadout::default(),
             7,
             "DISCONNECTED",
+            true,
         );
         assert!(text.contains("DISCONNECTED"));
         assert!(!text.contains("IN RAID"));
