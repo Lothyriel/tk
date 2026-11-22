@@ -124,6 +124,8 @@ def main():
                         help="Seed server-owned M4A1 kit and physical magazines for native acceptance")
     parser.add_argument("--configure-weapons", action="store_true",
                         help="Choose compact/suppressed kits through real lobby panel actions")
+    parser.add_argument("--bench-draft", action="store_true",
+                        help="Capture the workbench's confirmed, draft and discarded views before Apply")
     parser.add_argument("--weapon-debug", action="store_true",
                         help="Show live socket/pivot overlays and use a close side observer during animation review")
     parser.add_argument("--clean-art", action="store_true",
@@ -153,6 +155,8 @@ def main():
         parser.error("Arena routes require the matching client count (solo=1, PvP=2) and no other review mode")
     if args.loot_inspect and (not args.voxel_loot or args.no_capture or args.video):
         parser.error("--loot-inspect requires --voxel-loot and static captures (no --no-capture or --video)")
+    if args.bench_draft and (not args.configure_weapons or args.no_capture or args.video):
+        parser.error("--bench-draft requires --configure-weapons and static captures only")
     if args.voxel_loot and args.pov:
         parser.error("--voxel-loot requires the full raid route")
     if args.viewport and not (args.pov or arena or args.clean_art or args.no_capture):
@@ -260,6 +264,12 @@ def main():
         env["TK_PLAYTEST_NEUTRAL_ART"] = "1"
     if args.configure_weapons:
         env["TK_PLAYTEST_CONFIGURATOR"] = "1"
+    env.pop("TK_PLAYTEST_BENCH_DRAFT", None)
+    bench_views = ("confirmed", "draft", "discarded")
+    if args.bench_draft:
+        env["TK_PLAYTEST_BENCH_DRAFT"] = "1"
+        for view in bench_views:
+            (output / f"bench-{view}.png").unlink(missing_ok=True)
     server_path = output / f"server{suffix}"
     client_path = output / f"client{suffix}"
     if args.no_build:
@@ -287,6 +297,7 @@ def main():
         "art_lighting": "neutral white, cast shadows disabled" if args.neutral_art else "raid",
         "initial_weapon_kit_fixture": args.weapon_kit,
         "lobby_configurator": args.configure_weapons,
+        "bench_draft": args.bench_draft,
         "capture_target_hz": 30 if args.video else 0,
         "shot_diagnostics": env.get("TK_SHOT_DIAGNOSTICS") is not None,
         "loadouts": ("leader compact M4A1 / peer suppressed M4A1" if args.configure_weapons
@@ -515,6 +526,17 @@ def main():
         assert [width, height] == resolution, f"Native viewport changed during the run: {path}"
         evidence.append(f"{name}.png: {width}x{height}, {len(data)} bytes")
     settings["resolution"] = resolution
+    if args.bench_draft:
+        reviewed = re.findall(r"BENCH REVIEW (confirmed|draft|discarded) handle=(\d+) marker=0 focused=true", client_text)
+        assert tuple(view for view, _ in reviewed) == bench_views, "Missing or repeated workbench stages"
+        assert len({handle for _, handle in reviewed}) == 1, "Draft or discard changed the confirmed handle"
+        for view in bench_views:
+            path = output / f"bench-{view}.png"
+            data = path.read_bytes()
+            assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing workbench capture: {path}"
+            width, height = struct.unpack(">II", data[16:24])
+            assert [width, height] == resolution, f"Workbench viewport changed: {path}"
+            evidence.append(f"{path.name}: {width}x{height}, {len(data)} bytes")
     if args.voxel_loot:
         for seed in range(6):
             directory = output / "peer" if args.clients == 2 and seed in (2, 3, 5) else output

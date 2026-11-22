@@ -6,7 +6,7 @@ use bevy_renet2::prelude::RenetClient;
 use common::{PlayerId, data, replication::CONFIGURATION_CHANNEL};
 
 mod editor;
-mod preview;
+pub(crate) mod preview;
 #[cfg(test)]
 mod tests;
 pub(crate) mod ui;

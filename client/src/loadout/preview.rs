@@ -9,13 +9,13 @@ use common::catalog::{ResolvedWeapon, WeaponId, WeaponKit, catalog};
 #[derive(Resource)]
 pub(super) struct PreviewImage(pub Handle<Image>);
 #[derive(Component)]
-pub(super) struct PreviewCamera;
+pub(crate) struct PreviewCamera;
 #[derive(Component)]
 pub(super) struct PreviewWeapon;
 const ORIGIN: Vec3 = Vec3::new(10_000.0, 10_000.0, 10_000.0);
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum View {
+pub(crate) enum View {
     Confirmed,
     Draft,
     Pending,
@@ -24,7 +24,7 @@ pub(super) enum View {
 }
 
 #[derive(Resource, Default)]
-pub(super) struct Preview {
+pub(crate) struct Preview {
     pub view: Option<View>,
     draft: Option<(WeaponKit, Result<ResolvedWeapon, String>)>,
     sockets: Vec<Option<Vec2>>,
