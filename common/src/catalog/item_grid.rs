@@ -17,14 +17,14 @@ impl Footprint {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum Rotation {
     Upright,
     QuarterTurn,
 }
 
 /// A top-left grid cell, measured from the compartment's origin.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct Placement {
     pub x: u8,
     pub y: u8,

@@ -6,13 +6,16 @@ use super::{
 };
 use std::collections::BTreeMap;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+mod archive;
+pub use archive::ArchiveError;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum Condition {
     Intact,
     Damaged,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct GridLocation {
     pub compartment: CompartmentId,
     pub placement: Placement,
@@ -27,6 +30,27 @@ pub struct ItemInstance {
 }
 
 impl ItemInstance {
+    fn seed(
+        definition: &str,
+        condition: Condition,
+        quantity: u16,
+        location: GridLocation,
+    ) -> Result<Self, InventoryError> {
+        let definition = planned_items()
+            .get(definition)
+            .filter(|item| S1_SEEDS.contains(&item.id))
+            .ok_or(InventoryError::UnknownDefinition)?;
+        if quantity == 0 || quantity > definition.stack_max {
+            return Err(InventoryError::InvalidQuantity);
+        }
+        Ok(Self {
+            definition,
+            condition,
+            quantity,
+            location,
+        })
+    }
+
     pub fn mass_g(self) -> u64 {
         u64::from(self.quantity) * u64::from(self.definition.mass_g)
     }
@@ -89,19 +113,9 @@ impl Inventory {
         quantity: u16,
         location: GridLocation,
     ) -> Result<ItemInstanceId, InventoryError> {
-        let definition = planned_items()
-            .get(definition)
-            .filter(|item| S1_SEEDS.contains(&item.id))
-            .ok_or(InventoryError::UnknownDefinition)?;
-        if quantity == 0 || quantity > definition.stack_max {
-            return Err(InventoryError::InvalidQuantity);
-        }
-        self.insert(ItemInstance {
-            definition,
-            condition,
-            quantity,
-            location,
-        })
+        self.insert(ItemInstance::seed(
+            definition, condition, quantity, location,
+        )?)
     }
 
     pub fn move_item(
