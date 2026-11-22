@@ -462,6 +462,66 @@ fn inventory_udp_contested_item_converges_under_loss() {
         }
         assert!(updates.next().is_none());
     }
+
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<RenetServer>()
+        .disconnect(7);
+    harness.pump(&mut [&mut second], 64);
+    assert!(
+        !harness
+            .app
+            .world()
+            .resource::<Lobby>()
+            .players
+            .contains_key(&7)
+    );
+    let mut reconnected = UdpPeer::new(7, harness.address, harness.now, true);
+    harness.pump(&mut [&mut reconnected, &mut second], 192);
+    assert!(reconnected.transport.is_connected());
+    let updates = drain(&mut reconnected);
+    assert_eq!(updates.len(), 2);
+    let new_session = updates[0].session;
+    assert_eq!(updates[0].body, UpdateBody::Begin);
+    assert_eq!(new_session.raid_epoch, session.raid_epoch);
+    assert!(new_session.session_epoch > session.session_epoch);
+    assert!(matches!(&updates[1].body, UpdateBody::Snapshot(snapshot)
+        if snapshot.version.id == own && snapshot.items.len() == 1 && snapshot.items[0].0 == item));
+    for request in [
+        InventoryRequest::Operate(transfer),
+        InventoryRequest::Resync {
+            session: new_session,
+            compartment: own,
+        },
+    ] {
+        reconnected
+            .peer
+            .network
+            .send_message(CHANNEL, request.encode().unwrap());
+    }
+    harness.pump(&mut [&mut reconnected, &mut second], 128);
+    let updates = drain(&mut reconnected);
+    assert_eq!(
+        updates.len(),
+        1,
+        "old operation must not produce a result or delta"
+    );
+    assert!(matches!(&updates[0].body, UpdateBody::Snapshot(snapshot)
+        if snapshot.version.id == own && snapshot.items.len() == 1 && snapshot.items[0].0 == item));
+
+    // Inject the lifecycle boundary, not the packets: the production system
+    // must replace both inventories and announce the new epoch over UDP.
+    harness.app.world_mut().resource_mut::<RaidState>().raid_id = 2;
+    harness.pump(&mut [&mut reconnected, &mut second], 160);
+    for (peer, own) in [(&mut reconnected, own), (&mut second, CompartmentId(8))] {
+        let updates = drain(peer);
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].body, UpdateBody::Begin);
+        assert!(updates.iter().all(|update| update.session.raid_epoch == 2));
+        assert!(matches!(&updates[1].body, UpdateBody::Snapshot(snapshot)
+            if snapshot.version.id == own && snapshot.version.revision == 0 && snapshot.items.is_empty()));
+    }
 }
 
 #[test]
