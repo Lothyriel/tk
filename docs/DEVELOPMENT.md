@@ -316,9 +316,12 @@ de frame time nem valida naturalidade em movimento.
 ### Inversão lateral em pé — contrato de telemetria (TAR-97)
 
 `python scripts/strafe_reversal.py "$OUT/peer/strafe-reversal.csv"` analisa
-um CSV normalizado; não executa a rota. A produção desse CSV ainda precisa
-ser ligada na bancada pelo integrador. Usar pista plana livre, yaw fixo, e
-um único strafe direita→esquerda; registrar uma linha por quadro apresentado
+um CSV normalizado; não executa a rota. `TK_PLAYTEST_STRAFE_TRACE=1` no
+processo do observador acrescenta `strafe-reversal.csv` em `TK_PLAYTEST_DIR`
+quando `pov::trace_observer` já está ativo. Não muda `gait-trace.csv`, não
+habilita o sistema por si só e não seleciona uma rota. Ler o CSV após a
+saída normal do observador. Usar pista plana livre, yaw fixo e um único
+strafe direita→esquerda; registrar uma linha por quadro apresentado
 do mesmo ator remoto, começando antes da inversão e incluindo o apoio
 posterior. Não filtrar quadros sem apoio ou fora da postura: eles quebram a
 continuidade. Se o produtor também registrar a borda do input no líder,

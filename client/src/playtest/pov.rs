@@ -1,10 +1,55 @@
 //! Short POV route driven by confirmed raid state, not animation timers.
 use bevy::prelude::*;
-use common::humanoid::Segment;
+use common::{
+    ClientData,
+    humanoid::{PhysicalMode, Segment},
+};
 use std::{
     io::{BufWriter, Write},
     time::{Duration, Instant},
 };
+
+const GAIT_HEADER: &str = "seconds,snapshot,phase,roll,speed,left_weight,right_weight,left_x,left_y,left_z,right_x,right_y,right_z,pelvis_x,pelvis_y,pelvis_z,chest_qx,chest_qy,chest_qz,chest_qw,left_anchor_x,left_anchor_y,left_anchor_z,right_anchor_x,right_anchor_y,right_anchor_z,left_confirmed_x,left_confirmed_y,left_confirmed_z,right_confirmed_x,right_confirmed_y,right_confirmed_z";
+const STRAFE_FIELDS: &str = ",actor_id,yaw,standing,grounded,crouched,lateral_velocity";
+
+pub(super) struct ObserverFiles {
+    gait: BufWriter<std::fs::File>,
+    strafe: Option<BufWriter<std::fs::File>>,
+}
+
+impl ObserverFiles {
+    fn open() -> Self {
+        let root =
+            std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").expect("playtest dir"));
+        let open = |name, suffix| {
+            let mut out = BufWriter::new(std::fs::File::create(root.join(name)).unwrap());
+            writeln!(out, "{GAIT_HEADER}{suffix}").unwrap();
+            out
+        };
+        Self {
+            gait: open("gait-trace.csv", ""),
+            strafe: (std::env::var("TK_PLAYTEST_STRAFE_TRACE").as_deref() == Ok("1"))
+                .then(|| open("strafe-reversal.csv", STRAFE_FIELDS)),
+        }
+    }
+}
+
+fn write_strafe_fields(
+    out: &mut impl Write,
+    actor: &ClientData,
+    rotation: Quat,
+) -> std::io::Result<()> {
+    let lateral = Vec3::from(actor.pose.velocity).dot(rotation * Vec3::X);
+    write!(
+        out,
+        ",{},{:.6},{},{},{},{lateral:.6}",
+        actor.id,
+        actor.rot.yaw,
+        u8::from(actor.pose.mode == PhysicalMode::Standing),
+        u8::from(actor.pose.grounded),
+        u8::from(actor.crouched),
+    )
+}
 
 pub(super) fn trace_observer(
     driver: Res<super::Driver>,
@@ -12,7 +57,7 @@ pub(super) fn trace_observer(
     session: Res<crate::sync::ClientSession>,
     id: Res<common::PlayerId>,
     poses: Res<crate::render::actors::PoseCache>,
-    mut file: Local<Option<BufWriter<std::fs::File>>>,
+    mut files: Local<Option<ObserverFiles>>,
 ) {
     if driver.step != super::Step::Pov {
         return;
@@ -41,40 +86,78 @@ pub(super) fn trace_observer(
         .pose
         .feet
         .map(|foot| root.transform_point(foot.into()));
-    let out = file.get_or_insert_with(|| {
-        let root = std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").expect("playtest dir"));
-        let mut out = BufWriter::new(std::fs::File::create(root.join("gait-trace.csv")).unwrap());
-        writeln!(out, "seconds,snapshot,phase,roll,speed,left_weight,right_weight,left_x,left_y,left_z,right_x,right_y,right_z,pelvis_x,pelvis_y,pelvis_z,chest_qx,chest_qy,chest_qz,chest_qw,left_anchor_x,left_anchor_y,left_anchor_z,right_anchor_x,right_anchor_y,right_anchor_z,left_confirmed_x,left_confirmed_y,left_confirmed_z,right_confirmed_x,right_confirmed_y,right_confirmed_z").unwrap();
-        out
-    });
+    let files = files.get_or_insert_with(ObserverFiles::open);
     let [vx, _, vz] = actor.pose.velocity;
-    write!(
-        out,
-        "{:.6},{},{phase:.6},{:.6},{:.6},{:.6},{:.6}",
-        time.elapsed_secs_f64() - driver.since,
-        session.last_sequence,
-        actor.pose.aim_roll,
-        vx.hypot(vz),
-        weights[0],
-        weights[1]
-    )
-    .unwrap();
-    for value in left
-        .translation
-        .to_array()
-        .into_iter()
-        .chain(right.translation.to_array())
-        .chain(pelvis.translation.to_array())
-        .chain(chest.rotation.to_array())
-        .chain(anchors.into_iter().flat_map(|v| v.to_array()))
-        .chain(confirmed.into_iter().flat_map(|v| v.to_array()))
+    for (out, strafe) in std::iter::once((&mut files.gait, false))
+        .chain(files.strafe.as_mut().map(|out| (out, true)))
     {
-        write!(out, ",{value:.6}").unwrap();
+        write!(
+            out,
+            "{:.6},{},{phase:.6},{:.6},{:.6},{:.6},{:.6}",
+            time.elapsed_secs_f64() - driver.since,
+            session.last_sequence,
+            actor.pose.aim_roll,
+            vx.hypot(vz),
+            weights[0],
+            weights[1]
+        )
+        .unwrap();
+        for value in left
+            .translation
+            .to_array()
+            .into_iter()
+            .chain(right.translation.to_array())
+            .chain(pelvis.translation.to_array())
+            .chain(chest.rotation.to_array())
+            .chain(anchors.into_iter().flat_map(|v| v.to_array()))
+            .chain(confirmed.into_iter().flat_map(|v| v.to_array()))
+        {
+            write!(out, ",{value:.6}").unwrap();
+        }
+        if strafe {
+            write_strafe_fields(out, actor, root.rotation).unwrap();
+        }
+        writeln!(out).unwrap();
+        if driver.pov_observed == 3 {
+            out.flush().unwrap();
+        }
     }
-    writeln!(out).unwrap();
-    if driver.pov_observed == 3 {
-        out.flush().unwrap();
-    }
+}
+
+#[cfg(test)]
+#[test]
+fn strafe_trace_serializes_confirmed_flags_and_signed_actor_right_velocity() {
+    let mut actor = ClientData {
+        id: 77,
+        rot: common::CameraInput {
+            yaw: std::f32::consts::FRAC_PI_2,
+            ..default()
+        },
+        pose: common::humanoid::PoseState {
+            mode: PhysicalMode::Standing,
+            grounded: true,
+            velocity: [4.0, 7.0, -2.0],
+            ..default()
+        },
+        ..default()
+    };
+    let rotation = Quat::from_rotation_y(actor.rot.yaw);
+    let mut row = Vec::new();
+    let check = |row: &[u8], prefix, expected: f32| {
+        let (fields, velocity) = std::str::from_utf8(row).unwrap().rsplit_once(',').unwrap();
+        assert_eq!(fields, prefix);
+        assert!((velocity.parse::<f32>().unwrap() - expected).abs() < 1e-5);
+    };
+    write_strafe_fields(&mut row, &actor, rotation).unwrap();
+    check(&row, ",77,1.570796,1,1,0", 2.0);
+
+    actor.pose.velocity[2] = 3.0;
+    actor.pose.mode = PhysicalMode::Recovering;
+    actor.pose.grounded = false;
+    actor.crouched = true;
+    row.clear();
+    write_strafe_fields(&mut row, &actor, rotation).unwrap();
+    check(&row, ",77,1.570796,0,0,1", -3.0);
 }
 
 #[derive(Resource)]
