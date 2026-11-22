@@ -230,7 +230,15 @@ fn setup(mut commands: Commands) {
             BackgroundColor(Color::srgb(0.018, 0.032, 0.048)),
         ))
         .with_children(|parent| {
-            parent.spawn((Status, Text::default(), TextFont::from_font_size(17.0)));
+            parent.spawn((
+                Status,
+                Text::default(),
+                TextFont::from_font_size(17.0),
+                Node {
+                    grid_column: GridPlacement::span(2),
+                    ..default()
+                },
+            ));
             for (order, action) in [
                 Action::Ready,
                 Action::Bench,
@@ -756,15 +764,39 @@ fn present(
     bounds: Query<(&ComputedNode, &UiGlobalTransform)>,
     mut last_focus: Local<Option<Entity>>,
     connection: Option<Res<Connection>>,
+    viewport: Single<&Window, With<PrimaryWindow>>,
+    scale: Res<UiScale>,
 ) {
+    // Reflow only Preferences when a tall one-column panel would exceed the
+    // available logical height. Grid auto-placement retains the widget order.
+    let reflow = menu.surface == Surface::Settings && viewport.height() / scale.0 < 570.0;
+    let was_reflow = root.display == Display::Grid;
     root.display = if matches!(
         menu.surface,
         Surface::Playing | Surface::Inventory | Surface::Bench
     ) {
         Display::None
+    } else if reflow {
+        Display::Grid
     } else {
         Display::Flex
     };
+    if reflow != was_reflow {
+        root.top = Val::Px(if reflow { 18.0 } else { 65.0 });
+        root.right = if reflow { Val::Px(18.0) } else { Val::Auto };
+        root.width = if reflow {
+            Val::Auto
+        } else {
+            Val::Percent(42.0)
+        };
+        root.max_width = Val::Px(if reflow { 650.0 } else { 490.0 });
+        root.column_gap = Val::Px(if reflow { 8.0 } else { 0.0 });
+        root.grid_template_columns = if reflow {
+            vec![RepeatedGridTrack::flex(2, 1.0)]
+        } else {
+            Vec::new()
+        };
+    }
     let actor = session.local(id.0);
     let participant = actor.map(|actor| &actor.participant);
     let ready = participant.is_some_and(|p| p.ready);
