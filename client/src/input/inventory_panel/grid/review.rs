@@ -313,6 +313,28 @@ fn fits(rect: Rect, viewport: Vec2) -> bool {
         && (rect.max - viewport).max_element() <= 1.0
 }
 
+fn shown_split_quantity(label: &str, source_quantity: u16) -> Option<(u16, u16)> {
+    let (value, rest) = label.strip_prefix("Split ")?.split_once(" / ")?;
+    let (maximum, _) = rest.split_once(" · ")?;
+    let (value, maximum) = (value.parse().ok()?, maximum.parse().ok()?);
+    (Some(maximum) == source_quantity.checked_sub(1) && (1..=maximum).contains(&value))
+        .then_some((value, maximum))
+}
+
+type QuantityNodes<'w, 's> = (
+    Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            Option<&'static QuantityButton>,
+        ),
+        Or<(With<QuantityControls>, With<QuantityButton>)>,
+    >,
+    Single<'w, 's, &'static Text, With<Feedback>>,
+);
+
 #[allow(clippy::too_many_arguments)]
 fn observe(
     mut commands: Commands,
@@ -328,6 +350,7 @@ fn observe(
         Res<common::PlayerId>,
     ),
     nodes: ReviewNodes,
+    (quantity_nodes, feedback_text): QuantityNodes,
     // A prior frame awaiting GPU readback must not hide a transient state
     // in this frame. Only an unclaimed request competes for this render target.
     screenshots: Query<(), (With<Screenshot>, Without<Capturing>)>,
@@ -398,11 +421,51 @@ fn observe(
     let (Some(root), Some(board), Some(feedback)) = (root, board, feedback) else {
         return;
     };
+    let mut quantity_bounds = Vec::new();
+    let mut quantity_log = String::new();
     let state = if panel.context.is_some() {
         if context.is_none() || controls.len() != CONTEXT_ACTIONS.len() {
             return;
         }
         "context"
+    } else if let Some(drag) = panel
+        .drag
+        .filter(|drag| drag.split.is_some_and(|split| split.choosing))
+    {
+        if panel.pending.is_some()
+            || drag.version != grid.version
+            || inventory.grid_session() != Some(drag.session)
+        {
+            return;
+        }
+        let Some((_, source)) = grid.items.iter().find(|(id, _)| *id == drag.item) else {
+            return;
+        };
+        let Some((value, maximum)) = shown_split_quantity(feedback_text.as_str(), source.quantity)
+        else {
+            return;
+        };
+        let mut controls_mask = 0;
+        for (node, transform, button) in &quantity_nodes {
+            if node.size().min_element() > 0.0 {
+                controls_mask |= match button {
+                    None => 1,
+                    Some(QuantityButton::Less) => 2,
+                    Some(QuantityButton::More) => 4,
+                    Some(QuantityButton::Confirm) => 8,
+                    Some(QuantityButton::Cancel) => 16,
+                };
+                quantity_bounds.push(layout_rect(node, transform));
+            }
+        }
+        if controls_mask != 31 || quantity_bounds.len() != 5 {
+            return;
+        }
+        quantity_log = format!(
+            " split_item={} source_quantity={} quantity={value} min=1 max={maximum}",
+            drag.item.0, source.quantity
+        );
+        "split-quantity"
     } else {
         match (
             panel.pending.is_some(),
@@ -438,11 +501,12 @@ fn observe(
         .chain(tooltip)
         .chain(context)
         .chain(controls)
+        .chain(quantity_bounds)
         .all(|rect| fits(rect, viewport));
     // Log off-screen geometry as a finding, not a reason to suppress the
     // image. The invalid ghost itself may deliberately extend past the board.
     info!(
-        "GRID REVIEW {state} {}x{} ui_scale={} revision={} items={} layout={} root={root:?} board={board:?} feedback={feedback:?} tooltip={tooltip:?} context={context:?}",
+        "GRID REVIEW {state} {}x{} ui_scale={} revision={} items={} layout={} root={root:?} board={board:?} feedback={feedback:?} tooltip={tooltip:?} context={context:?}{quantity_log}",
         viewport.x,
         viewport.y,
         scale.0,
@@ -460,6 +524,17 @@ fn observe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_grid_review_reads_displayed_split_quantity_and_confirmed_bounds() {
+        let shown = |value, max| format!("Split {value} / {max} · arrows or −/+ · Enter to choose");
+        assert_eq!(shown_split_quantity(&shown(1, 2), 3), Some((1, 2)));
+        assert_eq!(shown_split_quantity(&shown(2, 2), 3), Some((2, 2)));
+        assert_eq!(shown_split_quantity(&shown(0, 2), 3), None);
+        assert_eq!(shown_split_quantity(&shown(3, 2), 3), None);
+        assert_eq!(shown_split_quantity(&shown(1, 2), 2), None);
+        assert_eq!(shown_split_quantity("Place split ×1 · Free", 3), None);
+    }
 
     #[test]
     fn inventory_grid_pointer_uses_physical_cell_coordinates_and_restores_window_state() {

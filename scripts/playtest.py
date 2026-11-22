@@ -238,7 +238,7 @@ def grid_close_ack_evidence(log):
 
 
 def grid_review_evidence(directory, client_log, viewport, scale, pointer_checkpoint=False, inspect=False):
-    states = ("idle", "drag-valid", "drag-invalid", "pending", "hover", "context")
+    states = ("idle", "drag-valid", "drag-invalid", "pending", "hover", "context", "split-quantity")
     observed = {}
     findings = []
     for line in client_log.splitlines():
@@ -260,6 +260,20 @@ def grid_review_evidence(directory, client_log, viewport, scale, pointer_checkpo
             "items": int(items), "layout": layout, "png_size": png_size,
             "png": path.name if png_size else None, "layout_log": line,
         }
+        if state == "split-quantity":
+            split = re.search(
+                r" split_item=(\d+) source_quantity=(\d+) quantity=(\d+) min=(\d+) max=(\d+)(?: |$)", line,
+            )
+            if split is None:
+                findings.append("split-quantity: missing displayed quantity or bounds")
+            else:
+                item, source, quantity, minimum, maximum = map(int, split.groups())
+                observed[state]["split"] = {
+                    "item": item, "source_quantity": source, "quantity": quantity,
+                    "min": minimum, "max": maximum,
+                }
+                if not (item > 0 and minimum == 1 and minimum <= quantity <= maximum == source - 1):
+                    findings.append("split-quantity: displayed quantity or bounds disagree with confirmed stack")
         if (size != viewport or png_size != viewport or layout != "inside"
                 or not math.isclose(float(actual_scale), scale, abs_tol=1e-6) or int(items) == 0):
             findings.append(f"{state}: expected {viewport} at scale {scale}; "

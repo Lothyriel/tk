@@ -92,6 +92,13 @@ escala e bounds e registra os estados não observados. Drag inválido e pending
 só contam se observados e capturados; hover e contexto ficam na revisão
 manual abaixo. Não use esse modo para medir performance.
 
+Quando o roteiro normal abre o seletor de divisão, a revisão registra
+`grid-split-quantity.png` e a quantidade exibida, os limites e a quantidade
+confirmada da pilha em `evidence.json`. A captura é do primeiro estado
+observado após layout; não testa os extremos do seletor, foco de teclado
+nem legibilidade por si só. Se o seletor não aparecer, o relatório marca
+`split-quantity` como não observado.
+
 Somente após coordenação, com um servidor normal e loot real, rode o cliente
 sem `--playtest`:
 

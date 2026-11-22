@@ -7,6 +7,28 @@ from scripts.playtest import grid_review_evidence
 
 
 class GridReviewEvidenceTests(unittest.TestCase):
+    def test_split_quantity_reports_one_observed_frame_and_checks_bounds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 1280, 720)
+            for state in ("idle", "drag-valid", "split-quantity"):
+                (output / f"grid-{state}.png").write_bytes(header)
+            def line(state):
+                return f"GRID REVIEW {state} 1280x720 ui_scale=1 revision=5 items=2 layout=inside"
+            base = line("idle") + "\n" + line("drag-valid")
+            split = line("split-quantity") + " split_item=1 source_quantity=3 quantity=2 min=1 max=2"
+            def review(log):
+                return grid_review_evidence(output, log, (1280, 720), 1)
+            self.assertIn("split-quantity", review(base)["not_observed"])
+            result = review(base + "\n" + split)
+            self.assertEqual(result["findings"], [])
+            self.assertEqual(result["observed"]["split-quantity"]["split"],
+                             {"item": 1, "source_quantity": 3, "quantity": 2, "min": 1, "max": 2})
+            self.assertTrue(review(base + "\n" + split.replace("max=2", "max=3"))["findings"])
+            self.assertTrue(review(base + "\n" + line("split-quantity"))["findings"])
+            (output / "grid-split-quantity.png").unlink()
+            self.assertIn("PNG=None", review(base + "\n" + split)["findings"][0])
+
     def test_inspection_requires_same_target_and_all_ordered_frames(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
@@ -71,7 +93,7 @@ class GridReviewEvidenceTests(unittest.TestCase):
             result = grid_review_evidence(output, log, (1280, 720), 1.25)
             self.assertEqual(result["findings"], [])
             self.assertEqual(list(result["observed"]), ["idle", "drag-valid"])
-            self.assertEqual(result["not_observed"], ["drag-invalid", "pending", "hover", "context"])
+            self.assertEqual(result["not_observed"], ["drag-invalid", "pending", "hover", "context", "split-quantity"])
 
             (output / "grid-drag-valid.png").write_bytes(header(1280, 800))
             result = grid_review_evidence(output, log.replace("inside", "CLIPPED", 1), (1280, 720), 1.25)
