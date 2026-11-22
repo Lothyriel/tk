@@ -153,6 +153,11 @@ Repita com `--inventory-grid-split 2` em uma saída nova. Ambas as rodadas
 usam uma pilha de três bandagens apenas na fixture opt-in; a raid normal
 continua com duas. A sonda confirma a quantidade escolhida e o merge
 posterior. Usa teclas sintéticas do Bevy, não um dispositivo físico.
+Para verificar também o valor apresentado antes do envio, acrescente
+`--inventory-grid-review-scale 1.25` às duas rodadas. O relatório cruza a
+quantidade no seletor e seu intervalo `1..2` com a operação confirmada;
+revise `grid-review/grid-split-quantity.png` em cada saída. `--no-capture`
+continua desativando as capturas normais da raid, mas não esse opt-in.
 
 #### Diagnóstico de fechamento durante uma movimentação pendente
 
