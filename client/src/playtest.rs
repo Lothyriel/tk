@@ -894,8 +894,7 @@ fn drive(
                     local,
                     &inventory,
                     &mut network,
-                    session.raid.raid_id,
-                    peer,
+                    (session.raid.raid_id, peer, now),
                 ) {
                     assert!(
                         session
@@ -905,6 +904,9 @@ fn drive(
                             .all(|available| available)
                     );
                     driver.advance(Step::Fight, now);
+                }
+                if let Some(seed) = driver.voxel_loot.take_capture() {
+                    capture(&mut commands, &format!("loot-ground-{seed}"));
                 }
             } else if p.carried == 1 {
                 assert!(!session.raid.loot_available[loot_index]);
