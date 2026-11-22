@@ -67,7 +67,7 @@ cargo run --bin client
 
 The client defaults to `127.0.0.1`, UDP port `9080`. No `.env` file is needed, and assets are resolved from the client manifest directory rather than the shell's working directory. For LAN play, set `$env:SERVER_ADDR = "192.168.1.10"` to your server's IP before starting the client (POSIX: `SERVER_ADDR=192.168.1.10 cargo run --bin client`). Allow the server's UDP port through the firewall. Optional `TK_PORT` changes the port on both binaries.
 
-Rebuild both binaries for protocol 21 (adds the server-confirmed ground-item target). The client waits for referenced configurations before presenting a snapshot; delayed configuration retains the last accepted world until the normal stale timeout. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
+Rebuild both binaries for protocol 22 (adds the targeted ground-item pickup input). The client waits for referenced configurations before presenting a snapshot; delayed configuration retains the last accepted world until the normal stale timeout. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
 
 Start additional clients in separate terminals to test multiplayer. All connected players must ready up; solo play also starts normally. The server supports up to 32 clients and assigns distinct spawn positions. A client arriving during an active raid waits for the next lobby.
 
@@ -76,7 +76,7 @@ Start additional clients in separate terminals to test multiplayer. All connecte
 1. In the lobby, choose your equipment with **G/B/H/J**, then press **Enter**. Gear is locked while ready. Press Enter again during the countdown to cancel readiness.
 2. After the three-second countdown, you spawn at approximately `x 0 / z 10`, looking toward negative Z. Find an **orange crate**; the nearest is at `x -4 / z 0`. Walk near it and press **F** to pick up one loot unit. A looted crate becomes gray for everyone and remains solid cover.
 
-   Six voxel items sit beside the crates. Look at one within 2.25 m with a clear line of sight to see its name in the HUD. These items cannot be picked up yet; the crates remain the source of loot for extraction.
+   Six voxel items sit beside the crates. Look at one within 2.25 m with a clear line of sight and press **F** when its name appears. The item stays on the ground if your grid has no space. These items enter the raid inventory but do not yet count toward extraction; use the crates for that.
 3. Two **red sentries** guard the yard. Shoot them or use cover. Brown panels and crates are penetrable wood; gray structures are bullet-stopping concrete. Shots break cells out of the wood panels and interior concrete cover. Other players can also hurt you.
 4. Return to the **green exit**, centered at `x 0 / z 15`. The HUD shows your position and distance to the exit. Bring at least one loot unit and hold **F** continuously for five seconds inside the green circle. Releasing F or leaving the zone resets progress.
 5. The result becomes **Extracted** and your loot is added to **Secured this session** exactly once. If other participants are still playing, wait for them to finish. In **Debrief**, press **Enter** to return everyone to the lobby, then ready up for another raid.

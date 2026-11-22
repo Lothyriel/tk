@@ -236,7 +236,13 @@ pub(super) fn objectives_tick(
             player.fail(RaidStatus::Missing);
             info!("Player {} missing at raid timeout", client.id);
         } else {
-            if player.try_loot(&mut raid, transform.translation, input.interact) {
+            if player.try_loot(
+                &mut raid,
+                transform.translation,
+                input.interact
+                    && input.pickup_focus.is_none()
+                    && !in_extraction_zone(transform.translation),
+            ) {
                 info!(
                     "Player {} collected loot; carried={}",
                     client.id, player.carried
@@ -245,7 +251,7 @@ pub(super) fn objectives_tick(
             if player.tick_extraction(
                 &raid,
                 transform.translation,
-                input.interact,
+                input.interact && input.pickup_focus.is_none(),
                 time.delta_secs(),
             ) {
                 info!("Player {} extracted; secured={}", client.id, player.secured);

@@ -56,7 +56,10 @@ fn keyboard(
     time: Res<Time<Real>>,
     window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
-    editor: Option<Res<crate::loadout::Editor>>,
+    (editor, inventory): (
+        Option<Res<crate::loadout::Editor>>,
+        Option<Res<crate::sync::inventory::State>>,
+    ),
 ) {
     let active = session.playing(id.0)
         && window.0.focused
@@ -70,6 +73,13 @@ fn keyboard(
     input.crouch = active && keys.pressed(KeyCode::ControlLeft);
     input.jump = active && keys.pressed(KeyCode::Space);
     input.interact = active && keys.pressed(KeyCode::KeyF);
+    if !input.interact {
+        input.pickup_focus = None;
+    } else if keys.just_pressed(KeyCode::KeyF) {
+        let raid = session.raid.raid_id;
+        input.pickup_focus =
+            inventory.and_then(|state| state.focused_ground(raid).map(|item| (raid, item.id)));
+    }
     input.fire = active && buttons.pressed(MouseButton::Left);
     input.aim = active && buttons.pressed(MouseButton::Right);
     if active && buttons.just_pressed(MouseButton::Left) {

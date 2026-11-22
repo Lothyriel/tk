@@ -10,13 +10,14 @@ use common::{
         item_grid::{Footprint, Placement, Rotation},
         item_inventory::{
             Condition, GridLocation, Inventory, InventoryAuthority, OperationSession, SessionKey,
+            VersionedCommit,
         },
         item_manifest::{S1_SEEDS, item_visuals, planned_items},
     },
     combat::{Arsenal, BodyHealth},
     humanoid::{PhysicalMode, PoseState, aim_lean_offset},
     raid::{
-        Participant, RaidPhase, RaidState, RaidStatus,
+        Participant, RaidPhase, RaidState, RaidStatus, in_extraction_zone,
         item_target::{GroundTarget, PICKUP_REACH_M, first_ground_target},
     },
     replication::inventory::{CHANNEL, GroundItem, InventoryRequest, InventoryUpdate, UpdateBody},
@@ -55,6 +56,7 @@ struct Peer {
     open: Option<CompartmentId>,
     ground_count: usize,
     focus: Option<ItemInstanceId>,
+    pickup_held: bool,
 }
 
 #[derive(Default)]
@@ -178,6 +180,14 @@ pub(super) struct TargetSight<'w, 's> {
 }
 
 impl TargetSight<'_, '_> {
+    fn pickup_input(&self, entity: Entity) -> Option<((u32, ItemInstanceId), bool)> {
+        let (input, root, ..) = self.actors.get(entity).ok()?;
+        input
+            .pickup_focus
+            .filter(|_| input.interact)
+            .map(|request| (request, in_extraction_zone(root.translation)))
+    }
+
     pub(super) fn focus(&self, entity: Entity, items: &[WorldItem]) -> Option<ItemInstanceId> {
         if items.is_empty() {
             return None;
@@ -308,6 +318,7 @@ fn process(
                     open: None,
                     ground_count: 0,
                     focus: None,
+                    pickup_held: false,
                 },
             );
             send(server, client, key, UpdateBody::Begin);
@@ -372,6 +383,35 @@ fn process(
             }
         }
     }
+    // Resolve at most one pickup per held request. A first commit removes the
+    // world entry before any other peer can select or commit it this tick.
+    for &client in &clients {
+        let Some(peer) = state
+            .peers
+            .get_mut(&client)
+            .filter(|_| server.is_connected(client))
+        else {
+            continue;
+        };
+        let request = sight.pickup_input(peer.entity);
+        let already_held = std::mem::replace(&mut peer.pickup_held, request.is_some());
+        if let Some(((epoch, item), false)) = request
+            && !already_held
+            && raid.phase == RaidPhase::Active
+            && epoch == raid.raid_id
+            && peer.focus == Some(item)
+            && sight.focus(peer.entity, &state.world_items) == Some(item)
+            && let Some(commit) = commit_ground_pickup(
+                authority,
+                &mut state.world_items,
+                item,
+                CompartmentId(client),
+            )
+        {
+            let deltas = commit.project(peer.key, |id| id == CompartmentId(client));
+            send(server, client, peer.key, UpdateBody::Delta(deltas));
+        }
+    }
     for client in clients {
         while server.is_connected(client) {
             let Some(peer) = state
@@ -433,6 +473,18 @@ fn process(
     }
 }
 
+fn commit_ground_pickup(
+    authority: &mut InventoryAuthority,
+    world: &mut Vec<WorldItem>,
+    item: ItemInstanceId,
+    target: CompartmentId,
+) -> Option<VersionedCommit> {
+    let index = world.iter().position(|entry| entry.id == item)?;
+    let commit = authority.pickup(item, world[index].source, target).ok()??;
+    world.remove(index);
+    Some(commit)
+}
+
 fn send_snapshot(
     authority: &InventoryAuthority,
     server: &mut RenetServer,
@@ -459,6 +511,54 @@ mod tests {
             InventoryAction, InventoryOperation, OperationResult, VersionedCompartment,
         },
     };
+
+    #[test]
+    fn ground_pickup_removes_only_after_commit_and_only_once() {
+        let mut world = Vec::new();
+        let mut inventory = seed_world(&mut world);
+        let item = world[0].id;
+        let source = world[0].source;
+        let original = *inventory.get(item).unwrap();
+        let [full, winner, other] = [7, 8, 9].map(CompartmentId);
+        for id in [full, winner, other] {
+            inventory
+                .register_compartment(id, Footprint::new(1, 1).unwrap(), None)
+                .unwrap();
+        }
+        inventory
+            .insert_seed(
+                "med.bandage",
+                Condition::Intact,
+                1,
+                GridLocation {
+                    compartment: full,
+                    placement: Placement {
+                        x: 0,
+                        y: 0,
+                        rotation: Rotation::Upright,
+                    },
+                },
+            )
+            .unwrap();
+        let mut authority = InventoryAuthority::new(1, inventory);
+        assert!(commit_ground_pickup(&mut authority, &mut world, item, full).is_none());
+        assert_eq!(world[0].id, item);
+        assert_eq!(authority.revision(source), Some(0));
+        assert_eq!(authority.inventory().get(item), Some(&original));
+        assert!(commit_ground_pickup(&mut authority, &mut world, item, winner).is_some());
+        assert!(!world.iter().any(|entry| entry.id == item));
+        assert!(commit_ground_pickup(&mut authority, &mut world, item, other).is_none());
+        assert_eq!(
+            authority
+                .inventory()
+                .get(item)
+                .unwrap()
+                .location
+                .compartment,
+            winner
+        );
+        assert_eq!(authority.revision(other), Some(0));
+    }
 
     #[test]
     fn world_item_seeds_spawn_once_per_raid_and_leave_on_debrief() {

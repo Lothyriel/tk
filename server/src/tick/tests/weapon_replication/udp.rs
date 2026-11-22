@@ -180,7 +180,10 @@ impl Harness {
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     use common::{
-        catalog::{ItemInstanceId, item_manifest::S1_SEEDS},
+        catalog::{
+            ItemInstanceId,
+            item_manifest::{S1_SEEDS, item_visuals},
+        },
         replication::inventory::{CHANNEL, InventoryUpdate, UpdateBody},
     };
 
@@ -221,7 +224,57 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     assert_ne!(joined[2].session, initial[2].session);
     assert_eq!(joined[2].body, initial[2].body);
 
-    // Inject only expiration to exercise the production debrief transition.
+    // Stage the player near the bandage; aim and interact through normal UDP
+    // input so the endpoint still has to confirm focus and commit the pickup.
+    let item = &items[0];
+    let actor = harness.app.world().resource::<Lobby>().players[&7];
+    let center = Vec3::from_array(item.root)
+        + Vec3::from_array(item_visuals()[S1_SEEDS[0]].collider_center());
+    let start = Vec3::new(center.x, 1.02, center.z + 1.0);
+    harness
+        .app
+        .world_mut()
+        .get_mut::<Transform>(actor)
+        .unwrap()
+        .translation = start;
+    let ray = center - (start + Vec3::Y * PLAYER_VIEW_HEIGHT);
+    first.input.camera.pitch = ray.y.atan2(-ray.z);
+    harness.pump(&mut [&mut first, &mut late], 48);
+    assert!(
+        drain(&mut first)
+            .iter()
+            .any(|update| update.body == UpdateBody::GroundFocus(Some(item.id)))
+    );
+    assert!(drain(&mut late).is_empty());
+
+    let epoch = u32::try_from(initial[0].session.raid_epoch).unwrap();
+    first.input.interact = true;
+    first.input.pickup_focus = Some((epoch - 1, item.id));
+    harness.pump(&mut [&mut first, &mut late], 48);
+    assert!(drain(&mut first).is_empty(), "stale epoch must not collect");
+    first.input.interact = false;
+    first.input.pickup_focus = None;
+    harness.pump(&mut [&mut first, &mut late], 32);
+    first.input.interact = true;
+    first.input.pickup_focus = Some((epoch, item.id));
+    harness.pump(&mut [&mut first, &mut late], 96);
+    let collected = drain(&mut first);
+    assert_eq!(collected.len(), 3);
+    assert!(matches!(&collected[0].body, UpdateBody::Delta(deltas)
+        if deltas.len() == 1 && deltas[0].version.id == CompartmentId(7)
+        && deltas[0].items.len() == 1 && deltas[0].items[0].id == item.id
+        && deltas[0].items[0].item.is_some()));
+    assert_eq!(collected[1].body, UpdateBody::Ground(items[1..].to_vec()));
+    assert_eq!(collected[2].body, UpdateBody::GroundFocus(None));
+    let public = drain(&mut late);
+    assert_eq!(public.len(), 1);
+    assert_eq!(public[0].body, collected[1].body);
+    assert_eq!(
+        harness.app.world().resource::<RaidState>().loot_available,
+        [true; 3]
+    );
+
+    // Inject expiration to exercise the production debrief transition.
     harness
         .app
         .world_mut()
