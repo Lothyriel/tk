@@ -15,6 +15,8 @@ use super::VIEW_MODEL_RENDER_LAYER;
 
 include!(concat!(env!("OUT_DIR"), "/voxel_registry.rs"));
 
+pub(crate) mod item_review;
+
 pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {

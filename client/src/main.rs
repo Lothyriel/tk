@@ -20,6 +20,7 @@ mod sync;
 
 fn main() {
     let playtest = std::env::args().any(|argument| argument == "--playtest");
+    let item_review = std::env::args().any(|argument| argument == "--item-review");
     let viewport = playtest.then(playtest::requested_viewport).flatten();
     let mut app = App::new();
     app.add_plugins(
@@ -43,8 +44,12 @@ fn main() {
                 }),
                 ..default()
             }),
-    )
-    .configure_sets(
+    );
+    if item_review {
+        app.add_plugins(render::voxel::item_review::Plugin).run();
+        return;
+    }
+    app.configure_sets(
         Update,
         (
             ClientSystems::Receive,
