@@ -48,6 +48,110 @@ fn fixture() -> Inventory {
 }
 
 #[test]
+fn item_inventory_transaction_checks_both_compartments_before_mutating() {
+    let mut inventory = fixture();
+    let own = at(1, 0, 0);
+    let other = at(2, 0, 0);
+    let source = inventory
+        .insert_seed("med.bandage", Condition::Intact, 2, own)
+        .unwrap();
+    let target = inventory
+        .insert_seed("med.bandage", Condition::Intact, 1, other)
+        .unwrap();
+    let can_write = |id| id == own.compartment;
+    let initial = inventory.export_archive().unwrap();
+    for action in [
+        InventoryAction::Move {
+            item: source,
+            destination: other,
+        },
+        InventoryAction::Move {
+            item: target,
+            destination: own,
+        },
+        InventoryAction::Split {
+            item: source,
+            quantity: 1,
+            destination: other,
+        },
+        InventoryAction::Merge { source, target },
+        InventoryAction::Merge {
+            source,
+            target: ItemInstanceId(999),
+        },
+    ] {
+        assert_eq!(
+            inventory.transact(action, can_write),
+            Err(TransactionError::Unavailable)
+        );
+        assert_eq!(inventory.export_archive().unwrap(), initial);
+    }
+    assert_eq!(
+        inventory.transact(
+            InventoryAction::Move {
+                item: source,
+                destination: other
+            },
+            |_| true
+        ),
+        Err(TransactionError::Rule(InventoryError::Placement(
+            PlacementError::Occupied
+        )))
+    );
+    assert_eq!(inventory.export_archive().unwrap(), initial);
+}
+
+#[test]
+fn item_inventory_transaction_receipt_tracks_transfer_and_retirement() {
+    let mut inventory = fixture();
+    let own = at(1, 0, 0);
+    let other = at(2, 0, 0);
+    let source = inventory
+        .insert_seed("med.bandage", Condition::Intact, 3, own)
+        .unwrap();
+    let split = inventory
+        .transact(
+            InventoryAction::Split {
+                item: source,
+                quantity: 2,
+                destination: other,
+            },
+            |_| true,
+        )
+        .unwrap();
+    let created = split.secondary.unwrap();
+    assert_eq!(created.before, None);
+    assert_eq!(created.after.unwrap().location, other);
+    assert_eq!(split.primary.before.unwrap().quantity, 3);
+    assert_eq!(split.primary.after.unwrap().quantity, 1);
+    let moved = inventory
+        .transact(
+            InventoryAction::Move {
+                item: created.id,
+                destination: at(1, 1, 0),
+            },
+            |_| true,
+        )
+        .unwrap();
+    assert_eq!(moved.primary.before.unwrap().location, other);
+    assert_eq!(moved.primary.after.unwrap().location, at(1, 1, 0));
+    assert_eq!(moved.secondary, None);
+    let merged = inventory
+        .transact(
+            InventoryAction::Merge {
+                source: created.id,
+                target: source,
+            },
+            |_| true,
+        )
+        .unwrap();
+    assert_eq!(merged.primary.before.unwrap().quantity, 2);
+    assert_eq!(merged.primary.after, None);
+    assert_eq!(merged.secondary.unwrap().after.unwrap().mass_g(), 105);
+    assert!(inventory.get(created.id).is_none());
+}
+
+#[test]
 fn item_inventory_moves_and_rotates_atomically() {
     let mut inventory = fixture();
     let water = inventory
