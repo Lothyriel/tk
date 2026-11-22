@@ -83,6 +83,14 @@ Start additional clients in separate terminals to test multiplayer. All connecte
 
 There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed brain, severe blood loss or the five-minute timeout loses carried loot. Secured loot lasts for the current connection/server session.
 
+### Arena Solo
+
+With one connected player, select **Mode: Arena Solo** in kit preparation.
+Use the same workbench and **Ready / deploy** button. The server spawns one bot
+and runs a continuous duel, without raid loot or extraction. Either combatant
+returns after three seconds when a spawn is clear. Use **Leave Arena / return
+to lobby** from the pause or respawn menu, then ready again or switch to Raid.
+
 ## Controls
 
 | Input | Action |

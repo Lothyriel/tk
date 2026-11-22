@@ -7,7 +7,11 @@ use bevy::{
     window::PrimaryWindow,
 };
 use bevy_renet2::prelude::RenetClient;
-use common::{EquipmentSlot, LocalInput, PlayerId, WeaponKind, combat::*, raid::RaidPhase};
+use common::{
+    EquipmentSlot, LocalInput, PlayerId, WeaponKind,
+    combat::*,
+    raid::{MatchMode, RaidPhase, RaidStatus},
+};
 
 use crate::{ClientSystems, input::inventory_panel::Panel, loadout, sync::ClientSession};
 
@@ -44,6 +48,8 @@ enum Surface {
     Inventory,
     Pause,
     Waiting,
+    ArenaWaiting,
+    ArenaPause,
     Debrief,
 }
 
@@ -96,12 +102,14 @@ impl Menu {
 enum Action {
     Ready,
     Bench,
+    Mode,
     Primary,
     Ammo,
     Vest,
     Helmet,
     Return,
     Resume,
+    LeaveArena,
     Quit,
 }
 
@@ -171,12 +179,14 @@ fn setup(mut commands: Commands) {
             for (order, action) in [
                 Action::Ready,
                 Action::Bench,
+                Action::Mode,
                 Action::Primary,
                 Action::Ammo,
                 Action::Vest,
                 Action::Helmet,
                 Action::Return,
                 Action::Resume,
+                Action::LeaveArena,
                 Action::Quit,
             ]
             .into_iter()
@@ -227,7 +237,10 @@ fn available(
 ) -> (bool, bool) {
     let shown = match surface {
         Surface::Lobby => action.is_some_and(|action| {
-            matches!(action, Action::Ready | Action::Bench | Action::Quit) || action.changes_kit()
+            matches!(
+                action,
+                Action::Ready | Action::Bench | Action::Mode | Action::Quit
+            ) || action.changes_kit()
         }),
         Surface::Bench => match bench {
             Some(loadout::ui::Action::Part(row) | loadout::ui::Action::Position(row)) => {
@@ -236,12 +249,15 @@ fn available(
             _ => bench.is_some(),
         },
         Surface::Pause => matches!(action, Some(Action::Resume | Action::Quit)),
+        Surface::ArenaPause => matches!(action, Some(Action::Resume | Action::LeaveArena)),
+        Surface::ArenaWaiting => action == Some(&Action::LeaveArena),
         Surface::Debrief => matches!(action, Some(Action::Return | Action::Quit)),
         Surface::Waiting | Surface::Connection => action == Some(&Action::Quit),
         Surface::Playing | Surface::Inventory => false,
     };
     let enabled = match action {
-        Some(Action::Ready | Action::Return) => !pending,
+        Some(Action::Ready | Action::Return | Action::LeaveArena) => !pending,
+        Some(Action::Mode) => editable,
         Some(action) if action.changes_kit() => editable,
         Some(_) => true,
         None => bench.is_some_and(|action| {
@@ -279,6 +295,8 @@ fn route(
     }
     let connected = connection_ready(&session, id.0, &client, time.elapsed_secs_f64());
     let playing = connected && session.playing(id.0);
+    let arena_active =
+        session.raid.phase == RaidPhase::Active && session.raid.mode != MatchMode::Raid;
     if !playing {
         menu.paused = false;
     }
@@ -314,9 +332,17 @@ fn route(
     } else if session.raid.phase == RaidPhase::Debrief {
         Surface::Debrief
     } else if !playing {
-        Surface::Waiting
+        if arena_active {
+            Surface::ArenaWaiting
+        } else {
+            Surface::Waiting
+        }
     } else if menu.paused {
-        Surface::Pause
+        if arena_active {
+            Surface::ArenaPause
+        } else {
+            Surface::Pause
+        }
     } else if panel.open {
         Surface::Inventory
     } else {
@@ -346,7 +372,13 @@ fn route(
                 pending,
                 editor.draft.as_ref(),
             );
-            enabled || (shown && pending && matches!(action, Some(Action::Ready | Action::Return)))
+            enabled
+                || (shown
+                    && pending
+                    && matches!(
+                        action,
+                        Some(Action::Ready | Action::Return | Action::LeaveArena)
+                    ))
         })
         .collect();
     candidates.sort_unstable_by_key(|(_, order, ..)| order.0);
@@ -405,12 +437,20 @@ fn route(
         return;
     }
     match action.copied() {
-        Some(Action::Ready | Action::Return) => {
+        Some(Action::Ready | Action::Return | Action::LeaveArena) => {
+            input.arena_leave = action == Some(&Action::LeaveArena);
             input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
             menu.pending = Some(input.lobby_sequence);
             if lobby && local.is_some_and(|actor| !actor.participant.ready) {
                 input.weapon = EquipmentSlot::Primary;
             }
+        }
+        Some(Action::Mode) => {
+            input.mode = if input.mode == MatchMode::Raid {
+                MatchMode::ArenaSolo
+            } else {
+                MatchMode::Raid
+            };
         }
         Some(Action::Bench) => {
             menu.lobby_focus = Some(entity);
@@ -508,7 +548,12 @@ fn present(
     let editable = !pending && editor.editable(&session, id.0);
     ***status = match menu.surface {
         Surface::Lobby => format!(
-            "RAID / KIT PREPARATION\n{}\nTab / arrows: select · Enter / Space: activate",
+            "KIT PREPARATION · {}\n{}\nTab / arrows: select · Enter / Space: activate",
+            if ready || !editable {
+                mode_name(session.raid.mode)
+            } else {
+                mode_name(input.mode)
+            },
             if menu.pending.is_some() {
                 "Awaiting server confirmation".into()
             } else if editor.pending.is_some() {
@@ -520,13 +565,33 @@ fn present(
                 )
             } else if ready {
                 "Ready · Kit locked".into()
+            } else if input.mode == MatchMode::ArenaSolo
+                && session.players.iter().filter(|p| !p.bot).count() > 1
+            {
+                "Arena Solo requires only one connected player".into()
             } else {
-                "Choose free raid equipment".into()
+                "Choose free equipment".into()
             }
         ),
-        Surface::Pause => {
+        Surface::Pause | Surface::ArenaPause => {
             "LOCAL PAUSE\nServer and dangers continue.\nTab / arrows: select · Enter / Esc: resume"
                 .into()
+        }
+        Surface::ArenaWaiting => {
+            if menu.pending.is_some() {
+                "ARENA · Leaving duel…".into()
+            } else if participant.is_some_and(|p| p.status == RaidStatus::Dead) {
+                if session.raid.seconds_left > 0.0 {
+                    format!(
+                        "ARENA · Eliminated\nRespawn in {:.1}s",
+                        session.raid.seconds_left
+                    )
+                } else {
+                    "ARENA · Eliminated\nWaiting for a clear spawn".into()
+                }
+            } else {
+                "ARENA · Waiting for a combatant".into()
+            }
         }
         Surface::Debrief | Surface::Waiting => {
             let p = participant.expect("connection_ready requires a local participant");
@@ -573,12 +638,21 @@ fn present(
                 Action::Ready if ready => "Cancel ready".into(),
                 Action::Ready => "Ready / deploy".into(),
                 Action::Bench => "Weapon workbench".into(),
+                Action::Mode => format!(
+                    "Mode: {} (change)",
+                    mode_name(if ready || !editable {
+                        session.raid.mode
+                    } else {
+                        input.mode
+                    })
+                ),
                 Action::Primary => format!("Primary: {}", loadout.primary.spec().name),
                 Action::Ammo => format!("Ammo: {:?}", loadout.ammo),
                 Action::Vest => format!("Vest: {:?}", loadout.armor),
                 Action::Helmet => format!("Helmet: {}", if loadout.helmet { "On" } else { "Off" }),
                 Action::Return => "Return everyone to lobby".into(),
                 Action::Resume => "Resume".into(),
+                Action::LeaveArena => "Leave Arena / return to lobby".into(),
                 Action::Quit => "Quit client".into(),
             };
         }
@@ -621,6 +695,14 @@ fn present(
         offset.0.y += (delta - delta.clamp(-margin, margin)) * viewport.inverse_scale_factor();
     }
     *last_focus = menu.selected;
+}
+
+fn mode_name(mode: MatchMode) -> &'static str {
+    if mode == MatchMode::ArenaSolo {
+        "Arena Solo"
+    } else {
+        "Raid"
+    }
 }
 
 #[cfg(test)]
@@ -844,6 +926,53 @@ mod tests {
             .press(MouseButton::Left);
         app.update();
         assert!(app.world().resource::<LocalInput>().fire);
+    }
+
+    #[test]
+    fn menu_arena_mode_ready_then_leave_while_waiting_and_ready_again() {
+        let mut app = fixture();
+        let mode = button(&mut app, Action::Mode);
+        let ready = button(&mut app, Action::Ready);
+        let leave = button(&mut app, Action::LeaveArena);
+        click(&mut app, mode);
+        app.update();
+        assert_eq!(
+            app.world().resource::<LocalInput>().mode,
+            MatchMode::ArenaSolo
+        );
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 0);
+        click(&mut app, ready);
+        key(&mut app, KeyCode::Enter);
+        assert!(!app.world().resource::<LocalInput>().arena_leave);
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.raid.mode = MatchMode::ArenaSolo;
+            session.raid.seconds_left = 2.5;
+            session.players[0].participant.last_command = 1;
+            session.players[0].participant.fail(RaidStatus::Dead);
+        }
+        app.update();
+        focus(&app, leave);
+        key(&mut app, KeyCode::Enter);
+        assert!(app.world().resource::<LocalInput>().arena_leave);
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 2);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 2);
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Lobby;
+            session.players[0].participant.last_command = 2;
+            session.players[0].participant.return_to_lobby();
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.update();
+        click(&mut app, ready);
+        app.update();
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 3);
+        assert!(!app.world().resource::<LocalInput>().arena_leave);
     }
 
     #[test]

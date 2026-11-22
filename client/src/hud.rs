@@ -170,8 +170,10 @@ fn describe(
     connection: &str,
     aiming: bool,
 ) -> String {
+    let arena = session.raid.mode != MatchMode::Raid;
     let mut text = format!(
-        "TK / EXTRACTION ALPHA   |   RAID {}\n",
+        "TK / EXTRACTION ALPHA   |   {} {}\n",
+        if arena { "ARENA" } else { "RAID" },
         session.raid.raid_id
     );
     if !connection.is_empty() {
@@ -217,6 +219,38 @@ fn describe(
         }
         RaidPhase::Active if p.status == RaidStatus::Active => {
             let body = &local.body;
+            if arena {
+                let magazine = if local.mechanics.magazine_inserted {
+                    local
+                        .ammo_in_mag
+                        .saturating_sub(u32::from(local.mechanics.chambered))
+                        .to_string()
+                } else {
+                    "absent".into()
+                };
+                text.push_str(&format!(
+                    "{} | Chamber {} | Magazine {}\nHead {:.0} | Thorax {:.0} | Blood {:.0}%{}",
+                    local.weapon_id.spec().name,
+                    if local.mechanics.chambered {
+                        "loaded"
+                    } else {
+                        "empty"
+                    },
+                    magazine,
+                    body.parts[0],
+                    body.parts[1],
+                    body.anatomy.blood,
+                    if local.reload_remaining() > 0.0 {
+                        " | Reloading"
+                    } else {
+                        ""
+                    },
+                ));
+                if !aiming && local.pose.ads <= 0.02 {
+                    text.push_str("\nEsc: pause or leave Arena");
+                }
+                return text;
+            }
             let exit = Vec2::new(
                 local.pos[0] - EXTRACTION_CENTER[0],
                 local.pos[2] - EXTRACTION_CENTER[2],
