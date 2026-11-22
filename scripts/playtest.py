@@ -375,6 +375,8 @@ def main():
                         help="Verify this split quantity against an opt-in three-bandage seed")
     parser.add_argument("--inventory-grid-partial-merge", action="store_true",
                         help="Verify a partial merge of two same-lineage stacks against a private QA server")
+    parser.add_argument("--inventory-grid-pickup-hint", action="store_true",
+                        help="Check the live ground-item HUD before and after a confirmed backpack Move")
     parser.add_argument("--inventory-telemetry", action="store_true",
                         help="Measure application payloads and Linux process RSS during the solo grid route")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
@@ -429,6 +431,13 @@ def main():
     if args.bench_draft and (not args.configure_weapons or args.no_capture or args.video):
         parser.error("--bench-draft requires --configure-weapons and static captures only")
     grid_review = args.inventory_grid_review_scale is not None
+    if args.inventory_grid_pickup_hint and not (args.inventory_grid and not (
+        grid_review or args.inventory_grid_bench or args.inventory_grid_close_ack
+        or args.inventory_grid_split or args.inventory_grid_partial_merge
+        or args.inventory_telemetry or args.loot_inspect or args.configure_weapons
+        or args.weapon_kit or args.animation_review or args.pov or args.arena_solo or args.arena_pvp
+    )):
+        parser.error("--inventory-grid-pickup-hint requires the plain solo --inventory-grid route")
     if args.inventory_grid_partial_merge and not (args.inventory_grid and not (
         grid_review or args.inventory_grid_bench or args.inventory_grid_close_ack
         or args.inventory_grid_split or args.inventory_telemetry or args.loot_inspect
@@ -561,6 +570,7 @@ def main():
     env.pop("TK_PLAYTEST_INVENTORY_GRID", None)
     env.pop("TK_PLAYTEST_GRID_SPLIT", None)
     env.pop("TK_PLAYTEST_PARTIAL_MERGE", None)
+    env.pop("TK_PLAYTEST_PICKUP_HINT", None)
     if args.inventory_grid_partial_merge:
         env["TK_PLAYTEST_PARTIAL_MERGE"] = "1"
     if args.inventory_grid_split:
@@ -656,6 +666,7 @@ def main():
         "loot_inspect": args.loot_inspect,
         "pet_probe": args.pet_probe,
         "inventory_grid": args.inventory_grid,
+        "inventory_grid_pickup_hint": args.inventory_grid_pickup_hint,
         "inventory_grid_bench": args.inventory_grid_bench,
         "inventory_grid_review_scale": args.inventory_grid_review_scale,
         "inventory_grid_pointer_checkpoint": args.inventory_grid_pointer_checkpoint,
@@ -673,6 +684,8 @@ def main():
         "loadouts": ("leader compact M4A1 / peer suppressed M4A1" if args.configure_weapons
                      else "leader Rifle / peer SMG") + "; AP; heavy vest; helmet; both carry pistol",
         "route": ("deploy -> two pickups -> partial merge -> stop" if args.inventory_grid_partial_merge
+                  else "deploy -> fragment backpack -> check water HUD -> confirmed Move -> check water HUD"
+                  if args.inventory_grid_pickup_hint
                   else "arena-solo" if args.arena_solo else "arena-pvp" if args.arena_pvp
                   else "deploy -> dual loose item pickup -> stop" if args.loot_contest else args.pov
                   or "optional reciprocal continuous weapon actions -> full-body route -> weapon exercise -> loot -> sentry combat -> extraction -> debrief -> lobby -> deploy -> limb injury/fall/recovery/death"),
@@ -690,6 +703,8 @@ def main():
                     client_output.mkdir(exist_ok=True)
                     client_env = env.copy()
                     client_env.update(TK_PLAYTEST_DIR=str(client_output), TK_PLAYTEST_ROLE=str(index))
+                    if args.inventory_grid_pickup_hint:
+                        client_env["TK_PLAYTEST_PICKUP_HINT"] = "1"
                     if index == 1 and peer_snapshot_drop_every:
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = str(peer_snapshot_drop_every)
                     elif index == 0 and args.pov == "recovery-steps" and peer_snapshot_drop_every:
@@ -806,6 +821,16 @@ def main():
                 if args.viewport:
                     assert struct.unpack(">II", data[16:24]) == args.viewport
         result = "PASS: native Arena Solo, real UDP, both combatants returned and second session began\n"
+        (output / "result.txt").write_text(result, encoding="utf-8")
+        print(result, end="")
+        return
+    if args.inventory_grid_pickup_hint:
+        cues = ["PICKUP HINT before ", "PICKUP HINT move ", "PICKUP HINT after ", "PICKUP HINT PASS"]
+        assert all(client_text.count(cue) == 1 for cue in cues), f"Missing or repeated HUD checkpoint: {output}"
+        offsets = [client_text.index(cue) for cue in cues]
+        assert offsets == sorted(offsets), f"Unexpected HUD checkpoint order: {output}"
+        assert not list(output.rglob("*.png")), f"No-capture route produced media: {output}"
+        result = "PASS: native solo UDP pickup HUD shows no-room then restores [F] after a confirmed Move\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
         return

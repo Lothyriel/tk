@@ -5,6 +5,8 @@ use common::{
     ClientData, ClientInput, PLAYER_VIEW_HEIGHT,
     catalog::{
         ItemInstanceId,
+        item_grid::{Placement, Rotation},
+        item_inventory::InventorySnapshot,
         item_manifest::{S1_SEEDS, item_visuals},
     },
     replication::inventory::CHANNEL,
@@ -46,6 +48,7 @@ pub(super) struct Route {
     held_bandage: Option<ItemInstanceId>,
     bandage_drop_sent: bool,
     bench_leg: usize,
+    arranging: bool,
 }
 
 impl Route {
@@ -115,13 +118,25 @@ impl Route {
             !dual || grid_probe.is_none(),
             "grid checkpoint requires the solo loot route"
         );
+        let Some(grid) = inventory.owned_grid(raid, actor.id) else {
+            return false;
+        };
+        if super::inventory_grid::pickup_hint_enabled() {
+            assert!(!dual && inspection.is_none());
+            self.pickup_hint(
+                input,
+                actor,
+                inventory,
+                raid,
+                grid,
+                grid_probe.expect("pickup hint requires the grid probe"),
+            );
+            return false;
+        }
         let order: &[usize] = match (dual, peer) {
             (false, _) => &[0, 1, 2, 3, 5, 4],
             (true, false) => &[0, 1, 4],
             (true, true) => &[2, 3, 5],
-        };
-        let Some(grid) = inventory.owned_grid(raid, actor.id) else {
-            return false;
         };
         if super::inventory_grid::partial_merge_enabled() {
             assert!(!dual && inspection.is_none());
@@ -315,6 +330,104 @@ impl Route {
             self.pickup_id = Some(item.id);
         }
         false
+    }
+
+    fn pickup_hint(
+        &mut self,
+        input: &mut ClientInput,
+        actor: &ClientData,
+        inventory: &State,
+        raid: u32,
+        grid: &InventorySnapshot,
+        probe: &mut Probe,
+    ) {
+        // Keep the normal seeds and fill only the perimeter of the daypack.
+        const SETUP: [(usize, u8, u8); 4] = [(0, 3, 1), (5, 0, 0), (4, 3, 3), (3, 1, 3)];
+        let (seed, x, y) = SETUP.get(self.index).copied().unwrap_or((2, 3, 2));
+        let owned = |seed| {
+            grid.items
+                .iter()
+                .find(|(_, item)| item.definition == S1_SEEDS[seed])
+        };
+        let target = Placement {
+            x,
+            y,
+            rotation: Rotation::Upright,
+        };
+        if let Some((id, item)) = owned(seed) {
+            assert_ne!(seed, 2, "water must stay on the ground");
+            if self.arranging || item.placement != target {
+                self.arranging = true; // Wait for Tab close, even after the Move delta.
+                if !probe.pickup_hint_move(*id, target, None) {
+                    return;
+                }
+                self.arranging = false;
+            }
+            assert_eq!(self.pickup_id, Some(*id));
+            assert_eq!(item.placement, target);
+            info!(
+                "PICKUP HINT setup seed={seed} id={} revision={} placement=({x}, {y})",
+                id.0, grid.version.revision
+            );
+            self.advance_seed();
+            return;
+        }
+        let Some(item) = inventory
+            .ground()
+            .0
+            .iter()
+            .find(|item| usize::from(item.seed) == seed)
+        else {
+            return;
+        };
+        let waypoints: &[[f32; 3]] = match seed {
+            5 => &[[2.8, 0.0, 0.8], [2.8, 0.0, -11.9]],
+            3 => &[[2.8, 0.0, -11.9], [2.8, 0.0, -4.7]],
+            _ => &[],
+        };
+        while let Some(&waypoint) = waypoints.get(self.approach) {
+            if !travel(input, actor, Vec3::from_array(waypoint)) {
+                return;
+            }
+            self.approach += 1;
+        }
+        let center = Vec3::from_array(item.root)
+            + Vec3::from_array(item_visuals()[S1_SEEDS[seed]].collider_center());
+        if self.pickup_id.is_none() && !travel(input, actor, center + Vec3::Z * 0.9) {
+            return;
+        }
+        aim_at(input, actor, center);
+        if !inventory
+            .focused_ground(raid)
+            .is_some_and(|focus| focus.id == item.id)
+        {
+            return;
+        }
+        if seed == 2 {
+            assert_eq!(grid.size, [4, 4]);
+            assert_eq!(grid.items.len(), SETUP.len());
+            // Once requested, the watch can be in its old or confirmed new position
+            // until the grid driver observes the HUD after closing with Tab.
+            if self.pickup_id.is_none() {
+                for (seed, x, y) in SETUP {
+                    assert_eq!(
+                        owned(seed).unwrap().1.placement,
+                        Placement {
+                            x,
+                            y,
+                            rotation: Rotation::Upright
+                        }
+                    );
+                }
+                self.pickup_id = Some(item.id);
+            }
+            assert_eq!(self.pickup_id, Some(item.id));
+            probe.pickup_hint_move(owned(4).unwrap().0, target, Some(item.id));
+        } else {
+            input.interact = true;
+            input.pickup_focus = Some((raid, item.id));
+            self.pickup_id = Some(item.id);
+        }
     }
 
     fn advance_seed(&mut self) {

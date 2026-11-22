@@ -40,7 +40,7 @@ impl bevy::prelude::Plugin for Plugin {
 pub(crate) struct RaidHud;
 
 #[derive(Component)]
-struct CatalogRows;
+pub(crate) struct CatalogRows;
 
 #[derive(Component)]
 struct MetricsHud;

@@ -197,6 +197,20 @@ evidência pendente; não congele o estado, simule confirmação ou atrase o
 servidor para obter a imagem. `inside` não substitui revisão de legibilidade,
 foco, sobreposição ou áudio. Não há injeção de input nem vídeo neste modo.
 
+#### Dica de espaço no HUD em UDP solo
+
+Para verificar a dica de espaço no HUD com os itens normais da raid:
+
+```sh
+python scripts/playtest.py --voxel-loot --inventory-grid --no-capture \
+  --inventory-grid-pickup-hint --viewport 1280x800 --output "$OUT"
+```
+
+A rota coleta quatro itens, fragmenta a grade 4×4 e mira na água sem
+tentar coletá-la. Confere o texto do HUD com o painel fechado antes e
+depois de um Move do relógio confirmado pelo servidor. Usa teclas Bevy
+sintéticas; não mede legibilidade nem substitui input físico.
+
 #### Quantidades de divisão em UDP solo
 
 ```sh

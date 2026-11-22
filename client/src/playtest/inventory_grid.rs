@@ -15,7 +15,7 @@ use common::{
     catalog::{
         ItemInstanceId,
         item_grid::{Footprint, Placement, Rotation},
-        item_inventory::{InventorySnapshot, ProjectedItem, SessionKey},
+        item_inventory::{InventorySnapshot, OperationResult, ProjectedItem, SessionKey},
         item_manifest::planned_items,
     },
 };
@@ -34,6 +34,10 @@ pub(super) fn benchmark_enabled() -> bool {
 
 pub(crate) fn partial_merge_enabled() -> bool {
     std::env::var_os("TK_PLAYTEST_PARTIAL_MERGE").is_some()
+}
+
+pub(super) fn pickup_hint_enabled() -> bool {
+    std::env::var_os("TK_PLAYTEST_PICKUP_HINT").is_some()
 }
 
 pub(crate) struct Plugin {
@@ -74,6 +78,7 @@ type Live<'w> = (
 #[derive(Debug)]
 enum Step {
     Move,
+    HintMove,
     Split {
         source: ItemInstanceId,
         new_stack: ProjectedItem,
@@ -89,7 +94,7 @@ enum Step {
 impl Step {
     fn feedback(&self) -> &'static str {
         match self {
-            Self::Move => "Move confirmed",
+            Self::Move | Self::HintMove => "Move confirmed",
             Self::Split { .. } => "Split confirmed",
             Self::Merge => "Merge confirmed",
             Self::PartialMerge { .. } => "Merge confirmed: remainder in source stack",
@@ -101,6 +106,13 @@ struct Check {
     step: Step,
     revision: u64,
     expected: Items,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HintMove {
+    item: ItemInstanceId,
+    target: Placement,
+    water: Option<ItemInstanceId>,
 }
 
 #[derive(Resource, Default)]
@@ -117,6 +129,8 @@ pub(super) struct Probe {
     benchmark: bool,
     benchmark_run: Option<Benchmark>,
     split_quantity: Option<u16>,
+    hint_move: Option<HintMove>,
+    hint_before: Option<(SessionKey, u64, u64)>,
 }
 
 struct Benchmark {
@@ -130,6 +144,31 @@ struct Benchmark {
 }
 
 impl Probe {
+    pub(super) fn pickup_hint_move(
+        &mut self,
+        item: ItemInstanceId,
+        target: Placement,
+        water: Option<ItemInstanceId>,
+    ) -> bool {
+        let request = HintMove {
+            item,
+            target,
+            water,
+        };
+        assert_eq!(*self.hint_move.get_or_insert(request), request);
+        self.requested = true;
+        if !self.finished {
+            return false;
+        }
+        self.hint_move = None;
+        self.requested = false;
+        self.finished = false;
+        self.opening = false;
+        self.closing = false;
+        self.run = None;
+        true
+    }
+
     /// The loot driver must remain paused until Tab has closed the panel.
     pub(super) fn ready_to_resume(&mut self) -> bool {
         self.requested = true;
@@ -158,7 +197,7 @@ impl Probe {
         } else {
             self.keys.push_back(vec![Enter]);
         }
-        if current.rotation != target.rotation && matches!(step, Step::Move) {
+        if current.rotation != target.rotation && matches!(step, Step::Move | Step::HintMove) {
             self.keys.push_back(vec![KeyR]);
         }
         for (from, to, inc, dec) in [
@@ -212,13 +251,27 @@ type ReviewControls<'w> = (
     Option<Res<'w, crate::input::inventory_panel::CloseAck>>,
 );
 
+type PresentedRows<'w, 's> = (
+    Query<'w, 's, &'static Text, With<crate::input::inventory_panel::Feedback>>,
+    Query<'w, 's, &'static TextSpan, With<crate::hud::CatalogRows>>,
+);
+
+fn assert_pickup_hint_row(text: &str, blocked: bool) {
+    let expected = if blocked {
+        "\nGround item: Água potável 500 ml\nNo room in last confirmed backpack. Tab: make space."
+    } else {
+        "\nGround item: Água potável 500 ml [F]"
+    };
+    assert_eq!(text, expected, "unexpected presented ground-item HUD row");
+}
+
 fn drive(
     mut probe: ResMut<Probe>,
     (session, player, inventory, panel, input, time): Live,
     window: Single<(Entity, &Window), With<PrimaryWindow>>,
     mut keyboard: MessageWriter<KeyboardInput>,
     (mut exit, pointer, scale, close_ack): ReviewControls,
-    feedback: Query<&Text, With<crate::input::inventory_panel::Feedback>>,
+    (feedback, catalog): PresentedRows,
 ) {
     if probe.finished || (probe.integrated && !probe.requested) {
         return;
@@ -339,6 +392,43 @@ fn drive(
             !panel.open,
             "GRID PROBE closing Tab did not close the panel"
         );
+        if let Some(HintMove {
+            water: Some(water), ..
+        }) = probe.hint_move
+        {
+            let (key, revision, prior_op) = probe.hint_before.unwrap();
+            assert!(window.focused && session.playing(player.0));
+            assert_eq!(inventory.grid_session(), Some(key));
+            let raid = session.raid.raid_id;
+            let grid = inventory.owned_grid(raid, player.0).unwrap();
+            assert_eq!(grid.version.revision, revision + 1);
+            assert_eq!(inventory.pending_operation_id(), None);
+            assert_eq!(inventory.last_operation_id(), prior_op + 1);
+            assert!(
+                inventory
+                    .ground()
+                    .0
+                    .iter()
+                    .any(|item| item.id == water && item.seed == 2)
+            );
+            if inventory
+                .focused_ground(raid)
+                .is_none_or(|item| item.id != water)
+            {
+                return;
+            }
+            let row = catalog.single().unwrap();
+            assert_pickup_hint_row(row.as_str(), false);
+            info!(
+                "PICKUP HINT after raid={raid} session={} water={} revision={} row={:?}",
+                key.session_epoch,
+                water.0,
+                grid.version.revision,
+                row.as_str()
+            );
+            info!("PICKUP HINT PASS");
+            exit.write(AppExit::Success);
+        }
         probe.finished = true;
         if partial_merge_enabled() {
             exit.write(AppExit::Success);
@@ -347,6 +437,31 @@ fn drive(
     }
     if probe.integrated && !probe.opening && window.focused && session.playing(player.0) {
         assert!(!panel.open, "GRID PROBE expected a closed backpack");
+        if let Some(HintMove {
+            water: Some(water), ..
+        }) = probe.hint_move
+        {
+            let raid = session.raid.raid_id;
+            if inventory
+                .focused_ground(raid)
+                .is_none_or(|item| item.id != water || item.seed != 2)
+            {
+                return;
+            }
+            let grid = inventory.owned_grid(raid, player.0).unwrap();
+            let key = inventory.grid_session().unwrap();
+            assert_eq!(inventory.pending_operation_id(), None);
+            let row = catalog.single().unwrap();
+            assert_pickup_hint_row(row.as_str(), true);
+            info!(
+                "PICKUP HINT before raid={raid} session={} water={} revision={} row={:?}",
+                key.session_epoch,
+                water.0,
+                grid.version.revision,
+                row.as_str()
+            );
+            probe.hint_before = Some((key, grid.version.revision, inventory.last_operation_id()));
+        }
         keyboard.write(emit(KeyCode::Tab, ButtonState::Pressed));
         probe.release.push(KeyCode::Tab);
         probe.opening = true;
@@ -437,6 +552,33 @@ fn drive(
             check.step, check.revision
         );
         match check.step {
+            Step::HintMove => {
+                assert_eq!(actual, check.expected);
+                let op = inventory.last_operation_id();
+                assert_eq!(inventory.pending_operation_id(), None);
+                assert_eq!(inventory.outcome(op), Some(OperationResult::Committed));
+                let HintMove {
+                    item,
+                    target,
+                    water,
+                } = probe.hint_move.unwrap();
+                if water.is_some() {
+                    let (before_key, revision, prior_op) = probe.hint_before.unwrap();
+                    assert_eq!(
+                        (key, grid.version.revision, op),
+                        (before_key, revision + 1, prior_op + 1)
+                    );
+                    info!(
+                        "PICKUP HINT move raid={} session={} watch={} op={op} revision={} placement=({}, {})",
+                        key.raid_epoch,
+                        key.session_epoch,
+                        item.0,
+                        grid.version.revision,
+                        target.x,
+                        target.y
+                    );
+                }
+            }
             Step::Move => {
                 assert_eq!(actual, check.expected);
                 if let Some((&id, bandage)) = actual
@@ -528,6 +670,12 @@ fn drive(
             probe.finished = true;
             exit.write(AppExit::Success);
         }
+        return;
+    }
+    if let Some(HintMove { item, target, .. }) = probe.hint_move {
+        probe.run = Some((key, time.elapsed_secs_f64(), sequences));
+        actual.get_mut(&item).unwrap().placement = target;
+        probe.route(grid, selected, item, target, Step::HintMove, actual);
         return;
     }
     if partial_merge_enabled() {
