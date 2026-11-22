@@ -1,4 +1,4 @@
-use super::{aim_barrel, capture, head_target};
+use super::{aim_barrel, capture, head_target, move_toward};
 use crate::sync::ClientSession;
 use bevy::prelude::*;
 use bevy_renet2::prelude::RenetClient;
@@ -16,6 +16,13 @@ pub(super) enum Step {
     BackInLobby,
     Reenter,
     Finish,
+    RaidReady,
+    RaidDeploy,
+    RaidActive,
+    RaidDebrief {
+        since: f32,
+        snapshot: u64,
+    },
 }
 
 #[derive(Default)]
@@ -26,7 +33,17 @@ pub(super) struct Run {
     bot_life: u8,
     player_life: u8,
     until: f64,
+    arena_return: (u64, u64),
+    normal_raid: u32,
+    normal_life: u8,
+    raid_waypoint: usize,
 }
+
+type RaidObservation<'w, 's> = (
+    Res<'w, RenetClient>,
+    Res<'w, crate::menu::Menu>,
+    Single<'w, 's, &'static Text, With<crate::menu::Status>>,
+);
 
 pub(super) fn solo(
     mut commands: Commands,
@@ -36,16 +53,29 @@ pub(super) fn solo(
     id: Res<PlayerId>,
     mut input: ResMut<LocalInput>,
     mut exit: MessageWriter<AppExit>,
+    (network, menu, status): RaidObservation,
 ) {
     let now = time.elapsed_secs_f64();
     assert!(now < 100.0, "Arena route timed out at {:?}", run.step);
+    let raid_after = std::env::var_os("TK_PLAYTEST_ARENA_THEN_RAID").is_some();
+    if raid_after && run.arena_return.1 != 0 {
+        assert!(network.is_connected());
+        assert_eq!(id.0, run.arena_return.0);
+        assert!(session.last_sequence >= run.arena_return.1);
+        assert!(
+            now - session.last_received < 1.0,
+            "Authoritative snapshots stopped"
+        );
+    }
     input.fire = false;
     let Some(player) = session.local(id.0) else {
         return;
     };
     let mut bots = session.players.iter().filter(|p| p.bot);
     let bot = bots.next();
-    assert!(bots.next().is_none(), "More than one Arena bot");
+    if session.raid.mode.is_arena() {
+        assert!(bots.next().is_none(), "More than one Arena bot");
+    }
     match run.step {
         Step::Ready if session.raid.phase == RaidPhase::Lobby => {
             input.mode = MatchMode::ArenaSolo;
@@ -96,6 +126,13 @@ pub(super) fn solo(
             assert_eq!(session.raid.raid_id, run.raid_id);
             capture(&mut commands, "arena-respawn");
             info!("ARENA PLAYER RETURN life={}", player.life);
+            if raid_after {
+                run.arena_return = (id.0, session.last_sequence);
+                info!(
+                    "ARENA RAID handoff player={} arena={} snapshot={}",
+                    id.0, run.raid_id, session.last_sequence
+                );
+            }
             run.until = now + 0.25;
             run.step = Step::Leave;
         }
@@ -108,9 +145,14 @@ pub(super) fn solo(
             assert!(bot.is_none(), "Bot leaked into the lobby");
             assert!(!player.participant.ready && !session.playing(id.0));
             input.arena_leave = false;
-            input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
             info!("ARENA LOBBY CLEAN raid={}", session.raid.raid_id);
-            run.step = Step::Reenter;
+            if raid_after {
+                input.mode = MatchMode::Raid;
+                run.step = Step::RaidReady;
+            } else {
+                input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
+                run.step = Step::Reenter;
+            }
         }
         Step::Reenter if session.playing(id.0) => {
             assert_ne!(session.raid.raid_id, run.raid_id);
@@ -124,6 +166,89 @@ pub(super) fn solo(
         Step::Finish if now >= run.until => {
             info!("ARENA SOLO PASS second_session={}", session.raid.raid_id);
             exit.write(AppExit::Success);
+        }
+        Step::RaidReady => {
+            assert_eq!(session.raid.phase, RaidPhase::Lobby);
+            assert!(!player.participant.ready);
+            input.mode = MatchMode::Raid;
+            if session.raid.mode == MatchMode::Raid {
+                input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
+                run.step = Step::RaidDeploy;
+            }
+        }
+        Step::RaidDeploy => {
+            input.mode = MatchMode::Raid;
+            if session.playing(id.0) {
+                assert_eq!(session.raid.mode, MatchMode::Raid);
+                assert_ne!(session.raid.raid_id, run.raid_id);
+                assert!(session.last_sequence > run.arena_return.1);
+                assert_eq!(
+                    session.players.iter().filter(|p| p.bot).count(),
+                    common::map::BOT_POSITIONS.len()
+                );
+                assert_eq!((player.life, player.respawn_ticks), (0, 0));
+                run.normal_raid = session.raid.raid_id;
+                run.normal_life = player.life;
+                run.step = Step::RaidActive;
+                info!(
+                    "ARENA RAID active player={} raid={} life={} snapshot={}",
+                    id.0, run.normal_raid, player.life, session.last_sequence
+                );
+            }
+        }
+        Step::RaidActive => {
+            assert_eq!(session.raid.mode, MatchMode::Raid);
+            assert_eq!(session.raid.raid_id, run.normal_raid);
+            assert_eq!((player.life, player.respawn_ticks), (run.normal_life, 0));
+            if player.participant.status == RaidStatus::Dead {
+                assert_eq!(session.raid.phase, RaidPhase::Debrief);
+                assert!(!player.body.alive() && !session.playing(id.0));
+                run.step = Step::RaidDebrief {
+                    since: session.simulation_time,
+                    snapshot: session.last_sequence,
+                };
+                info!(
+                    "ARENA RAID dead player={} raid={} life={} snapshot={}",
+                    id.0, run.normal_raid, player.life, session.last_sequence
+                );
+            } else {
+                assert!(session.playing(id.0));
+                // Walk a short route through the stock raid and let its ordinary
+                // simulation reach the death result. No new combat input or fixture.
+                let [x, _, z] = common::map::BOT_POSITIONS[1];
+                let waypoints = [[x - 1.0, 0.0, z + 1.5], [x - 1.0, 0.0, z]];
+                if let Some(&target) = waypoints.get(run.raid_waypoint)
+                    && move_toward(&mut input, player.pos, target) < 0.4
+                {
+                    run.raid_waypoint += 1;
+                    info!(
+                        "ARENA RAID waypoint={} pos={:?}",
+                        run.raid_waypoint, player.pos
+                    );
+                }
+            }
+        }
+        Step::RaidDebrief { since, snapshot } => {
+            assert_eq!(session.raid.mode, MatchMode::Raid);
+            assert_eq!(session.raid.raid_id, run.normal_raid);
+            assert_eq!(session.raid.phase, RaidPhase::Debrief);
+            assert_eq!(player.participant.status, RaidStatus::Dead);
+            assert_eq!((player.life, player.respawn_ticks), (run.normal_life, 0));
+            assert!(!player.body.alive() && !session.playing(id.0));
+            // Input runs before Present; this is the real menu from the previous frame.
+            assert!(menu.owns_input());
+            let status = status.as_str();
+            assert!(status.starts_with("DEBRIEF\nResult: Dead |"), "{status:?}");
+            assert!(!status.contains("Respawn"), "{status:?}");
+            let elapsed = session.simulation_time - since;
+            if elapsed >= ARENA_RESPAWN_SECONDS + 1.0 {
+                assert!(session.last_sequence > snapshot);
+                info!(
+                    "ARENA RAID NO RESPAWN PASS player={} raid={} life={} snapshot={} elapsed={elapsed:.3} status={:?}",
+                    id.0, run.normal_raid, player.life, session.last_sequence, status
+                );
+                exit.write(AppExit::Success);
+            }
         }
         _ => (),
     }

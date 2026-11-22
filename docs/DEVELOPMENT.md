@@ -204,6 +204,18 @@ evidência pendente; não congele o estado, simule confirmação ou atrase o
 servidor para obter a imagem. `inside` não substitui revisão de legibilidade,
 foco, sobreposição ou áudio. Não há injeção de input nem vídeo neste modo.
 
+#### Arena Solo → raid normal sem respawn
+
+```sh
+python scripts/playtest.py --arena-solo --arena-then-raid --no-capture \
+  --viewport 1280x800 --output "$OUT"
+```
+
+Na mesma conexão UDP, a rota reaproveita o retorno da Arena Solo, sai
+para o lobby e inicia uma raid normal. Após a morte, confere a permanência
+no debrief, a ausência de respawn e o texto do menu por mais que o atraso
+de respawn da Arena. Não verifica interação física com os menus.
+
 #### Dica de espaço no HUD em UDP solo
 
 Para verificar a dica de espaço no HUD com os itens normais da raid:

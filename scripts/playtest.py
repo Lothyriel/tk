@@ -349,6 +349,8 @@ def main():
     parser.add_argument("--video", action="store_true", help="Record native framebuffers and encode timestamped MP4 reviews")
     parser.add_argument("--arena-solo", action="store_true",
                         help="Verify both solo Arena respawns and a clean second session over UDP")
+    parser.add_argument("--arena-then-raid", action="store_true",
+                        help="After Arena Solo return, deploy a normal raid and verify no respawn")
     parser.add_argument("--arena-pvp", action="store_true",
                         help="Verify both PvP respawns and a disconnect with two rendered clients")
     parser.add_argument("--voxel-loot", action="store_true", help="Exercise the six voxel loot seeds instead of collecting legacy crates")
@@ -418,6 +420,8 @@ def main():
     ):
         parser.error("--combat-hud-checkpoint requires --animation-review --clients 2 and an explicit --viewport with static capture")
     arena = args.arena_solo or args.arena_pvp
+    if args.arena_then_raid and not (args.arena_solo and args.no_capture):
+        parser.error("--arena-then-raid requires --arena-solo --no-capture")
     if arena and (args.arena_solo and args.arena_pvp
                   or args.clients != (1 if args.arena_solo else 2)
                   or args.pov or args.voxel_loot or args.animation_review
@@ -590,10 +594,12 @@ def main():
                   "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV",
                   "TK_PLAYTEST_VIEWPORT", "TK_PLAYTEST_POV_HZ", "TK_PLAYTEST_CLEAN_ART",
                  "TK_PLAYTEST_NEUTRAL_ART", "TK_PLAYTEST_NO_CAPTURE", "TK_PLAYTEST_AUDIO",
-                 "TK_PLAYTEST_ARENA_SOLO", "TK_PLAYTEST_ARENA_PVP"):
+                 "TK_PLAYTEST_ARENA_SOLO", "TK_PLAYTEST_ARENA_PVP", "TK_PLAYTEST_ARENA_THEN_RAID"):
         env.pop(flag, None)
     if args.arena_solo:
         env["TK_PLAYTEST_ARENA_SOLO"] = "1"
+    if args.arena_then_raid:
+        env["TK_PLAYTEST_ARENA_THEN_RAID"] = "1"
     if args.arena_pvp:
         env["TK_PLAYTEST_ARENA_PVP"] = "1"
     if args.no_capture:
@@ -686,6 +692,7 @@ def main():
         "route": ("deploy -> two pickups -> partial merge -> stop" if args.inventory_grid_partial_merge
                   else "deploy -> fragment backpack -> check water HUD -> confirmed Move -> check water HUD"
                   if args.inventory_grid_pickup_hint
+                  else "arena-solo -> return -> ordinary raid dead debrief" if args.arena_then_raid
                   else "arena-solo" if args.arena_solo else "arena-pvp" if args.arena_pvp
                   else "deploy -> dual loose item pickup -> stop" if args.loot_contest else args.pov
                   or "optional reciprocal continuous weapon actions -> full-body route -> weapon exercise -> loot -> sentry combat -> extraction -> debrief -> lobby -> deploy -> limb injury/fall/recovery/death"),
@@ -811,7 +818,9 @@ def main():
         print(result, end="")
         return
     if args.arena_solo:
-        cues = ["BOT DEATH", "BOT RETURN", "PLAYER DEATH", "PLAYER RETURN", "LOBBY CLEAN", "SOLO PASS"]
+        cues = ["BOT DEATH", "BOT RETURN", "PLAYER DEATH", "PLAYER RETURN"]
+        cues += (["RAID handoff", "LOBBY CLEAN", "RAID active", "RAID dead", "RAID NO RESPAWN PASS"]
+                 if args.arena_then_raid else ["LOBBY CLEAN", "SOLO PASS"])
         offsets = [client_text.index(f"ARENA {cue}") for cue in cues]
         assert offsets == sorted(offsets), f"Unexpected Arena transitions: {output}"
         if not args.no_capture:
@@ -820,7 +829,11 @@ def main():
                 assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
                 if args.viewport:
                     assert struct.unpack(">II", data[16:24]) == args.viewport
-        result = "PASS: native Arena Solo, real UDP, both combatants returned and second session began\n"
+        if args.arena_then_raid:
+            assert not list(output.rglob("*.png")), f"No-capture route produced media: {output}"
+            result = "PASS: native solo UDP Arena return -> ordinary raid dead debrief without respawn\n"
+        else:
+            result = "PASS: native Arena Solo, real UDP, both combatants returned and second session began\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
         return

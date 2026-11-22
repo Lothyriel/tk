@@ -178,7 +178,7 @@ struct PointerActivation {
 struct Root;
 
 #[derive(Component)]
-struct Status;
+pub(crate) struct Status;
 
 pub(crate) fn widget(order: u16) -> impl Bundle {
     (
