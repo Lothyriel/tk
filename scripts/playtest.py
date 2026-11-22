@@ -115,6 +115,8 @@ def main():
     parser.add_argument("--video", action="store_true", help="Record native framebuffers and encode timestamped MP4 reviews")
     parser.add_argument("--arena-solo", action="store_true",
                         help="Verify both solo Arena respawns and a clean second session over UDP")
+    parser.add_argument("--arena-pvp", action="store_true",
+                        help="Verify both PvP respawns and a disconnect with two rendered clients")
     parser.add_argument("--voxel-loot", action="store_true", help="Exercise the six voxel loot seeds instead of collecting legacy crates")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
     parser.add_argument("--weapon-kit", choices=("compact", "suppressed", "afg"),
@@ -141,14 +143,17 @@ def main():
     parser.add_argument("--audio", action="store_true",
                         help="Enable game audio and verify local and spatial playback sinks")
     args = parser.parse_args()
-    if args.arena_solo and (args.clients != 1 or args.pov or args.voxel_loot
-                            or args.animation_review or args.weapon_kit
-                            or args.configure_weapons or args.video or args.clean_art):
-        parser.error("--arena-solo uses one client with the ordinary kit and no other review mode")
+    arena = args.arena_solo or args.arena_pvp
+    if arena and (args.arena_solo and args.arena_pvp
+                  or args.clients != (1 if args.arena_solo else 2)
+                  or args.pov or args.voxel_loot or args.animation_review
+                  or args.weapon_kit or args.configure_weapons or args.video
+                  or args.clean_art or args.audio):
+        parser.error("Arena routes require the matching client count (solo=1, PvP=2) and no other review mode")
     if args.voxel_loot and args.pov:
         parser.error("--voxel-loot requires the full raid route")
-    if args.viewport and not (args.pov or args.arena_solo or args.clean_art or args.no_capture):
-        parser.error("--viewport requires --pov, --arena-solo, --clean-art or --no-capture")
+    if args.viewport and not (args.pov or arena or args.clean_art or args.no_capture):
+        parser.error("--viewport requires a POV or Arena route, --clean-art or --no-capture")
     if args.no_capture and (args.video or args.pov or args.weapon_debug):
         parser.error("--no-capture is for the plain raid or animation review, not visual evidence modes")
     if args.audio and not (args.no_capture and args.clients == 2):
@@ -173,6 +178,11 @@ def main():
     if args.arena_solo:
         for name in arena_captures:
             (output / f"{name}.png").unlink(missing_ok=True)
+    pvp_captures = ("pvp-local-death", "pvp-remote-death", "pvp-both-returned")
+    if args.arena_pvp:
+        for directory in (output, output / "peer"):
+            for name in pvp_captures:
+                (directory / f"{name}.png").unlink(missing_ok=True)
     if args.pov:
         for name in POV_CAPTURES[args.pov]:
             (output / f"pov-{name}.png").unlink(missing_ok=True)
@@ -208,10 +218,12 @@ def main():
                   "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV",
                   "TK_PLAYTEST_VIEWPORT", "TK_PLAYTEST_POV_HZ", "TK_PLAYTEST_CLEAN_ART",
                  "TK_PLAYTEST_NEUTRAL_ART", "TK_PLAYTEST_NO_CAPTURE", "TK_PLAYTEST_AUDIO",
-                 "TK_PLAYTEST_ARENA_SOLO"):
+                 "TK_PLAYTEST_ARENA_SOLO", "TK_PLAYTEST_ARENA_PVP"):
         env.pop(flag, None)
     if args.arena_solo:
         env["TK_PLAYTEST_ARENA_SOLO"] = "1"
+    if args.arena_pvp:
+        env["TK_PLAYTEST_ARENA_PVP"] = "1"
     if args.no_capture:
         env["TK_PLAYTEST_NO_CAPTURE"] = "1"
     if args.audio:
@@ -269,7 +281,7 @@ def main():
         "shot_diagnostics": env.get("TK_SHOT_DIAGNOSTICS") is not None,
         "loadouts": ("leader compact M4A1 / peer suppressed M4A1" if args.configure_weapons
                      else "leader Rifle / peer SMG") + "; AP; heavy vest; helmet; both carry pistol",
-        "route": ("arena-solo" if args.arena_solo else args.pov
+        "route": ("arena-solo" if args.arena_solo else "arena-pvp" if args.arena_pvp else args.pov
                   or "optional reciprocal continuous weapon actions -> full-body route -> weapon exercise -> loot -> sentry combat -> extraction -> debrief -> lobby -> deploy -> limb injury/fall/recovery/death"),
         "timestamps": "client.log PLAYTEST stage clocks and ANIMATION CONTACT local clocks; frame-times.csv real frame timestamps",
     }, indent=2), encoding="utf-8")
@@ -293,7 +305,7 @@ def main():
                     processes.append(subprocess.Popen([str(client_path), "--playtest"], cwd=root,
                                                       env=client_env, stdout=log, stderr=subprocess.STDOUT))
                 for process in processes:
-                    code = process.wait(timeout=45 if args.pov else 110 if args.arena_solo else 300)
+                    code = process.wait(timeout=45 if args.pov else 110 if arena else 300)
                     if code != 0:
                         raise AssertionError(f"Client failed ({code}); see {output}")
             finally:
@@ -316,13 +328,31 @@ def main():
                     server.wait()
     client_text = (output / "client.log").read_text(encoding="utf-8", errors="replace")
     settings = json.loads((output / "run-settings.json").read_text())
-    if not args.arena_solo:
+    if not arena:
         settings.update(json.loads((output / "camera-settings.json").read_text()))
     (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
     server_text = (output / "server.log").read_text(encoding="utf-8", errors="replace")
     combined = re.sub(r"\x1b\[[0-9;]*m", "", client_text + server_text)
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
+    if args.arena_pvp:
+        for role, directory in enumerate((output, output / "peer")):
+            text = (directory / "client.log").read_text(encoding="utf-8", errors="replace")
+            assert "panicked at" not in text and " ERROR " not in text, directory
+            cues = [f"ARENA PVP DEATH role={role} target={i} life=0" for i in range(2)]
+            cues += [f"ARENA PVP RETURNS role={role} lives=1/1", "ARENA PVP PASS"]
+            offsets = [text.index(cue) for cue in cues]
+            assert offsets == sorted(offsets), f"Unexpected PvP transitions: {directory}"
+            if not args.no_capture:
+                for name in pvp_captures:
+                    data = (directory / f"{name}.png").read_bytes()
+                    assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
+                    if args.viewport:
+                        assert struct.unpack(">II", data[16:24]) == args.viewport
+        result = "PASS: native Arena PvP, real UDP, both deaths and returns, clean lobby after disconnect\n"
+        (output / "result.txt").write_text(result, encoding="utf-8")
+        print(result, end="")
+        return
     if args.arena_solo:
         cues = ["BOT DEATH", "BOT RETURN", "PLAYER DEATH", "PLAYER RETURN", "LOBBY CLEAN", "SOLO PASS"]
         offsets = [client_text.index(f"ARENA {cue}") for cue in cues]

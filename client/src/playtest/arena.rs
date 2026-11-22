@@ -1,6 +1,7 @@
 use super::{aim_barrel, capture, head_target};
 use crate::sync::ClientSession;
 use bevy::prelude::*;
+use bevy_renet2::prelude::RenetClient;
 use common::{EquipmentSlot, LocalInput, PlayerId, raid::*};
 
 #[derive(Debug, Default)]
@@ -125,5 +126,112 @@ pub(super) fn solo(
             exit.write(AppExit::Success);
         }
         _ => (),
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Duel {
+    ready_sent: bool,
+    lives: [Option<u8>; 2],
+    saw_death: [bool; 2],
+    finished_at: Option<f64>,
+}
+
+pub(super) fn pvp(
+    mut commands: Commands,
+    mut duel: Local<Duel>,
+    time: Res<Time<Real>>,
+    (session, id): (Res<ClientSession>, Res<PlayerId>),
+    mut input: ResMut<LocalInput>,
+    mut network: ResMut<RenetClient>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let now = time.elapsed_secs_f64();
+    assert!(
+        now < 65.0,
+        "PvP route timed out; deaths={:?}",
+        duel.saw_death
+    );
+    let peer = std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1");
+    let role = usize::from(peer);
+    input.fire = false;
+    if peer && duel.finished_at.is_some_and(|at| now - at > 1.0) {
+        if !network.is_disconnected() {
+            network.disconnect();
+        }
+        if duel.finished_at.is_some_and(|at| now - at > 1.5) {
+            info!("ARENA PVP PASS peer disconnected");
+            exit.write(AppExit::Success);
+        }
+        return;
+    }
+    let Some(player) = session.local(id.0) else {
+        return;
+    };
+    if session.raid.phase == RaidPhase::Lobby {
+        if !duel.ready_sent {
+            input.mode = MatchMode::ArenaPvp;
+            input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
+            duel.ready_sent = true;
+        } else if duel.finished_at.is_some() && !peer {
+            assert_eq!(session.players.len(), 1);
+            assert!(!player.participant.ready);
+            info!("ARENA PVP PASS survivor returned to clean lobby");
+            exit.write(AppExit::Success);
+        }
+        return;
+    }
+    if session.raid.phase != RaidPhase::Active {
+        return;
+    }
+    assert_eq!(session.raid.mode, MatchMode::ArenaPvp);
+    assert_eq!(session.players.len(), 2);
+    assert!(session.players.iter().all(|actor| !actor.bot));
+    let other = session
+        .players
+        .iter()
+        .find(|actor| actor.id != id.0)
+        .unwrap();
+    let roster = if peer {
+        [other, player]
+    } else {
+        [player, other]
+    };
+    for (index, actor) in roster.into_iter().enumerate() {
+        let initial = *duel.lives[index].get_or_insert(actor.life);
+        if actor.participant.status == RaidStatus::Dead && !duel.saw_death[index] {
+            duel.saw_death[index] = true;
+            capture(
+                &mut commands,
+                if index == role {
+                    "pvp-local-death"
+                } else {
+                    "pvp-remote-death"
+                },
+            );
+            info!("ARENA PVP DEATH role={role} target={index} life={initial}");
+        }
+    }
+    let returned = |index: usize| {
+        duel.saw_death[index]
+            && Some(roster[index].life) != duel.lives[index]
+            && roster[index].participant.status == RaidStatus::Active
+            && roster[index].body.alive()
+    };
+    if returned(0) && returned(1) {
+        assert!(session.playing(id.0));
+        if duel.finished_at.is_none() {
+            assert_eq!(player.body.parts, [35.0, 85.0, 60.0, 70.0]);
+            capture(&mut commands, "pvp-both-returned");
+            duel.finished_at = Some(now);
+            info!(
+                "ARENA PVP RETURNS role={role} lives={}/{}",
+                roster[0].life, roster[1].life
+            );
+        }
+    } else if (peer && !duel.saw_death[0]) || (!peer && returned(0) && !duel.saw_death[1]) {
+        input.weapon = EquipmentSlot::Primary;
+        aim_barrel(&mut input, player, head_target(other));
+        input.fire = true;
     }
 }

@@ -26,6 +26,16 @@ pub(crate) fn requested_viewport() -> Option<(u32, u32)> {
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
+        if std::env::var_os("TK_PLAYTEST_ARENA_PVP").is_some() {
+            app.init_resource::<Driver>()
+                .init_resource::<video::CaptureQueue>()
+                .add_systems(
+                    Update,
+                    arena::pvp.in_set(ClientSystems::Input).after(InputCapture),
+                )
+                .add_systems(PostUpdate, video::record);
+            return;
+        }
         if std::env::var_os("TK_PLAYTEST_ARENA_SOLO").is_some() {
             app.init_resource::<Driver>()
                 .init_resource::<video::CaptureQueue>()
