@@ -24,6 +24,16 @@ com Tab, confirma rotação/movimento e split/merge, fecha com Tab, descarta os
 dois IDs originais e segue até a segunda raid. Sem a pilha real ou sem
 confirmação da grade, a rota falha.
 
+Para medir a rota solo no Linux, acrescente
+`--inventory-telemetry --viewport 1280x800` ao comando acima.
+Guarde `run-settings.json`, `evidence.json` e os logs. `TK INVENTORY PAYLOAD`
+conta mensagens e bytes serializados retirados da fila ou aceitos para
+enfileiramento no servidor. Não mede entrega, retransmissões, cabeçalhos,
+input de pickup ou snapshots de atores. O total cobre a execução, não só as
+operações da grade. O JSON também amostra `VmRSS` e `VmHWM` em KiB para os
+dois processos a cada ~1 s; não mede alocações ou memória GPU e pode perder
+o pico final. Compare binários e condições equivalentes; medir tem custo.
+
 ## Sonda opt-in do menu Arena
 
 Na revisão integrada com Arena, inicie um servidor local novo, sem outros

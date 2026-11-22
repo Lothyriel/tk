@@ -16,6 +16,7 @@ import struct
 import statistics
 import subprocess
 import sys
+import time
 
 
 POV_CAPTURES = {
@@ -107,6 +108,48 @@ def gait_metrics(path):
     return result
 
 
+def process_memory(status):
+    fields = dict(re.findall(r"^(VmRSS|VmHWM):\s+(\d+) kB$", status, re.MULTILINE))
+    if len(fields) != 2:
+        return None  # The process can exit between poll and read.
+    return {"rss_kib": int(fields["VmRSS"]), "hwm_kib": int(fields["VmHWM"])}
+
+
+def sample_solo_memory(client, server):
+    samples = []
+    start = time.monotonic()
+    while client.poll() is None:
+        elapsed = time.monotonic() - start
+        if elapsed >= 300:
+            raise subprocess.TimeoutExpired(client.args, 300)
+        row = {"seconds": elapsed}
+        for name, process in (("client", client), ("server", server)):
+            try:
+                row[name] = process_memory(Path(f"/proc/{process.pid}/status").read_text())
+            except FileNotFoundError:
+                row[name] = None
+        samples.append(row)
+        try:
+            client.wait(timeout=min(1.0, 300 - elapsed))
+        except subprocess.TimeoutExpired:
+            pass
+    return samples
+
+
+def inventory_payload_totals(server_log):
+    records = re.findall(
+        r"TK INVENTORY PAYLOAD request_bytes=(\d+) request_messages=(\d+)"
+        r" update_bytes=(\d+) update_messages=(\d+)", server_log,
+    )
+    assert records, "Missing server inventory payload telemetry"
+    totals = dict(zip(
+        ("request_bytes", "request_messages", "update_bytes", "update_messages"),
+        map(int, records[-1]),
+    ))
+    assert all(totals.values()), "Empty inventory payload direction"
+    return totals
+
+
 def parse_viewport(value):
     match = re.fullmatch(r"([0-9]{1,4})x([0-9]{1,4})", value)
     if match:
@@ -134,6 +177,8 @@ def main():
                         help="Diagnose only the held bottle's translucent surfaces")
     parser.add_argument("--inventory-grid", action="store_true",
                         help="Run the confirmed grid checkpoint during solo voxel loot")
+    parser.add_argument("--inventory-telemetry", action="store_true",
+                        help="Measure application payloads and Linux process RSS during the solo grid route")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
     parser.add_argument("--weapon-kit", choices=("compact", "suppressed", "afg"),
                         help="Seed server-owned M4A1 kit and physical magazines for native acceptance")
@@ -176,6 +221,10 @@ def main():
         parser.error("--loot-inspect requires --voxel-loot and static captures (no --no-capture or --video)")
     if args.bench_draft and (not args.configure_weapons or args.no_capture or args.video):
         parser.error("--bench-draft requires --configure-weapons and static captures only")
+    if args.inventory_telemetry and not (
+        sys.platform == "linux" and args.inventory_grid and Path("/proc/self/status").is_file()
+    ):
+        parser.error("--inventory-telemetry requires Linux procfs and --inventory-grid")
     if args.inventory_grid and not (args.voxel_loot and args.clients == 1 and args.no_capture and not args.video):
         parser.error("--inventory-grid requires --voxel-loot --no-capture with one client and no video")
     if args.voxel_loot and args.pov:
@@ -250,6 +299,7 @@ def main():
     if args.pet_probe:
         env["TK_PLAYTEST_PET_PROBE"] = args.pet_probe
     env.pop("TK_PLAYTEST_INVENTORY_GRID", None)
+    env.pop("TK_PLAYTEST_INVENTORY_TELEMETRY", None)
     if args.inventory_grid:
         env["TK_PLAYTEST_INVENTORY_GRID"] = "1"
     env.pop("TK_PLAYTEST_WEAPON_KIT", None)
@@ -324,6 +374,7 @@ def main():
         "loot_inspect": args.loot_inspect,
         "pet_probe": args.pet_probe,
         "inventory_grid": args.inventory_grid,
+        "inventory_telemetry": args.inventory_telemetry,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "clean_art": args.clean_art,
         "art_lighting": "neutral white, cast shadows disabled" if args.neutral_art else "raid",
@@ -339,7 +390,8 @@ def main():
         "timestamps": "client.log PLAYTEST stage clocks and ANIMATION CONTACT local clocks; frame-times.csv real frame timestamps",
     }, indent=2), encoding="utf-8")
     with (output / "server.log").open("w", encoding="utf-8") as server_log:
-        server = subprocess.Popen([str(server_path)], cwd=root, env=env, stdout=server_log, stderr=subprocess.STDOUT)
+        server_env = env | ({"TK_PLAYTEST_INVENTORY_TELEMETRY": "1"} if args.inventory_telemetry else {})
+        server = subprocess.Popen([str(server_path)], cwd=root, env=server_env, stdout=server_log, stderr=subprocess.STDOUT)
         try:
             processes = []
             logs = []
@@ -357,6 +409,8 @@ def main():
                     logs.append(log)
                     processes.append(subprocess.Popen([str(client_path), "--playtest"], cwd=root,
                                                       env=client_env, stdout=log, stderr=subprocess.STDOUT))
+                if args.inventory_telemetry:
+                    memory_samples = sample_solo_memory(processes[0], server)
                 for process in processes:
                     code = process.wait(timeout=45 if args.pov else 110 if arena else 300)
                     if code != 0:
@@ -569,6 +623,12 @@ def main():
             "peer_performance": re.findall(r"TK PERF [^\r\n]+", logs[1]) if len(logs) == 2 else [],
         }
         assert evidence["client_performance"], "Missing frame time evidence"
+        if args.inventory_telemetry:
+            assert all(any(row[name] for row in memory_samples) for name in ("client", "server")), (
+                "Missing process memory samples"
+            )
+            evidence["inventory_channel_application_payload"] = inventory_payload_totals(server_text)
+            evidence["linux_process_memory_samples"] = memory_samples
         (output / "evidence.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
         result = f"PASS: native UDP raid without framebuffer capture; audio={args.audio}\n"
         (output / "result.txt").write_text(result, encoding="utf-8")

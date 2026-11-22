@@ -143,9 +143,35 @@ pub(super) struct UdpInventoryFixture(
     pub Option<common::catalog::item_inventory::Inventory>,
 );
 
-fn send(server: &mut RenetServer, client: u64, session: SessionKey, body: UpdateBody) {
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct PayloadTotals {
+    request_bytes: usize,
+    request_messages: usize,
+    update_bytes: usize,
+    update_messages: usize,
+}
+
+pub(super) struct PayloadTelemetry(Option<PayloadTotals>);
+
+impl FromWorld for PayloadTelemetry {
+    fn from_world(_: &mut World) -> Self {
+        Self(std::env::var_os("TK_PLAYTEST_INVENTORY_TELEMETRY").map(|_| PayloadTotals::default()))
+    }
+}
+
+fn send(
+    server: &mut RenetServer,
+    telemetry: &mut PayloadTelemetry,
+    client: u64,
+    session: SessionKey,
+    body: UpdateBody,
+) {
     match (InventoryUpdate { session, body }).encode() {
         Ok(bytes) if server.can_send_message(client, CHANNEL, bytes.len()) => {
+            if let Some(totals) = &mut telemetry.0 {
+                totals.update_bytes += bytes.len();
+                totals.update_messages += 1;
+            }
             server.send_message(client, CHANNEL, bytes);
         }
         // Never silently skip a confirmed delta or close; disconnecting clears
@@ -160,7 +186,7 @@ pub(super) fn receive(
     raid: Res<RaidState>,
     participants: Query<(&Participant, Option<&OpenContainer>)>,
     sight: TargetSight,
-    mut world: ResMut<super::WorldState>,
+    (mut world, mut telemetry): (ResMut<super::WorldState>, Local<PayloadTelemetry>),
     #[cfg(test)] fixture: Option<ResMut<UdpInventoryFixture>>,
 ) {
     let state = &mut world.inventory;
@@ -177,7 +203,27 @@ pub(super) fn receive(
         state.peers.clear();
     }
     state.sync_world(&raid);
-    process(&mut server, &lobby, &raid, &participants, &sight, state);
+    let before = telemetry.0;
+    process(
+        &mut server,
+        &lobby,
+        &raid,
+        &participants,
+        &sight,
+        state,
+        &mut telemetry,
+    );
+    if telemetry.0 != before
+        && let Some(totals) = telemetry.0
+    {
+        info!(
+            "TK INVENTORY PAYLOAD request_bytes={} request_messages={} update_bytes={} update_messages={}",
+            totals.request_bytes,
+            totals.request_messages,
+            totals.update_bytes,
+            totals.update_messages
+        );
+    }
 }
 
 #[derive(SystemParam)]
@@ -415,6 +461,7 @@ fn process(
     participants: &Query<(&Participant, Option<&OpenContainer>)>,
     sight: &TargetSight,
     state: &mut Endpoint,
+    telemetry: &mut PayloadTelemetry,
 ) {
     let settled = raid.loot_active() && sight.settle_drops(&mut state.world_items);
     if state.raid != Some(raid.raid_id) {
@@ -476,9 +523,9 @@ fn process(
                     pickup_held: false,
                 },
             );
-            send(server, client, key, UpdateBody::Begin);
+            send(server, telemetry, client, key, UpdateBody::Begin);
             if server.is_connected(client) {
-                send_snapshot(authority, server, client, key, own, |_| true);
+                send_snapshot(authority, server, telemetry, client, key, own, |_| true);
             }
         }
         let peer = state.peers.get_mut(&client).expect("connected peer");
@@ -508,12 +555,24 @@ fn process(
                 && peer.ground != items
             {
                 peer.ground.clone_from(&items);
-                send(server, client, peer.key, UpdateBody::Ground(items));
+                send(
+                    server,
+                    telemetry,
+                    client,
+                    peer.key,
+                    UpdateBody::Ground(items),
+                );
             }
         }
         let focus = sight.focus(entity, &state.world_items);
         if peer.focus != focus && server.is_connected(client) {
-            send(server, client, peer.key, UpdateBody::GroundFocus(focus));
+            send(
+                server,
+                telemetry,
+                client,
+                peer.key,
+                UpdateBody::GroundFocus(focus),
+            );
             peer.focus = focus;
         }
         if refill {
@@ -533,7 +592,13 @@ fn process(
         let open = grant.map(|grant| grant.id);
         if peer.open != open && server.is_connected(client) {
             if let Some(closed) = peer.open {
-                send(server, client, peer.key, UpdateBody::Closed(closed));
+                send(
+                    server,
+                    telemetry,
+                    client,
+                    peer.key,
+                    UpdateBody::Closed(closed),
+                );
             }
             peer.open = open;
             if let Some(grant) = grant
@@ -544,7 +609,15 @@ fn process(
                         .register_compartment(grant.id, grant.size)
                         .expect("new shared compartment");
                 }
-                send_snapshot(authority, server, client, peer.key, grant.id, |_| true);
+                send_snapshot(
+                    authority,
+                    server,
+                    telemetry,
+                    client,
+                    peer.key,
+                    grant.id,
+                    |_| true,
+                );
             }
         }
     }
@@ -574,7 +647,13 @@ fn process(
             )
         {
             let deltas = commit.project(peer.key, |id| id == CompartmentId(client));
-            send(server, client, peer.key, UpdateBody::Delta(deltas));
+            send(
+                server,
+                telemetry,
+                client,
+                peer.key,
+                UpdateBody::Delta(deltas),
+            );
         }
     }
     for client in clients {
@@ -589,6 +668,10 @@ fn process(
             let Some(bytes) = server.receive_message(client, CHANNEL) else {
                 break;
             };
+            if let Some(totals) = &mut telemetry.0 {
+                totals.request_bytes += bytes.len();
+                totals.request_messages += 1;
+            }
             peer.remaining -= 1;
             let key = peer.key;
             let open = peer.open;
@@ -640,6 +723,7 @@ fn process(
                         state.world_items.sort_unstable_by_key(|entry| entry.id);
                         send(
                             server,
+                            telemetry,
                             client,
                             key,
                             UpdateBody::Delta(commit.project(key, |id| id == owner)),
@@ -650,7 +734,15 @@ fn process(
                     session,
                     compartment,
                 }) if session == peer.key => {
-                    send_snapshot(authority, server, client, key, compartment, can_access);
+                    send_snapshot(
+                        authority,
+                        server,
+                        telemetry,
+                        client,
+                        key,
+                        compartment,
+                        can_access,
+                    );
                 }
                 Ok(InventoryRequest::Operate(request)) if request.session == peer.key => {
                     let active = raid.loot_active()
@@ -673,13 +765,20 @@ fn process(
                                 id == CompartmentId(recipient) || view.open == Some(id)
                             });
                             if !deltas.is_empty() {
-                                send(server, recipient, view.key, UpdateBody::Delta(deltas));
+                                send(
+                                    server,
+                                    telemetry,
+                                    recipient,
+                                    view.key,
+                                    UpdateBody::Delta(deltas),
+                                );
                             }
                         }
                     }
                     if server.is_connected(client) {
                         send(
                             server,
+                            telemetry,
                             client,
                             key,
                             UpdateBody::Result {
@@ -754,6 +853,7 @@ fn commit_ground_pickup(
 fn send_snapshot(
     authority: &InventoryAuthority,
     server: &mut RenetServer,
+    telemetry: &mut PayloadTelemetry,
     client: u64,
     key: SessionKey,
     id: CompartmentId,
@@ -761,8 +861,16 @@ fn send_snapshot(
 ) {
     use common::catalog::item_inventory::SnapshotError;
     match authority.snapshot(id, may_read) {
-        Ok(snapshot) => send(server, client, key, UpdateBody::Snapshot(snapshot)),
-        Err(SnapshotError::Unavailable) => send(server, client, key, UpdateBody::Closed(id)),
+        Ok(snapshot) => send(
+            server,
+            telemetry,
+            client,
+            key,
+            UpdateBody::Snapshot(snapshot),
+        ),
+        Err(SnapshotError::Unavailable) => {
+            send(server, telemetry, client, key, UpdateBody::Closed(id))
+        }
         Err(SnapshotError::TooManyItems) => server.disconnect(client),
     }
 }
@@ -776,6 +884,33 @@ mod tests {
         item_inventory::{InventoryAction, InventoryOperation, OperationResult},
     };
     use common::raid::RaidPhase;
+
+    #[test]
+    fn inventory_payload_telemetry_counts_encoded_enqueues_only() {
+        let mut server = RenetServer::new(common::data::renet_config());
+        server.add_connection(7, false);
+        let session = SessionKey {
+            raid_epoch: 1,
+            session_epoch: 1,
+        };
+        let mut telemetry = PayloadTelemetry(Some(PayloadTotals::default()));
+        send(&mut server, &mut telemetry, 8, session, UpdateBody::Begin);
+        send(&mut server, &mut telemetry, 7, session, UpdateBody::Begin);
+        let mut peer = RenetClient::new(common::data::renet_config(), false);
+        peer.set_connected();
+        for packet in server.get_packets_to_send(7).unwrap() {
+            peer.process_packet(packet);
+        }
+        let payload = peer.receive_message(CHANNEL).unwrap();
+        assert_eq!(
+            InventoryUpdate::decode(&payload).unwrap().body,
+            UpdateBody::Begin
+        );
+        let totals = telemetry.0.unwrap();
+        assert_eq!(totals.update_bytes, payload.len());
+        assert_eq!(totals.update_messages, 1);
+        assert_eq!(totals.request_messages, 0);
+    }
 
     #[test]
     fn ground_pickup_removes_only_after_commit_and_only_once() {
@@ -1083,6 +1218,7 @@ mod tests {
                     &participants,
                     &sight,
                     &mut endpoint,
+                    &mut PayloadTelemetry(None),
                 );
             },
         );
