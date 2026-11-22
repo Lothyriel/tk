@@ -2,6 +2,54 @@ use super::*;
 use crate::catalog::item_grid::Rotation;
 
 #[test]
+fn pickup_authority_commits_once_and_projects_only_the_winners_grid() {
+    let source = CompartmentId(1);
+    let full = CompartmentId(3);
+    let winner = CompartmentId(4);
+    let mut inventory = fixture();
+    for target in [full, winner] {
+        inventory
+            .register_compartment(target, Footprint::new(1, 1).unwrap(), None)
+            .unwrap();
+    }
+    let item = inventory
+        .insert_seed("med.bandage", Condition::Damaged, 2, at(1, 0, 0))
+        .unwrap();
+    inventory
+        .insert_seed("med.bandage", Condition::Intact, 1, at(3, 0, 0))
+        .unwrap();
+    let original = *inventory.get(item).unwrap();
+    let mut authority = InventoryAuthority::new(1, inventory);
+    assert!(authority.pickup(item, source, full).unwrap().is_none());
+    assert_eq!(authority.inventory().get(item), Some(&original));
+    assert_eq!(authority.revision(source), Some(0));
+    assert_eq!(authority.revision(full), Some(0));
+    let commit = authority.pickup(item, source, winner).unwrap().unwrap();
+    assert_eq!(authority.revision(source), Some(1));
+    assert_eq!(authority.revision(winner), Some(1));
+    let recipient = SessionKey {
+        raid_epoch: 1,
+        session_epoch: 1,
+    };
+    assert!(commit.project(recipient, |id| id == full).is_empty());
+    let view = commit.project(recipient, |id| id == winner);
+    assert_eq!(view.len(), 1);
+    assert_eq!(view[0].items[0].id, item);
+    assert_eq!(view[0].items[0].item.as_ref().unwrap().quantity, 2);
+    assert_eq!(
+        authority.pickup(item, source, full).unwrap_err(),
+        OperationResult::Rejected(TransactionError::Unavailable)
+    );
+    assert_eq!(
+        authority.inventory().get(item),
+        Some(&ItemInstance {
+            location: at(4, 0, 0),
+            ..original
+        })
+    );
+}
+
+#[test]
 fn pickup_first_fit_rotates_without_moving_or_copying_the_stack() {
     let mut inventory = fixture();
     let target = CompartmentId(3);
