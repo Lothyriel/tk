@@ -153,6 +153,25 @@ type KeysAndMouse<'w> = (
     MessageWriter<'w, MouseButtonInput>,
 );
 
+fn presented_button<'a>(
+    widgets: &Widgets,
+    text: &'a Query<&Text>,
+    prefix: &str,
+) -> Option<(Entity, &'a str, bool)> {
+    widgets
+        .iter()
+        .find_map(|(entity, children, node, style, routed, _)| {
+            if !routed || style.display == Display::None {
+                return None;
+            }
+            let label = children
+                .iter()
+                .filter_map(|id| text.get(id).ok())
+                .find(|label| label.starts_with(prefix))?;
+            Some((entity, label.as_str(), node.size().min_element() > 0.0))
+        })
+}
+
 fn key_event(window: Entity, key_code: KeyCode, state: ButtonState) -> KeyboardInput {
     KeyboardInput {
         key_code,
@@ -217,17 +236,8 @@ fn drive(
         return;
     };
     let button = |prefix: &str| {
-        widgets
-            .iter()
-            .find_map(|(entity, children, node, style, routed, _)| {
-                (routed
-                    && style.display != Display::None
-                    && node.size().min_element() > 0.0
-                    && children
-                        .iter()
-                        .any(|id| text.get(id).is_ok_and(|text| text.starts_with(prefix))))
-                .then_some(entity)
-            })
+        presented_button(&widgets, &text, prefix)
+            .and_then(|(entity, _, laid_out)| laid_out.then_some(entity))
     };
     match step {
         Bench | Ready | ReadyAgain | BenchAgain | Reenter
@@ -273,10 +283,18 @@ fn drive(
         step,
         Bench | Ready | ReadyAgain | BenchAgain | Reenter | Cancel
     ) {
-        assert!(
-            button("Mode: Arena Solo").is_some(),
-            "Arena Solo selection was lost"
+        // Present changes display and text in Update. On the first frame
+        // back from Arena, PostUpdate layout hasn't sized the buttons yet.
+        let Some((_, label, laid_out)) = presented_button(&widgets, &text, "Mode: ") else {
+            return;
+        };
+        assert_eq!(
+            label, "Mode: Arena Solo (change)",
+            "Arena Solo selection was lost at {step:?}"
         );
+        if !laid_out {
+            return;
+        }
     }
     if matches!(step, Ready | Reenter) {
         let Some(bench) = button("Weapon workbench") else {
@@ -350,4 +368,43 @@ fn drive(
     route.step = step.next();
     route.since = now;
     route.checked_return_focus = false;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn arena_menu_return_label_is_visible_before_buttons_are_laid_out() {
+        let mut world = World::new();
+        let mode = world
+            .spawn((
+                crate::menu::widget(0),
+                Node {
+                    display: Display::None,
+                    ..default()
+                },
+                ComputedNode::default(),
+                children![(Text::new("Mode: Arena Solo (change)"),)],
+            ))
+            .id();
+        let observe = |widgets: Widgets, text: Query<&Text>| {
+            presented_button(&widgets, &text, "Mode: ")
+                .map(|(entity, label, laid_out)| (entity, label.to_owned(), laid_out))
+        };
+        assert_eq!(world.run_system_once(observe).unwrap(), None);
+        // Presentation has restored the lobby, but layout still has the
+        // previous (hidden) frame's geometry.
+        world.get_mut::<Node>(mode).unwrap().display = Display::Flex;
+        assert_eq!(
+            world.run_system_once(observe).unwrap(),
+            Some((mode, "Mode: Arena Solo (change)".into(), false)),
+        );
+        world.get_mut::<ComputedNode>(mode).unwrap().size = Vec2::splat(32.0);
+        assert_eq!(
+            world.run_system_once(observe).unwrap(),
+            Some((mode, "Mode: Arena Solo (change)".into(), true)),
+        );
+    }
 }
