@@ -1,5 +1,49 @@
 use super::*;
 
+#[test]
+fn inventory_visuals_resolve_and_colliders_match_baked_geometry() {
+    use common::catalog::item_manifest::{
+        ActiveItems, ITEM_VISUALS_FILE, ItemAssetBinding, S1_SEEDS, item_visuals,
+    };
+    let bindings = item_visuals();
+    assert_eq!(bindings.len(), S1_SEEDS.len());
+    let resolved = ActiveItems::validate(
+        ITEM_VISUALS_FILE,
+        bindings.iter().map(|(id, binding)| ItemAssetBinding {
+            id,
+            asset_key: &binding.asset_key,
+        }),
+        |key| {
+            let (_, json) = BAKED_ASSETS.iter().find(|(id, _)| *id == key)?;
+            serde_json::from_str::<BakedSource>(json).ok()
+        },
+    )
+    .unwrap();
+    for id in S1_SEEDS {
+        let binding = &bindings[id];
+        let asset = &resolved.get(id).unwrap().asset;
+        assert_eq!(asset.id, binding.asset_key);
+        let [root] = asset.parts.as_slice() else {
+            panic!("{id}: collider fixture expects one root part");
+        };
+        assert_eq!(root.pivot.translation, [0.0; 3]);
+        assert_eq!(root.pivot.rotation, [0.0, 0.0, 0.0, 1.0]);
+        let center = binding.collider_center();
+        let half = binding.collider_half_extents();
+        for axis in 0..3 {
+            assert!(
+                (center[axis] - half[axis] - root.bounds.min[axis]).abs() < 1e-6,
+                "{id}"
+            );
+            assert!(
+                (center[axis] + half[axis] - root.bounds.max[axis]).abs() < 1e-6,
+                "{id}"
+            );
+        }
+    }
+    assert_eq!(bindings["ammo.mag_ar30"].asset_key, "m4a1_magazine_30");
+}
+
 fn app() -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, TransformPlugin))
