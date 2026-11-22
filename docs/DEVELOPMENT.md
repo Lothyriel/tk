@@ -51,6 +51,22 @@ dispositivos do SO, legibilidade nem perda UDP. A sonda não registra mídia.
 
 ## Revisão estática da grade
 
+Para automatizar o subconjunto de teclado após integração e coordenação:
+
+```sh
+python scripts/playtest.py --voxel-loot --inventory-grid --no-capture \
+  --inventory-grid-review-scale 1.25 --viewport 1280x720 \
+  --output target/tar56-grid-auto-720
+```
+
+Repita em `1280x800` e `1920x1080` com saídas novas e a escala desejada.
+Deixe o cursor fora da grade e o cliente em foco. `--no-capture` desliga
+as capturas da rota; a opção de revisão grava somente PNGs da grade.
+`evidence.json` exige idle e drag válido (teclado), confere resolução física,
+escala e bounds e registra os estados não observados. Drag inválido e pending
+só contam se observados e capturados; hover e contexto ficam na revisão
+manual abaixo. Não use esse modo para medir performance.
+
 Somente após coordenação, com um servidor normal e loot real, rode o cliente
 sem `--playtest`:
 

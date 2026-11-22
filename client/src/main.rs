@@ -33,8 +33,10 @@ fn main() {
         "run the inventory grid probe without other playtest or review modes"
     );
     assert!(
-        !grid_review || !(playtest || grid_probe || item_review || arena_menu_probe.is_some()),
-        "run the inventory grid review on a normal connected client"
+        !grid_review
+            || (!(grid_probe || item_review || arena_menu_probe.is_some())
+                && (!playtest || voxel_grid)),
+        "run grid review alone or with the no-video solo voxel grid route"
     );
     let viewport = (playtest || grid_review)
         .then(playtest::requested_viewport)
@@ -90,7 +92,9 @@ fn main() {
         app.add_plugins(probe);
     }
     if grid_review {
-        app.add_plugins(input::inventory_panel::GridReview);
+        app.add_plugins(input::inventory_panel::GridReview {
+            automated: voxel_grid,
+        });
     }
     app.run();
 }

@@ -2,13 +2,15 @@
 use std::{collections::HashSet, path::PathBuf};
 
 use bevy::{
-    render::view::screenshot::{Screenshot, save_to_disk},
+    render::view::screenshot::{Capturing, Screenshot, save_to_disk},
     ui::{UiGlobalTransform, UiSystems},
 };
 
 use super::*;
 
-pub(crate) struct GridReview;
+pub(crate) struct GridReview {
+    pub automated: bool,
+}
 
 impl Plugin for GridReview {
     fn build(&self, app: &mut App) {
@@ -25,13 +27,19 @@ impl Plugin for GridReview {
             );
             app.insert_resource(UiScale(scale));
         }
-        app.insert_resource(Output(directory))
-            .add_systems(PostUpdate, observe.after(UiSystems::PostLayout));
+        app.insert_resource(Output {
+            directory,
+            automated: self.automated,
+        })
+        .add_systems(PostUpdate, observe.after(UiSystems::PostLayout));
     }
 }
 
 #[derive(Resource)]
-struct Output(PathBuf);
+struct Output {
+    directory: PathBuf,
+    automated: bool,
+}
 
 type Role = (
     Has<GridRoot>,
@@ -102,7 +110,9 @@ fn observe(
         Res<common::PlayerId>,
     ),
     nodes: ReviewNodes,
-    screenshots: Query<(), With<Screenshot>>,
+    // A prior frame awaiting GPU readback must not hide a transient state
+    // in this frame. Only an unclaimed request competes for this render target.
+    screenshots: Query<(), (With<Screenshot>, Without<Capturing>)>,
     mut seen: Local<HashSet<&'static str>>,
 ) {
     if !window.focused
@@ -189,7 +199,7 @@ fn observe(
             _ => return,
         }
     };
-    if !seen.insert(state) {
+    if (output.automated && matches!(state, "hover" | "context")) || !seen.insert(state) {
         return;
     }
     let inside = [root, board, feedback]
@@ -211,7 +221,9 @@ fn observe(
     );
     commands
         .spawn(Screenshot::primary_window())
-        .observe(save_to_disk(output.0.join(format!("grid-{state}.png"))));
+        .observe(save_to_disk(
+            output.directory.join(format!("grid-{state}.png")),
+        ));
 }
 
 #[cfg(test)]

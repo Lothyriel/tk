@@ -159,6 +159,46 @@ def parse_viewport(value):
     raise argparse.ArgumentTypeError("expected WIDTHxHEIGHT between 600x400 and 3840x2160")
 
 
+def grid_review_evidence(directory, client_log, viewport, scale):
+    states = ("idle", "drag-valid", "drag-invalid", "pending", "hover", "context")
+    observed = {}
+    findings = []
+    for line in client_log.splitlines():
+        row = re.search(
+            r"GRID REVIEW (\S+) (\d+)x(\d+) ui_scale=(\S+) revision=(\d+)"
+            r" items=(\d+) layout=(inside|CLIPPED)(?: |$)", line,
+        )
+        if row is None:
+            continue
+        state, width, height, actual_scale, revision, items, layout = row.groups()
+        if state not in states or state in observed:
+            findings.append(f"Unexpected or repeated review state: {line}")
+            continue
+        size = (int(width), int(height))
+        path = directory / f"grid-{state}.png"
+        header = b""
+        if path.is_file():
+            with path.open("rb") as stream:
+                header = stream.read(24)
+        png_size = (
+            struct.unpack(">II", header[16:24])
+            if len(header) == 24 and header[:16] == b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+            else None
+        )
+        observed[state] = {
+            "viewport": size, "ui_scale": float(actual_scale), "revision": int(revision),
+            "items": int(items), "layout": layout, "png_size": png_size,
+            "png": path.name if png_size else None, "layout_log": line,
+        }
+        if (size != viewport or png_size != viewport or layout != "inside"
+                or not math.isclose(float(actual_scale), scale, abs_tol=1e-6) or int(items) == 0):
+            findings.append(f"{state}: expected {viewport} at scale {scale}; "
+                            f"log={size} scale={actual_scale}, PNG={png_size}, layout={layout}")
+    missing = [state for state in states if state not in observed]
+    findings.extend(f"Required state not observed: {state}" for state in ("idle", "drag-valid") if state in missing)
+    return {"observed": observed, "not_observed": missing, "findings": findings}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-build", action="store_true")
@@ -177,6 +217,8 @@ def main():
                         help="Diagnose only the held bottle's translucent surfaces")
     parser.add_argument("--inventory-grid", action="store_true",
                         help="Run the confirmed grid checkpoint during solo voxel loot")
+    parser.add_argument("--inventory-grid-review-scale", type=float, metavar="SCALE",
+                        help="Enable static grid-only captures at UI scale SCALE (0.75–1.5)")
     parser.add_argument("--inventory-telemetry", action="store_true",
                         help="Measure application payloads and Linux process RSS during the solo grid route")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
@@ -204,7 +246,7 @@ def main():
     parser.add_argument("--pov-peer-lossless", action="store_true",
                         help="Disable injected snapshot loss for the dual armed-stride observer")
     parser.add_argument("--no-capture", action="store_true",
-                        help="Run the raid without framebuffer readbacks for profiling")
+                        help="Skip ordinary raid captures (grid-only review is a separate opt-in)")
     parser.add_argument("--audio", action="store_true",
                         help="Enable game audio and verify local and spatial playback sinks")
     args = parser.parse_args()
@@ -221,6 +263,11 @@ def main():
         parser.error("--loot-inspect requires --voxel-loot and static captures (no --no-capture or --video)")
     if args.bench_draft and (not args.configure_weapons or args.no_capture or args.video):
         parser.error("--bench-draft requires --configure-weapons and static captures only")
+    grid_review = args.inventory_grid_review_scale is not None
+    if grid_review and not (args.inventory_grid and args.viewport and not args.inventory_telemetry
+                            and 0.75 <= args.inventory_grid_review_scale <= 1.5):
+        parser.error("--inventory-grid-review-scale needs scale 0.75–1.5, --inventory-grid, "
+                     "--viewport and no inventory telemetry")
     if args.inventory_telemetry and not (
         sys.platform == "linux" and args.inventory_grid and Path("/proc/self/status").is_file()
     ):
@@ -260,6 +307,9 @@ def main():
         for directory in (output, output / "peer"):
             for name in pvp_captures:
                 (directory / f"{name}.png").unlink(missing_ok=True)
+    grid_review_dir = output / "grid-review"
+    if grid_review and grid_review_dir.exists():
+        parser.error("use a fresh output directory for grid review")
     if args.pov:
         for name in POV_CAPTURES[args.pov]:
             (output / f"pov-{name}.png").unlink(missing_ok=True)
@@ -300,6 +350,8 @@ def main():
         env["TK_PLAYTEST_PET_PROBE"] = args.pet_probe
     env.pop("TK_PLAYTEST_INVENTORY_GRID", None)
     env.pop("TK_PLAYTEST_INVENTORY_TELEMETRY", None)
+    env.pop("TK_GRID_REVIEW_DIR", None)
+    env.pop("TK_GRID_REVIEW_UI_SCALE", None)
     if args.inventory_grid:
         env["TK_PLAYTEST_INVENTORY_GRID"] = "1"
     env.pop("TK_PLAYTEST_WEAPON_KIT", None)
@@ -374,6 +426,7 @@ def main():
         "loot_inspect": args.loot_inspect,
         "pet_probe": args.pet_probe,
         "inventory_grid": args.inventory_grid,
+        "inventory_grid_review_scale": args.inventory_grid_review_scale,
         "inventory_telemetry": args.inventory_telemetry,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "clean_art": args.clean_art,
@@ -407,7 +460,12 @@ def main():
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = str(args.pov_drop_every)
                     log = (client_output / "client.log").open("w", encoding="utf-8")
                     logs.append(log)
-                    processes.append(subprocess.Popen([str(client_path), "--playtest"], cwd=root,
+                    client_args = [str(client_path), "--playtest"]
+                    if grid_review:
+                        client_args.append("--inventory-grid-review")
+                        client_env.update(TK_GRID_REVIEW_DIR=str(grid_review_dir),
+                                          TK_GRID_REVIEW_UI_SCALE=str(args.inventory_grid_review_scale))
+                    processes.append(subprocess.Popen(client_args, cwd=root,
                                                       env=client_env, stdout=log, stderr=subprocess.STDOUT))
                 if args.inventory_telemetry:
                     memory_samples = sample_solo_memory(processes[0], server)
@@ -631,8 +689,19 @@ def main():
             )
             evidence["inventory_channel_application_payload"] = inventory_payload_totals(server_text)
             evidence["linux_process_memory_samples"] = memory_samples
+        if grid_review:
+            review = grid_review_evidence(grid_review_dir, client_text, args.viewport,
+                                          args.inventory_grid_review_scale)
+            evidence["grid_review"] = review
+            evidence["captures"] = [
+                f"grid-review/{row['png']}" for row in review["observed"].values() if row["png"]
+            ]
         (output / "evidence.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
-        result = f"PASS: native UDP raid without framebuffer capture; audio={args.audio}\n"
+        if grid_review:
+            assert not review["findings"], "\n".join(review["findings"])
+            result = "PASS: native UDP raid with partial static grid evidence (see evidence.json)\n"
+        else:
+            result = f"PASS: native UDP raid without framebuffer capture; audio={args.audio}\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
         return
