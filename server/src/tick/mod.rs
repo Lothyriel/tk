@@ -81,6 +81,7 @@ impl bevy::prelude::Plugin for Plugin {
 
 #[derive(Debug, Default, Resource)]
 struct WorldState {
+    inventory: inventory::Endpoint,
     destroyed_cells: Vec<u16>,
     impact_cells: std::collections::BTreeMap<u32, u16>,
     cover_cuts: Vec<common::map::destruction::Cut>,
@@ -466,7 +467,16 @@ fn send_world_snapshot(
                 recoil: common::recoil::PackedRecoil::pack(arsenal.recoil),
                 body: body.clone(),
                 armor: armor.clone(),
-                participant: participant.clone(),
+                participant: Participant {
+                    carried: if participant.status == RaidStatus::Active && !bot {
+                        participant
+                            .carried
+                            .saturating_add(state.inventory.carried(&raid, client.id))
+                    } else {
+                        participant.carried
+                    },
+                    ..participant.clone()
+                },
                 bot,
                 pose: pose.clone(),
             },

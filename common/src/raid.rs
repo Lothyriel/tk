@@ -155,9 +155,21 @@ impl Participant {
         interact: bool,
         delta: f32,
     ) -> bool {
+        self.tick_extraction_with_loot(raid, position, interact, delta, 0)
+    }
+
+    pub fn tick_extraction_with_loot(
+        &mut self,
+        raid: &RaidState,
+        position: Vec3,
+        interact: bool,
+        delta: f32,
+        voxel_units: u32,
+    ) -> bool {
+        let carried = self.carried.saturating_add(voxel_units);
         let eligible = raid.phase == RaidPhase::Active
             && self.status == RaidStatus::Active
-            && self.carried > 0
+            && carried > 0
             && interact
             && in_extraction_zone(position);
         if !eligible {
@@ -169,7 +181,7 @@ impl Participant {
             return false;
         }
         self.status = RaidStatus::Extracted;
-        self.secured = self.secured.saturating_add(self.carried);
+        self.secured = self.secured.saturating_add(carried);
         self.carried = 0;
         true
     }

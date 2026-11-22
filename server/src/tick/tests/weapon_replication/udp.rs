@@ -274,13 +274,52 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
         [true; 3]
     );
 
-    // Inject expiration to exercise the production debrief transition.
+    let displayed = |peer: &UdpPeer| {
+        peer.peer
+            .latest
+            .as_ref()
+            .unwrap()
+            .players
+            .iter()
+            .find(|p| p.id == 7)
+            .unwrap()
+            .participant
+            .clone()
+    };
+    assert_eq!(displayed(&first).carried, 1);
+    assert_eq!(displayed(&first).secured, 0);
+    assert_eq!(
+        harness
+            .app
+            .world()
+            .get::<Participant>(actor)
+            .unwrap()
+            .carried,
+        0
+    );
+
+    // Stage the player in the exit but keep the normal hold duration and
+    // production credit/debrief transitions. No legacy crate was collected.
+    let [x, _, z] = common::map::EXTRACTION_CENTER;
     harness
         .app
         .world_mut()
-        .resource_mut::<RaidState>()
-        .seconds_left = 0.0;
-    harness.pump(&mut [&mut first, &mut late], 160);
+        .get_mut::<Transform>(actor)
+        .unwrap()
+        .translation = Vec3::new(x, 1.02, z);
+    first.input.interact = false;
+    first.input.pickup_focus = None;
+    harness.pump(&mut [&mut first, &mut late], 32);
+    first.input.interact = true;
+    harness.pump(&mut [&mut first, &mut late], 512);
+    assert_eq!(displayed(&first).status, RaidStatus::Active);
+    assert_eq!(displayed(&first).secured, 0);
+    harness.pump(&mut [&mut first, &mut late], 256);
+    assert_eq!(displayed(&first).status, RaidStatus::Extracted);
+    assert_eq!(displayed(&first).carried, 0);
+    assert_eq!(displayed(&first).secured, 1);
+    harness.pump(&mut [&mut first, &mut late], 128);
+    assert_eq!(displayed(&first).secured, 1);
     assert_eq!(
         harness.app.world().resource::<RaidState>().phase,
         RaidPhase::Debrief
