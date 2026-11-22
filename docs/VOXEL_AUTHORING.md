@@ -40,12 +40,25 @@ build or test it.
    The latter builds both local-view and world instances in a windowless app
    using the production assembler and cache. Check that they share handles
    and publish the same socket frames. This is not a pixel-level check.
-5. For an integrated, playable asset, confirm the same catalogue selection on
+5. After coordinating the render workload, open the beacon in the existing
+   item-review bench. It does not connect to a server:
+
+   ```sh
+   TK_ITEM_REVIEW_FOCUS=beacon_authoring cargo run --locked -p client -- --item-review
+   ```
+
+   Compare left (world render layer) against right (view-model render layer).
+   Both use the same baked asset and assembler at unit scale with matched
+   review cameras. Press **1**, **2**, or **3** to turn both copies; **F12**
+   writes a static `item-review.png` in the working directory. Save each
+   image under a different name. This bench does not test network replication
+   or an equipped gameplay pose.
+6. For an integrated, playable asset, confirm the same catalogue selection on
    two real clients, toggle F8 and compare local and remote pose, authored
    contacts, sight framing and moving parts. Use F9 to compare LODs. Use the
    coordinated [native review route](VOXEL_PIPELINE.md#native-rig-inspection)
-   for existing playable content. The beacon is headless-only; this guide
-   does not add a runtime picker or turn it into a playable item.
+   for existing playable content. The beacon stays outside the gameplay
+   catalogue; this guide does not turn it into a playable item.
 
 ### If validation fails
 

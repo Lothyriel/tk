@@ -2,11 +2,14 @@
 use super::{VoxelCache, VoxelModel, instantiate};
 use crate::render::item_icons::{self, ItemIcon};
 use bevy::{
+    camera::visibility::RenderLayers,
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
     window::{PresentMode, PrimaryWindow},
 };
 use common::catalog::item_manifest::{S1_SEEDS, item_visuals};
+
+const BEACON: &str = "beacon_authoring";
 
 pub(crate) struct Plugin;
 
@@ -26,7 +29,10 @@ impl bevy::prelude::Plugin for Plugin {
         };
         let focus = std::env::var("TK_ITEM_REVIEW_FOCUS").ok();
         if let Some(id) = &focus {
-            assert!(S1_SEEDS.contains(&id.as_str()), "unknown review item: {id}");
+            assert!(
+                S1_SEEDS.contains(&id.as_str()) || id == BEACON,
+                "unknown review item: {id}"
+            );
         }
         app.init_resource::<VoxelCache>()
             .insert_resource(Settings {
@@ -63,7 +69,10 @@ fn setup(
     {
         window.present_mode = PresentMode::AutoNoVsync;
     }
-    let camera = if let Some(id) = &settings.focus {
+    let beacon = settings.focus.as_deref() == Some(BEACON);
+    let camera = if beacon {
+        Transform::from_xyz(0.0, 0.16, -0.52).looking_at(Vec3::ZERO, Vec3::Y)
+    } else if let Some(id) = &settings.focus {
         let half = Vec3::from_array(item_visuals()[id].collider_half_extents());
         // Frame the enclosing sphere, so the same distance works for all
         // review angles without changing the authored scale.
@@ -74,13 +83,40 @@ fn setup(
     } else {
         Transform::from_xyz(0.0, 0.85, -1.65).looking_at(Vec3::new(0.0, 0.08, 0.0), Vec3::Y)
     };
-    commands.spawn((Camera3d::default(), camera));
+    let mut world = commands.spawn((Camera3d::default(), camera));
+    if beacon {
+        world.insert(Msaa::Off);
+        commands.spawn((
+            Camera3d::default(),
+            Msaa::Off,
+            Camera {
+                order: 1,
+                clear_color: ClearColorConfig::None,
+                ..default()
+            },
+            RenderLayers::layer(super::VIEW_MODEL_RENDER_LAYER),
+            camera,
+        ));
+        for (view_model, x) in [(false, 0.13), (true, -0.13)] {
+            commands.spawn((
+                VoxelModel {
+                    asset: BEACON.into(),
+                    view_model,
+                },
+                Transform::from_xyz(x, 0.0, 0.0)
+                    .with_rotation(Quat::from_rotation_y(settings.angle.to_radians())),
+                Visibility::Inherited,
+                Prop,
+            ));
+        }
+    }
     commands.spawn((
         DirectionalLight {
             illuminance: 9000.0,
             ..default()
         },
         Transform::from_xyz(1.0, 2.0, -1.0).looking_at(Vec3::ZERO, Vec3::Y),
+        RenderLayers::from_layers(&[0, super::VIEW_MODEL_RENDER_LAYER]),
     ));
     commands.insert_resource(GlobalAmbientLight {
         brightness: 500.0,
@@ -139,10 +175,14 @@ fn setup(
             }
         });
     commands.spawn((
-        Text::new(format!(
+        Text::new(if beacon {
+            "Beacon authoring review: world (left) / view-model (right)  |  1 Front  2 Side  3 Back  |  F12 Screenshot".into()
+        } else {
+            format!(
             "Item review: {}  |  1 Front  2 Side  3 Back  |  F12 Screenshot",
             settings.focus.as_deref().unwrap_or("all seeds")
-        )),
+        )
+        }),
         Node {
             position_type: PositionType::Absolute,
             top: px(18),
