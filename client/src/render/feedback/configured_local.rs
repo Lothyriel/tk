@@ -135,8 +135,6 @@ pub(super) fn prepare(
         // Preview and publication share the solver and cached assets. A failed
         // preview still publishes the request so the assembler reports the
         // rejection and retains its previously accepted hierarchy/pose.
-        let inspecting =
-            response.displayed_mechanics.kind == Some(common::catalog::ManipulationKind::Inspect);
         let lowering =
             common::weapon_animation::manipulation::lowering(&response.displayed_mechanics)
                 || !player.alive
@@ -153,8 +151,20 @@ pub(super) fn prepare(
                     .contains_key(&common::catalog::AnchorKind::Sight)))
             && let Ok(preview) = assets.preview(visual, &input)
         {
-            if displayed != WeaponKind::Pistol
-                && !inspecting
+            let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
+            let hip = if lowering
+                || (displayed != WeaponKind::Pistol && response.displayed_mechanics.reloading())
+            {
+                response.frame_offset * (-time.delta_secs() * 14.0).exp()
+            } else {
+                let points: Vec<_> = preview
+                    .points
+                    .into_iter()
+                    .map(|p| to_eye.transform_point3(p))
+                    .collect();
+                pistol_frame_correction(&points, projection, response.ads)
+            };
+            let correction = if displayed != WeaponKind::Pistol
                 && response.ads > 0.0
                 && let Some(sight) = visual
                     .assembly
@@ -162,35 +172,18 @@ pub(super) fn prepare(
                     .get(&common::catalog::AnchorKind::Sight)
             {
                 // A shorter stock moves the solved weapon relative to its fixed
-                // shoulder pocket. Frame the entire rigid rig from that accepted
-                // pose, otherwise the receiver/rear iron crosses the near plane.
-                // This preserves all palm/stock contacts and authored eye relief.
+                // shoulder pocket. Crossfade framing with the presented aim
+                // weight, not the inspect snapshot edge: a new inspect can
+                // arrive while ADS is still returning.
                 let offset = input.preferred_root.transform_point(sight.translation)
                     - preview.root.transform_point(sight.translation);
-                let correction = view.rotation
-                    * root.rotation
-                    * offset
-                    * common::weapon_animation::ease(response.ads);
-                view.translation += correction;
-                response.frame_offset *= (-time.delta_secs() * 14.0).exp();
-                view.translation += eye.rotation * response.frame_offset;
+                let sight = eye.rotation.inverse() * view.rotation * root.rotation * offset;
+                hip.lerp(sight, common::weapon_animation::ease(response.ads))
             } else {
-                let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
-                let correction = if lowering
-                    || (displayed != WeaponKind::Pistol && response.displayed_mechanics.reloading())
-                {
-                    response.frame_offset * (-time.delta_secs() * 14.0).exp()
-                } else {
-                    let points: Vec<_> = preview
-                        .points
-                        .into_iter()
-                        .map(|p| to_eye.transform_point3(p))
-                        .collect();
-                    pistol_frame_correction(&points, projection, response.ads)
-                };
-                response.frame_offset = correction;
-                view.translation += eye.rotation * correction;
-            }
+                hip
+            };
+            response.frame_offset = correction;
+            view.translation += eye.rotation * correction;
             if displayed == WeaponKind::Rifle {
                 let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
                 let retreat = preview.near_points.iter().fold(0.0_f32, |depth, point| {

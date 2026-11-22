@@ -327,6 +327,100 @@ fn configured_local_inspect_interruptions_keep_continuous_contacts_and_framing()
 }
 
 #[test]
+fn configured_local_inspect_restarts_continuously_after_sparse_confirmation() {
+    for fps in [30, 60, 165] {
+        let mut f = Fixture::new(WeaponKind::Rifle, 4.0 / 3.0);
+        f.use_m4a1_kit(false, true, 134, 9);
+        f.app
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_secs_f64(1.0 / f64::from(fps)),
+            ));
+        for _ in 0..fps {
+            f.step();
+        }
+        let trigger = named(&f.app, f.root, "configured-trigger-palm");
+        let support = named(&f.app, f.root, "configured-support-palm");
+        let receiver = named(&f.app, f.root, "receiver");
+        let before = f.app.world().resource::<ClientSession>().players[0].mechanics;
+        let identities = descendants(f.app.world(), f.root);
+        let mut last = [trigger, support, receiver]
+            .map(|entity| *f.app.world().get::<GlobalTransform>(entity).unwrap());
+        let mut next_packet = 0_u32;
+        let mut skipped_at_cancellation = false;
+        let mut saw_partial_ads = false;
+        let mut saw_restarted_inspect = false;
+        for frame in 0..=5 * fps {
+            let t = f64::from(frame) / f64::from(fps);
+            // At low FPS several updates can arrive in one render frame. The
+            // presentation producer sees only the latest confirmed snapshot.
+            while f64::from(next_packet) / 60.0 <= t {
+                let packet = next_packet;
+                next_packet += 1;
+                let (action_id, kind, fraction) = match packet {
+                    0..=119 => (1, Some(ManipulationKind::Inspect), packet as f32 / 168.0),
+                    120..=140 => (1, None, 0.0),
+                    141..=200 => (
+                        2,
+                        Some(ManipulationKind::Inspect),
+                        (packet - 141) as f32 / 168.0,
+                    ),
+                    _ => (2, None, 0.0),
+                };
+                if packet % 3 == 0 || (120..126).contains(&packet) {
+                    skipped_at_cancellation |= packet == 120;
+                    continue;
+                }
+                let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+                session.last_sequence = u64::from(packet);
+                session.players[0].mechanics = common::catalog::MechanicalSnapshot {
+                    action_id,
+                    kind,
+                    fraction,
+                    ..before
+                };
+            }
+            f.app.world_mut().resource_mut::<LocalInput>().aim =
+                (2.0..2.35).contains(&t) || t >= 3.35;
+            f.step();
+            f.assert_contacts();
+            let world = f.app.world();
+            let current = [trigger, support, receiver]
+                .map(|entity| *world.get::<GlobalTransform>(entity).unwrap());
+            for (a, b) in current.iter().zip(last) {
+                assert!(
+                    a.translation().distance(b.translation()) <= 3.0 / fps as f32 + 0.001,
+                    "inspect interruption at {t:.3}s and {fps}Hz jumped by {}",
+                    a.translation().distance(b.translation())
+                );
+            }
+            assert!(
+                current[2].rotation().angle_between(last[2].rotation()) < 10.0 / fps as f32 + 0.002
+            );
+            last = current;
+            assert_eq!(descendants(world, f.root), identities);
+            let mechanics = world.resource::<ClientSession>().players[0].mechanics;
+            assert_eq!(mechanics.magazine, before.magazine);
+            assert_eq!(mechanics.chambered, before.chambered);
+            let response = &world.resource::<Feedback>().responses[&7];
+            saw_partial_ads |= (2.2..2.35).contains(&t) && (0.02..0.7).contains(&response.ads);
+            saw_restarted_inspect |= (2.85..3.30).contains(&t)
+                && response.displayed_mechanics.action_id == 2
+                && response
+                    .action
+                    .unwrap()
+                    .root
+                    .rotation
+                    .angle_between(Quat::IDENTITY)
+                    > 0.2;
+            if t > 4.5 {
+                assert!(response.ads > 0.98, "ADS did not resume after cancellation");
+            }
+        }
+        assert!(skipped_at_cancellation && saw_partial_ads && saw_restarted_inspect);
+    }
+}
+
+#[test]
 fn configured_local_mixed_reload_uses_owned_incoming_mesh_before_insertion_without_duplicates() {
     use common::catalog::{DefinitionId, EquippedWeapon, WeaponInstanceId, WeaponKit};
     use common::replication::ConfigurationPublisher;
