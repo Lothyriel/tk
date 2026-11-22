@@ -315,6 +315,140 @@ fn arena_pvp_udp_alternates_lives_rejects_stale_input_and_releases_seat() {
 
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn fictional_fault_udp_late_observer_converges_without_replaying_actions() {
+    fn actor(peer: &UdpPeer) -> &ClientData {
+        peer.peer
+            .latest
+            .as_ref()
+            .expect("accepted snapshot")
+            .players
+            .iter()
+            .find(|actor| actor.id == 7)
+            .expect("confirmed actor")
+    }
+
+    let mut harness = Harness::new();
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<WorldState>()
+        .action_fault_fixture = true;
+    let mut first = UdpPeer::new(7, harness.address, harness.now, false);
+    harness.pump(&mut [&mut first], 192);
+    assert!(first.transport.is_connected());
+    first.input.lobby_sequence = 1;
+    harness.pump(&mut [&mut first], 430);
+    assert_eq!(
+        first.peer.latest.as_ref().unwrap().raid.phase,
+        RaidPhase::Active
+    );
+    // Keep the real transport and raid schedule, but exclude unrelated bot
+    // effects so the shot-stream assertions isolate the fixture.
+    let world = harness.app.world_mut();
+    let bots: Vec<_> = world
+        .query_filtered::<Entity, With<Bot>>()
+        .iter(world)
+        .collect();
+    for bot in bots {
+        world.entity_mut(bot).despawn();
+    }
+    let first_shots = (
+        first.peer.presented_ids.len(),
+        first.peer.reliable_ids.len(),
+    );
+    let (instance, loaded, reserve) = {
+        let initial = actor(&first);
+        assert!(initial.alive && !initial.mechanics.action_unavailable());
+        (
+            initial.weapon_instance,
+            initial.ammo_in_mag,
+            initial.reserve_ammo,
+        )
+    };
+    let shot_id = harness
+        .app
+        .world()
+        .resource::<WorldState>()
+        .next_projectile_id;
+    first.input.fire = true;
+    first.input.fire_pressed_sequence = 1;
+    harness.pump(&mut [&mut first], 40);
+    first.input.fire = false;
+    let unavailable = actor(&first).mechanics;
+    assert!(unavailable.action_unavailable());
+    assert_eq!(unavailable.recovery_ms(), 0);
+
+    let mut late = UdpPeer::new(9, harness.address, harness.now, true);
+    harness.pump(&mut [&mut first, &mut late], 230);
+    assert!(late.transport.is_connected());
+    let late_snapshot = late.peer.latest.as_ref().unwrap();
+    assert_eq!(late_snapshot.raid.phase, RaidPhase::Active);
+    assert!(
+        late.peer
+            .receiver
+            .cache
+            .matches(late_snapshot.configuration_epoch, actor(&late))
+    );
+    for peer in [&first, &late] {
+        let player = actor(peer);
+        assert_eq!(player.mechanics, unavailable);
+        assert_eq!(
+            (
+                player.weapon_instance,
+                player.ammo_in_mag,
+                player.reserve_ammo
+            ),
+            (instance, loaded, reserve)
+        );
+    }
+
+    first.input.reload_sequence = 1;
+    let mut saw_recovery = false;
+    for _ in 0..240 {
+        harness.step(&mut [&mut first, &mut late]);
+        let observed = actor(&late).mechanics;
+        saw_recovery |= observed.action_unavailable() && observed.recovery_ms() > 0;
+        if !observed.action_unavailable() && !actor(&first).mechanics.action_unavailable() {
+            break;
+        }
+    }
+    assert!(saw_recovery, "late observer missed the confirmed recovery");
+    assert_eq!(actor(&first).mechanics, actor(&late).mechanics);
+    for peer in [&first, &late] {
+        let player = actor(peer);
+        assert!(!player.mechanics.action_unavailable());
+        assert_eq!(
+            (
+                player.weapon_instance,
+                player.ammo_in_mag,
+                player.reserve_ammo
+            ),
+            (instance, loaded, reserve)
+        );
+    }
+    assert_eq!(
+        (
+            first.peer.presented_ids.len(),
+            first.peer.reliable_ids.len()
+        ),
+        first_shots
+    );
+    assert!(late.peer.presented_ids.is_empty() && late.peer.reliable_ids.is_empty());
+    assert_eq!(
+        harness
+            .app
+            .world()
+            .resource::<WorldState>()
+            .next_projectile_id,
+        shot_id
+    );
+    let dropped = late.dropped.load(Ordering::Relaxed);
+    assert!(dropped > 0);
+    eprintln!("late observer converged after {dropped} discarded loopback datagrams");
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     use common::{
         catalog::{
