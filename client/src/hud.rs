@@ -93,6 +93,7 @@ fn update(
     input: Res<LocalInput>,
     id: Res<PlayerId>,
     client: Res<RenetClient>,
+    inventory: Res<crate::sync::inventory::State>,
     mut hud: Single<&mut Text, With<RaidHud>>,
 ) {
     let connection = if client.is_disconnected() {
@@ -107,7 +108,19 @@ fn update(
     } else {
         String::new()
     };
-    ***hud = describe(&session, &input.loadout, id.0, &connection, input.aim);
+    let mut text = describe(&session, &input.loadout, id.0, &connection, input.aim);
+    if connection.is_empty()
+        && session.raid.phase == RaidPhase::Active
+        && session
+            .local(id.0)
+            .is_some_and(|actor| actor.participant.status == RaidStatus::Active)
+        && let Some(item) = inventory.focused_ground(session.raid.raid_id)
+    {
+        use common::catalog::item_manifest::{S1_SEEDS, planned_items};
+        let name = planned_items()[S1_SEEDS[usize::from(item.seed)]].name;
+        text.push_str(&format!("\nGround item: {name} (pickup unavailable)"));
+    }
+    ***hud = text;
 }
 
 fn describe(
