@@ -186,6 +186,21 @@ quantidade no seletor e seu intervalo `1..2` com a operação confirmada;
 revise `grid-review/grid-split-quantity.png` em cada saída. `--no-capture`
 continua desativando as capturas normais da raid, mas não esse opt-in.
 
+Para reproduzir um merge que deixa unidades na origem:
+
+```sh
+python scripts/playtest.py --voxel-loot --inventory-grid --no-capture \
+  --inventory-grid-partial-merge --viewport 1280x800 --output "$OUT"
+```
+
+O servidor de QA aceita apenas conexões locais nesse opt-in e oferece
+duas pilhas de duas bandagens da mesma linhagem, sem alterar o limite de
+três por pilha. A sonda usa entradas sintéticas do Bevy e verifica a
+prévia e um único commit de `2+2` para `1+3` nos mesmos IDs. Consulte
+`evidence.json`; esse ensaio não mede a janela de operação pendente.
+Use nova saída e retire o opt-in para repetir a rota normal até a
+segunda raid, com uma única pilha inicial de duas bandagens.
+
 #### Diagnóstico de fechamento durante uma movimentação pendente
 
 Em execução coordenada, com diretório novo:
