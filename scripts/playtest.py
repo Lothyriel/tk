@@ -371,10 +371,10 @@ def main():
     if args.loot_contest_peer_drop_every and not args.loot_contest:
         parser.error("--loot-contest-peer-drop-every requires --loot-contest")
     if args.combat_hud_checkpoint and not (
-        args.animation_review and args.clients == 2 and args.viewport == (1280, 720)
+        args.animation_review and args.clients == 2 and args.viewport is not None
         and not (args.video or args.no_capture or args.weapon_debug or args.voxel_loot)
     ):
-        parser.error("--combat-hud-checkpoint requires --animation-review --clients 2 --viewport 1280x720 with static capture")
+        parser.error("--combat-hud-checkpoint requires --animation-review --clients 2 and an explicit --viewport with static capture")
     arena = args.arena_solo or args.arena_pvp
     if arena and (args.arena_solo and args.arena_pvp
                   or args.clients != (1 if args.arena_solo else 2)
@@ -947,8 +947,9 @@ def main():
             path = output / f"combat-hud-magazine-{state}.png"
             data = path.read_bytes()
             assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, path
-            assert struct.unpack(">II", data[16:24]) == (1280, 720), path
-            evidence.append(f"{path.name}: 1280x720, {len(data)} bytes")
+            width, height = struct.unpack(">II", data[16:24])
+            assert [width, height] == resolution, f"HUD capture viewport mismatch: {path}"
+            evidence.append(f"{path.name}: {width}x{height}, {len(data)} bytes")
     if args.bench_draft:
         reviewed = re.findall(r"BENCH REVIEW (confirmed|draft|discarded) handle=(\d+) marker=0 focused=true", client_text)
         assert tuple(view for view, _ in reviewed) == bench_views, "Missing or repeated workbench stages"
