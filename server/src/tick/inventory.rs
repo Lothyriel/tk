@@ -44,6 +44,13 @@ pub(super) struct Endpoint {
     peers: BTreeMap<u64, Peer>,
 }
 
+#[cfg(test)]
+#[derive(Resource)]
+pub(super) struct UdpInventoryFixture(
+    pub u32,
+    pub Option<common::catalog::item_inventory::Inventory>,
+);
+
 fn send(server: &mut RenetServer, client: u64, session: SessionKey, body: UpdateBody) {
     match (InventoryUpdate { session, body }).encode() {
         Ok(bytes) if server.can_send_message(client, CHANNEL, bytes.len()) => {
@@ -61,7 +68,18 @@ pub(super) fn receive(
     raid: Res<RaidState>,
     participants: Query<(&Participant, Option<&OpenContainer>)>,
     mut state: Local<Endpoint>,
+    #[cfg(test)] fixture: Option<ResMut<UdpInventoryFixture>>,
 ) {
+    #[cfg(test)]
+    if let Some(mut fixture) = fixture
+        && fixture.0 == raid.raid_id
+        && let Some(inventory) = fixture.1.take()
+    {
+        assert_ne!(state.raid, Some(raid.raid_id));
+        state.raid = Some(raid.raid_id);
+        state.authority = Some(InventoryAuthority::new(u64::from(raid.raid_id), inventory));
+        state.peers.clear();
+    }
     process(&mut server, &lobby, &raid, &participants, &mut state);
 }
 
