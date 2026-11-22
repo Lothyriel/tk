@@ -1118,13 +1118,19 @@ pub(in crate::input) fn present(
                 Pickable::IGNORE,
                 FocusPolicy::Pass,
                 rectangle(target, dimensions(item, target.rotation), grid.size),
-                BorderColor::all(Color::WHITE),
+                BorderColor::all(if pending || valid {
+                    Color::WHITE
+                } else {
+                    Color::srgb(1.0, 0.45, 0.45)
+                }),
                 BackgroundColor(if pending {
                     Color::srgba(0.72, 0.58, 0.12, 0.5)
                 } else if valid {
                     Color::srgba(0.06, 0.65, 0.38, 0.5)
                 } else {
-                    Color::srgba(0.9, 0.2, 0.20, 0.5)
+                    // Outlining an invalid target leaves underlying item
+                    // labels readable; the feedback also names the error.
+                    Color::NONE
                 }),
             ));
         }
