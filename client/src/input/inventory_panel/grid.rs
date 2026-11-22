@@ -1227,8 +1227,13 @@ mod tests {
     }
 
     #[test]
-    fn inventory_grid_pending_is_not_replayed_after_close_or_disconnect() {
-        for disconnect in [false, true] {
+    fn inventory_grid_pending_is_not_replayed_after_panel_exit() {
+        enum Exit {
+            Tab,
+            Disconnect,
+            Unfocus,
+        }
+        for exit in [Exit::Tab, Exit::Disconnect, Exit::Unfocus] {
             let (mut app, mut authority, item) = fixture();
             key(&mut app, KeyCode::Enter);
             key(&mut app, KeyCode::ArrowDown);
@@ -1240,16 +1245,43 @@ mod tests {
             };
             assert!(app.world().resource::<Panel>().pending.is_some());
 
-            if disconnect {
-                app.world_mut().resource_mut::<RenetClient>().disconnect();
+            let revision = app
+                .world()
+                .resource::<State>()
+                .owned_grid(1, 7)
+                .unwrap()
+                .version;
+            let mut windows = app
+                .world_mut()
+                .query_filtered::<&mut Window, With<PrimaryWindow>>();
+            match exit {
+                Exit::Tab => key(&mut app, KeyCode::Tab),
+                Exit::Disconnect => {
+                    app.world_mut().resource_mut::<RenetClient>().disconnect();
+                    key(&mut app, KeyCode::Tab);
+                }
+                Exit::Unfocus => {
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<KeyCode>>()
+                        .reset_all();
+                    windows.single_mut(app.world_mut()).unwrap().focused = false;
+                    app.update();
+                    assert_eq!(
+                        app.world()
+                            .resource::<State>()
+                            .owned_grid(1, 7)
+                            .unwrap()
+                            .version,
+                        revision
+                    );
+                }
             }
-            key(&mut app, KeyCode::Tab);
             let panel = app.world().resource::<Panel>();
             assert!(!panel.open && panel.pending.is_none() && panel.drag.is_none());
             assert!(panel.feedback.is_none() && panel.cue.is_none());
             assert!(transfer(&mut app, &mut server).is_none());
 
-            if !disconnect {
+            if !matches!(exit, Exit::Disconnect) {
                 // Closing the UI cannot retract a move already sent to the
                 // authority. A later reply must not restore the old ghost.
                 let reply = authority.apply(&mut OperationSession::new(KEY), op, |id| id == OWN);
@@ -1264,6 +1296,12 @@ mod tests {
                     app.world_mut()
                         .resource_mut::<State>()
                         .apply(InventoryUpdate { session: KEY, body });
+                }
+                if matches!(exit, Exit::Unfocus) {
+                    app.update();
+                    windows.single_mut(app.world_mut()).unwrap().focused = true;
+                    app.update();
+                    assert!(!app.world().resource::<Panel>().open);
                 }
                 key(&mut app, KeyCode::Tab);
                 let panel = app.world().resource::<Panel>();
