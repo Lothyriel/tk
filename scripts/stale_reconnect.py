@@ -13,12 +13,23 @@ import time
 def wait_marker(path, client, server):
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        if client.poll() is not None or server.poll() is not None:
+        client_exit, server_exit = client.poll(), server.poll()
+        if client_exit is not None or server_exit is not None:
             break
         if path.is_file():
             return
         time.sleep(0.02)
-    raise RuntimeError(f"missing {path.name}; see {path.parent} logs")
+    log = (path.parent / "client.log").read_text(errors="replace")
+    observations = [
+        line.split("STALE RECONNECT ", 1)[1]
+        for line in log.splitlines()
+        if "STALE RECONNECT " in line
+    ]
+    last = observations[-1] if observations else "no client observations"
+    raise RuntimeError(
+        f"missing {path.name}, client_exit={client.poll()}, server_exit={server.poll()}; "
+        f"last checkpoint: {last}; see {path.parent} logs"
+    )
 
 
 def stop(child, *, resume=False):
@@ -62,8 +73,10 @@ def run(binaries, output):
                 try:
                     wait_marker(output / "lobby", client, server)
                     server.send_signal(signal.SIGSTOP)
+                    print(f"Paused disposable server PID {server.pid}", flush=True)
                     wait_marker(output / "cancelled", client, server)
                     server.send_signal(signal.SIGCONT)
+                    print(f"Resumed disposable server PID {server.pid}", flush=True)
                     (output / "server-resumed").touch(exist_ok=False)
                     if client.wait(timeout=20) or "STALE RECONNECT PASS" not in client_log_path.read_text():
                         raise RuntimeError(f"checkpoint failed; see {client_log_path}")

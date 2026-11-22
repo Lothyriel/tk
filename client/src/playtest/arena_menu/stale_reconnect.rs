@@ -19,6 +19,18 @@ struct Route {
     directory: PathBuf,
     step: Step,
     release: bool,
+    last_observation: Option<Observation>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Observation {
+    window_focused: bool,
+    selected: Option<Entity>,
+    connected: bool,
+    disconnected: bool,
+    has_transport: bool,
+    has_actor: bool,
+    snapshot_stale: bool,
 }
 
 pub(super) fn install(app: &mut App, directory: PathBuf) {
@@ -30,6 +42,7 @@ pub(super) fn install(app: &mut App, directory: PathBuf) {
         directory,
         step: Step::Lobby,
         release: false,
+        last_observation: None,
     })
     .add_systems(PostUpdate, observe.after(UiSystems::PostLayout));
 }
@@ -56,7 +69,30 @@ fn observe(
 ) {
     let (window_id, window, cursor) = *window;
     let now = time.elapsed_secs_f64();
-    assert!(now < 15.0, "stale/reconnect timed out at {:?}", route.step);
+    let age = now - session.last_received;
+    let actor = session.local(id.0);
+    let observation = Observation {
+        window_focused: window.focused,
+        selected: menu.focused_widget(),
+        connected: client.is_connected(),
+        disconnected: client.is_disconnected(),
+        has_transport: transport.is_some(),
+        has_actor: actor.is_some(),
+        snapshot_stale: age >= 2.0,
+    };
+    if route.last_observation.as_ref() != Some(&observation) {
+        info!(
+            "STALE RECONNECT observe step={:?} age={age:.3}s {observation:?}",
+            route.step
+        );
+        route.last_observation = Some(observation);
+    }
+    assert!(
+        now < 15.0,
+        "stale/reconnect timed out at {:?}: age={age:.3}s {:?}",
+        route.step,
+        route.last_observation
+    );
     assert_eq!(input.lobby_sequence, 0, "unexpected Ready command");
     assert_eq!(input.fire_pressed_sequence, 0);
     assert!(!input.fire && !input.aim);
@@ -68,7 +104,6 @@ fn observe(
     if !window.focused {
         return;
     }
-    let actor = session.local(id.0);
     if let Some(actor) = actor {
         assert!(!actor.participant.ready);
         assert_eq!(actor.participant.last_command, 0);
@@ -98,7 +133,7 @@ fn observe(
         && transport.is_some()
         && actor.is_some()
         && session.raid.phase == RaidPhase::Lobby
-        && now - session.last_received < 2.0
+        && age < 2.0
         && says("KIT PREPARATION");
     let mut activate = false;
     route.step = match route.step {
@@ -115,7 +150,6 @@ fn observe(
                 "transport disconnected before stale cancel"
             );
             assert_eq!(id.0, old);
-            let age = now - session.last_received;
             if age < 2.0 {
                 return;
             }
