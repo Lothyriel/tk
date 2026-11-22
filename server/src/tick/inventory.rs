@@ -108,11 +108,12 @@ fn seed_world(items: &mut Vec<WorldItem>) -> Inventory {
         let [x, _, z] = common::map::LOOT_POSITIONS[index / 2];
         let half_extents = Vec3::from_array(visual.collider_half_extents());
         let terrain_top = common::map::BLOCKS[0].center[1] + common::map::BLOCKS[0].half_size[1];
-        // Two seeds flank each legacy crate at the authored floor height.
+        // Keep both seeds clear of the crate silhouette and its cast shadow
+        // from the natural approach, without changing the raid lighting.
         let center = Vec3::new(
-            x + if index % 2 == 0 { -0.8 } else { 0.8 },
+            x + if index % 2 == 0 { -1.45 } else { 1.45 },
             terrain_top + half_extents.y,
-            z,
+            z + 0.35,
         );
         let item = WorldItem {
             id,
@@ -773,6 +774,8 @@ mod tests {
                     .abs_diff_eq(Vec3::from_array(visual.collider_half_extents()), 1e-6)
             );
             assert!((item.center.y - item.half_extents.y - 0.1).abs() < 1e-6);
+            let [crate_x, _, _] = common::map::LOOT_POSITIONS[index / 2];
+            assert!((item.center.x - crate_x).abs() - item.half_extents.x >= 1.3);
         }
         endpoint.sync_world(&raid);
         assert_eq!(endpoint.world_items.len(), S1_SEEDS.len());
