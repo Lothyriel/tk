@@ -37,7 +37,9 @@ fn append_health(text: &mut String, anatomy: &Anatomy) {
     if blood <= BLOOD_COLLAPSE {
         text.push_str(" · LOW BLOOD");
     }
-    if bleed > 0.0 {
+    if bleed > 0.0 && bleed < 0.01 {
+        text.push_str("\nBLEEDING <0.01%/s");
+    } else if bleed >= 0.01 {
         let _ = write!(text, "\nBLEEDING {bleed:.2}%/s");
     }
     for region in order
@@ -180,5 +182,36 @@ mod tests {
             )
         );
         assert!(!text.contains("Critical"));
+    }
+
+    #[test]
+    fn combat_hud_distinguishes_tiny_bleeding_from_no_bleeding_at_same_hp() {
+        let mut actor = ClientData::default();
+        actor.body.anatomy.blood = 30.0;
+        actor.body.anatomy.bleeding = 0.003;
+        actor.pose.mode = PhysicalMode::Recovering;
+        let mut text = String::new();
+        append_readout(&mut text, &actor);
+        assert_eq!(
+            text.lines().take(3).collect::<Vec<_>>(),
+            [
+                "HP 445/445  |  Blood 30% · LOW BLOOD",
+                "BLEEDING <0.01%/s",
+                "Status: Getting up",
+            ]
+        );
+
+        actor.body.anatomy.bleeding = 0.01;
+        text.clear();
+        append_readout(&mut text, &actor);
+        assert_eq!(text.lines().nth(1), Some("BLEEDING 0.01%/s"));
+
+        actor.body.anatomy.bleeding = 0.0;
+        actor.pose.mode = PhysicalMode::Standing;
+        text.clear();
+        append_readout(&mut text, &actor);
+        assert!(text.starts_with("HP 445/445  |  Blood 30% · LOW BLOOD\n"));
+        assert!(!text.contains("BLEEDING"));
+        assert!(!text.contains("Status:"));
     }
 }
