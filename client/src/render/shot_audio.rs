@@ -5,7 +5,9 @@ use crate::{
     sync::ClientSession,
 };
 use bevy::{
-    audio::{AddAudioSource, ChannelCount, Decodable, SampleRate, Source, Volume},
+    audio::{
+        AddAudioSource, AudioSinkPlayback, ChannelCount, Decodable, SampleRate, Source, Volume,
+    },
     prelude::*,
 };
 use common::{
@@ -229,19 +231,44 @@ fn prepare(mut commands: Commands, mut assets: ResMut<Assets<SynthShot>>) {
 struct Voice(f32);
 
 fn report_playback(
-    local: Query<(), (With<Voice>, With<AudioSink>)>,
-    remote: Query<(), (With<Voice>, With<SpatialAudioSink>)>,
+    local: Query<(&AudioSink, &PlaybackSettings), With<Voice>>,
+    remote: Query<(&SpatialAudioSink, &PlaybackSettings), With<Voice>>,
+    global: Res<bevy::audio::GlobalVolume>,
     mut reported: Local<[bool; 2]>,
 ) {
-    for (i, (kind, ready)) in [
-        ("local", !local.is_empty()),
-        ("spatial", !remote.is_empty()),
+    for (i, (kind, gain)) in [
+        (
+            "local",
+            local
+                .iter()
+                .next()
+                .map(|(sink, settings)| (sink.volume(), settings.volume)),
+        ),
+        (
+            "spatial",
+            remote
+                .iter()
+                .next()
+                .map(|(sink, settings)| (sink.volume(), settings.volume)),
+        ),
     ]
     .into_iter()
     .enumerate()
     {
-        if ready && !reported[i] {
-            info!("PLAYTEST AUDIO SINK {kind}");
+        if let Some((actual, source)) = gain
+            && !reported[i]
+        {
+            let expected = (source * global.volume).to_linear();
+            let actual = actual.to_linear();
+            assert!(
+                (actual - expected).abs() < 0.0001,
+                "playback gain differs from source × preferences"
+            );
+            info!(
+                "PLAYTEST AUDIO SINK {kind} gain={actual:.4} source={:.4} global={:.2}",
+                source.to_linear(),
+                global.volume.to_linear()
+            );
             reported[i] = true;
         }
     }
