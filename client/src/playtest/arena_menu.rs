@@ -71,11 +71,16 @@ impl Plugin for Probe {
                     assert!(!path.exists());
                     Step::EditPreferences(0)
                 }
+                "pause-edit" => {
+                    assert!(!path.exists());
+                    route.pause_flow = true;
+                    Step::PreferencesDeploy
+                }
                 "reload" => {
                     assert!(path.is_file());
                     Step::ReloadPreferences(false)
                 }
-                _ => panic!("use TK_PREFERENCES_FLOW=edit or reload"),
+                _ => panic!("use TK_PREFERENCES_FLOW=edit, pause-edit or reload"),
             };
             route.flow_path = Some(path);
         }
@@ -127,6 +132,8 @@ enum Step {
     Done,
     OpenPreferences,
     CapturePreferences,
+    PreferencesDeploy,
+    PreferencesPause,
     EditPreferences(usize),
     ReloadPreferences(bool),
 }
@@ -156,14 +163,16 @@ impl Step {
             Self::Mode => "Mode: Raid",
             Self::Bench | Self::BenchAgain => "Weapon workbench",
             Self::CloseBench | Self::CloseAgain => "Back to lobby",
-            Self::Ready | Self::ReadyAgain | Self::Reenter => "Ready / deploy",
+            Self::Ready | Self::ReadyAgain | Self::Reenter | Self::PreferencesDeploy => {
+                "Ready / deploy"
+            }
             Self::Cancel => "Cancel ready",
             Self::Leave => "Leave Arena / return to lobby",
             Self::OpenPreferences => "Preferences",
             Self::EditPreferences(index) => return EDIT_ACTIONS[index],
             Self::ReloadPreferences(false) => "Preferences",
             Self::ReloadPreferences(true) => return None,
-            Self::Done | Self::CapturePreferences => return None,
+            Self::Done | Self::CapturePreferences | Self::PreferencesPause => return None,
         })
     }
 
@@ -183,12 +192,17 @@ impl Step {
             OpenPreferences | CapturePreferences => CapturePreferences,
             EditPreferences(index) => EditPreferences(index + 1),
             ReloadPreferences(_) => ReloadPreferences(true),
+            PreferencesDeploy => PreferencesPause,
+            PreferencesPause => EditPreferences(0),
         }
     }
 
     fn sequence(self) -> u32 {
         match self {
-            Self::Mode | Self::Bench | Self::CloseBench | Self::Ready => 0,
+            Self::Mode | Self::Bench | Self::CloseBench | Self::Ready | Self::PreferencesDeploy => {
+                0
+            }
+            Self::PreferencesPause => 1,
             Self::Cancel => 1,
             Self::ReadyAgain => 2,
             Self::Leave => 3,
@@ -214,6 +228,7 @@ struct Route {
     preferences: Option<std::path::PathBuf>,
     capture_requested: bool,
     flow_path: Option<std::path::PathBuf>,
+    pause_flow: bool,
 }
 
 type Widgets<'w, 's> = Query<
@@ -289,6 +304,8 @@ fn drive(
     let (window_id, window, cursor) = *window;
     let now = time.elapsed_secs_f64();
     let step = route.step;
+    let sequence =
+        step.sequence() + u32::from(route.pause_flow && matches!(step, EditPreferences(_)));
     assert!(
         now - route.since < if step == Leave { 90.0 } else { 12.0 },
         "Arena menu probe {probe:?} timed out at {step:?}; workbench visible={}; target={:?}. Use an Arena-capable build, a fresh solo server and a focused client.",
@@ -319,8 +336,7 @@ fn drive(
         return;
     }
     assert_eq!(
-        input.lobby_sequence,
-        step.sequence(),
+        input.lobby_sequence, sequence,
         "unexpected extra or missing command before {step:?}"
     );
     assert_eq!(
@@ -393,11 +409,33 @@ fn drive(
         presented_button(&widgets, &text, prefix)
             .and_then(|(entity, _, laid_out)| laid_out.then_some(entity))
     };
-    if let Some(path) = route.flow_path.as_ref() {
-        if session.raid.phase != RaidPhase::Lobby {
+    if step == PreferencesPause {
+        if session.raid.phase != RaidPhase::Active || !session.playing(player.0) {
             return;
         }
-        assert!(!actor.participant.ready && actor.participant.last_command == 0);
+        assert_eq!(actor.participant.last_command, sequence);
+        route.first_raid = Some(session.raid.raid_id);
+        keyboard.write(key_event(window_id, KeyCode::Escape, ButtonState::Pressed));
+        route.release = Some(KeyCode::Escape);
+        route.step = step.next();
+        route.since = now;
+        return;
+    }
+    if let Some(path) = route
+        .flow_path
+        .as_ref()
+        .filter(|_| step != PreferencesDeploy)
+    {
+        if route.pause_flow {
+            assert_eq!(session.raid.phase, RaidPhase::Active);
+            assert_eq!(Some(session.raid.raid_id), route.first_raid);
+            assert!(session.playing(player.0) && menu.paused() && menu.owns_input());
+        } else if session.raid.phase != RaidPhase::Lobby {
+            return;
+        } else {
+            assert!(!actor.participant.ready);
+        }
+        assert_eq!(actor.participant.last_command, sequence);
         let fov = || presented_button(&widgets, &text, "- Vertical FOV:").map(|(_, text, _)| text);
         let scale_text = || presented_button(&widgets, &text, "UI scale:").map(|(_, text, _)| text);
         let applied = matches!(step, EditPreferences(12..) | ReloadPreferences(_));
@@ -443,7 +481,10 @@ fn drive(
             assert_eq!(scale_text(), Some("UI scale: 125% (cycle)"));
         }
         if matches!(step, EditPreferences(13) | ReloadPreferences(true)) {
-            info!("PREFERENCES FLOW PASS {step:?}: FOV 75, scale 125, no Ready, aim or fire");
+            info!(
+                "PREFERENCES FLOW PASS {step:?}: FOV 75, scale 125, pause={}, lobby_sequence={sequence}, no aim or fire",
+                route.pause_flow
+            );
             exit.write(AppExit::Success);
             return;
         }

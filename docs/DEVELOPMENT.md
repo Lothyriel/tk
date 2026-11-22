@@ -88,6 +88,11 @@ Cada execução deve registrar `PREFERENCES FLOW PASS`; compare os bytes do
 arquivo antes e depois do segundo cliente. São eventos sintéticos do Bevy,
 não uso de teclado físico. Não combine com `TK_PREFERENCES_SCREENSHOT`.
 
+Para testar o mesmo fluxo na pausa, use `TK_PREFERENCES_FLOW=pause-edit`
+com outro arquivo novo. A sonda faz um único deploy, abre a pausa com Esc
+e verifica que o fluxo não envia novos comandos de lobby nem ativa mira ou
+disparo. Use `reload` em outro processo para verificar o arquivo salvo.
+
 ## Revisão estática da grade
 
 Para automatizar o subconjunto de teclado após integração e coordenação:
