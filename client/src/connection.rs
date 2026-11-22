@@ -345,6 +345,44 @@ mod tests {
                 .is_none()
         );
 
+        // A server-side disconnect must clean up without any local request.
+        // Preferences are client-owned and survive both kinds of disconnect.
+        let preferences = crate::preferences::Preferences {
+            fov: 85,
+            ..Default::default()
+        };
+        world.insert_resource(preferences);
+        world.resource_mut::<sync::ClientSession>().last_sequence = 123;
+        world.resource_mut::<LocalInput>().interact = true;
+        server_transport.disconnect_all(&mut server);
+        for _ in 0..96 {
+            world.resource_scope(|world, mut net: Mut<NetcodeClientTransport>| {
+                let mut client = world.resource_mut::<RenetClient>();
+                // The received disconnect is reported as an error by Netcode.
+                let _ = net.update(Duration::from_millis(8), &mut client);
+            });
+            if world.resource::<RenetClient>().is_disconnected() {
+                break;
+            }
+        }
+        assert!(world.resource::<RenetClient>().is_disconnected());
+        assert!(world.resource::<Connection>().request.is_none());
+        apply(&mut world);
+        assert!(!world.contains_resource::<NetcodeClientTransport>());
+        assert_eq!(world.resource::<PlayerId>().0, 0);
+        assert!(world.resource::<Lobby>().players.is_empty());
+        assert!(world.get::<LocalPlayer>(root).is_some());
+        assert_eq!(world.resource::<sync::ClientSession>().last_sequence, 0);
+        assert!(!world.resource::<LocalInput>().interact);
+        assert_eq!(
+            *world.resource::<crate::preferences::Preferences>(),
+            preferences
+        );
+        let connection = world.resource::<Connection>();
+        assert!(connection.notice.as_deref().is_some_and(|notice| {
+            notice.starts_with("Disconnected: ") && !notice.ends_with("None")
+        }));
+
         // Cancel while the new handshake is still in progress.
         world.resource_mut::<Connection>().request = Some(Request::Connect);
         apply(&mut world);
