@@ -1276,7 +1276,7 @@ impl ApplicationPayload {
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
-    use super::super::super::inventory::UdpInventoryFixture;
+    use super::super::super::inventory::{ReceiveSample, ReceiveTiming, UdpInventoryFixture};
     use common::{
         catalog::{
             CompartmentId,
@@ -1294,6 +1294,10 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
     };
 
     let mut harness = Harness::new();
+    let timing_enabled = std::env::var_os("TK_TEST_INVENTORY_RECEIVE_TIMING").is_some();
+    if timing_enabled {
+        harness.app.init_resource::<ReceiveTiming>();
+    }
     let mut first = UdpPeer::new(7, harness.address, harness.now, false);
     let mut second = UdpPeer::new(8, harness.address, harness.now, false);
     harness.pump(&mut [&mut first, &mut second], 192);
@@ -1421,6 +1425,13 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
         views.push((session, replica, expected_revision, expected_items));
     }
     assert_ne!(views[0].0, views[1].0);
+    let sample_count = |h: &Harness| {
+        h.app
+            .world()
+            .get_resource::<ReceiveTiming>()
+            .map_or(0, |t| t.0.len())
+    };
+    let move_tick = sample_count(&harness);
     let elapsed = |h: &Harness| h.app.world().resource::<Time<Fixed>>().elapsed();
     let before = elapsed(&harness);
     harness.step(&mut [&mut first, &mut second]);
@@ -1479,6 +1490,7 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
             &mut resync_requests,
         );
     }
+    let resync_start = sample_count(&harness);
     harness.pump(&mut [&mut first, &mut second], 8);
     for (index, (peer, (session, replica, _, _))) in [&mut first, &mut second]
         .into_iter()
@@ -1500,6 +1512,41 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
     move_updates.report("same_tick_move", "received", 3, MAX_UPDATE_BYTES);
     resync_requests.report("resync", "submitted", 2, MAX_REQUEST_BYTES);
     resync_updates.report("resync", "received", 2, MAX_UPDATE_BYTES);
+    if timing_enabled {
+        let samples = &harness.app.world().resource::<ReceiveTiming>().0;
+        let report = |phase, rows: &[&ReceiveSample]| {
+            assert!(!rows.is_empty(), "no samples for {phase}");
+            println!(
+                "TK INVENTORY RECEIVE phase={phase} samples={} requests={} updates={} min_us={:.3} max_us={:.3}",
+                rows.len(),
+                rows.iter().map(|r| r.requests).sum::<usize>(),
+                rows.iter().map(|r| r.updates).sum::<usize>(),
+                rows.iter().map(|r| r.elapsed).min().unwrap().as_secs_f64() * 1e6,
+                rows.iter().map(|r| r.elapsed).max().unwrap().as_secs_f64() * 1e6,
+            );
+        };
+        let active = samples[..move_tick]
+            .iter()
+            .filter(|r| r.active && r.requests == 0);
+        let bootstrap: Vec<_> = active.clone().filter(|r| r.updates != 0).collect();
+        assert_eq!(bootstrap.iter().map(|r| r.updates).sum::<usize>(), 4);
+        report("active_bootstrap", &bootstrap);
+        report(
+            "active_idle",
+            &active.filter(|r| r.updates == 0).collect::<Vec<_>>(),
+        );
+        let moves = &samples[move_tick];
+        assert!(moves.active);
+        assert_eq!((moves.requests, moves.updates), (2, 3));
+        report("same_tick_move", &[moves]);
+        let resync: Vec<_> = samples[resync_start..]
+            .iter()
+            .filter(|r| r.requests != 0)
+            .collect();
+        assert!(resync.iter().all(|r| r.active && r.requests == r.updates));
+        assert_eq!(resync.iter().map(|r| r.requests).sum::<usize>(), 2);
+        report("resync", &resync);
+    }
 }
 
 #[test]

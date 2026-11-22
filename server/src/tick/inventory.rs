@@ -184,6 +184,19 @@ pub(super) struct UdpInventoryFixture(
     pub Option<common::catalog::item_inventory::Inventory>,
 );
 
+/// Installed only by the explicit loopback timing fixture.
+#[cfg(test)]
+#[derive(Resource, Default)]
+pub(super) struct ReceiveTiming(pub Vec<ReceiveSample>);
+
+#[cfg(test)]
+pub(super) struct ReceiveSample {
+    pub active: bool,
+    pub elapsed: std::time::Duration,
+    pub requests: usize,
+    pub updates: usize,
+}
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct PayloadTotals {
     request_bytes: usize,
@@ -228,7 +241,10 @@ pub(super) fn receive(
     participants: Query<(&Participant, Option<&OpenContainer>)>,
     sight: TargetSight,
     (mut world, mut telemetry): (ResMut<super::WorldState>, Local<PayloadTelemetry>),
-    #[cfg(test)] fixture: Option<ResMut<UdpInventoryFixture>>,
+    #[cfg(test)] (fixture, timing): (
+        Option<ResMut<UdpInventoryFixture>>,
+        Option<ResMut<ReceiveTiming>>,
+    ),
 ) {
     let state = &mut world.inventory;
     #[cfg(test)]
@@ -243,8 +259,15 @@ pub(super) fn receive(
         state.loot_ids.clear();
         state.peers.clear();
     }
-    state.sync_world(&raid);
+    // Reuse the message counters without enabling payload logging for timing.
+    #[cfg(test)]
+    let timing = timing.map(|timing| {
+        let original = telemetry.0;
+        telemetry.0.get_or_insert_with(PayloadTotals::default);
+        (timing, original, std::time::Instant::now())
+    });
     let before = telemetry.0;
+    state.sync_world(&raid);
     process(
         &mut server,
         &lobby,
@@ -254,6 +277,21 @@ pub(super) fn receive(
         state,
         &mut telemetry,
     );
+    #[cfg(test)]
+    if let Some((mut timing, original, started)) = timing {
+        let elapsed = started.elapsed();
+        let previous = before.unwrap();
+        let current = telemetry.0.unwrap();
+        timing.0.push(ReceiveSample {
+            active: raid.loot_active(),
+            elapsed,
+            requests: current.request_messages - previous.request_messages,
+            updates: current.update_messages - previous.update_messages,
+        });
+        if original.is_none() {
+            telemetry.0 = None;
+        }
+    }
     if telemetry.0 != before
         && let Some(totals) = telemetry.0
     {
