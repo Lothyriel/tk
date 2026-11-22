@@ -148,6 +148,13 @@ fn interpolate_foot_anchor(
     root.rotation.inverse() * (*anchor - root.translation)
 }
 
+fn foot_anchor_alpha(dt: f32, presented_weight: f32) -> f32 {
+    // Let the target catch up during swing and loading, before the foot
+    // carries weight. Keep the established response for loaded contacts.
+    let rate = if presented_weight < 0.95 { 36.0 } else { 18.0 };
+    1.0 - (-dt * rate).exp()
+}
+
 fn retain_configured_upper_pose(
     current: &mut [SegmentPose; SEGMENT_COUNT],
     previous: &[SegmentPose; SEGMENT_COUNT],
@@ -208,6 +215,61 @@ fn planted_anchor_stays_fixed_as_the_remote_root_turns_and_translates() {
         let local = interpolate_foot_anchor(&mut anchor, planted, &root, 0.22);
         assert!(root.transform_point(local).distance(planted) < 0.00001);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn remote_foot_anchor_replay_reduces_loaded_run_excursion() {
+    // Left-foot entry and loaded support from tar97-gait-phases, snapshots
+    // 518–530. Absolute metres on the forward axis, sampled by the peer.
+    let samples = [
+        // Time since prior frame, weight, old anchor Z, old composed foot Z.
+        (0.016225, 0.214691, 9.220136, 7.642038),
+        (0.017020, 0.411993, 8.660101, 7.769149),
+        (0.015974, 0.549540, 8.269_68, 7.748956),
+        (0.017219, 0.668059, 7.957339, 7.657452),
+        (0.016486, 0.752710, 7.736625, 7.554206),
+        (0.016527, 0.815761, 7.572231, 7.460753),
+        (0.016758, 0.863647, 7.448673, 7.374966),
+        (0.016251, 0.898194, 7.359_67, 7.308_08),
+        (0.017271, 0.925360, 7.289684, 7.254604),
+        (0.016301, 0.944337, 7.240875, 7.213_88),
+        (0.016441, 0.958594, 7.204209, 7.183113),
+        (0.017500, 0.969781, 7.175_44, 7.159771),
+        (0.016005, 0.977345, 7.155992, 7.143303),
+        (0.017159, 0.983381, 7.140472, 7.130386),
+        (0.016760, 0.987709, 7.129344, 7.121_59),
+    ];
+    let mut anchors = [Vec3::Z * 9.94; 2];
+    let mut starts = [None; 2];
+    let mut peaks = [0.0_f32; 2];
+    for (dt, weight, old_anchor, old_foot) in samples {
+        for (i, alpha) in [1.0 - (-dt * 18.0_f32).exp(), foot_anchor_alpha(dt, weight)]
+            .into_iter()
+            .enumerate()
+        {
+            let local = interpolate_foot_anchor(
+                &mut anchors[i],
+                Vec3::Z * 7.097741,
+                &Transform::IDENTITY,
+                alpha,
+            );
+            if i == 0 {
+                assert!(
+                    (local.z - old_anchor).abs() < 0.0001,
+                    "trace reconstruction"
+                );
+            }
+            // The shared rig lerps free pose to anchor at this weight.
+            // Keep the captured free contribution and change only the anchor.
+            let foot = old_foot + weight * (local.z - old_anchor);
+            if weight > 0.95 {
+                let start = *starts[i].get_or_insert(foot);
+                peaks[i] = peaks[i].max((foot - start).abs());
+            }
+        }
+    }
+    assert!(peaks[0] > 0.055 && peaks[1] < 0.010, "{peaks:?}");
 }
 
 #[cfg(test)]
@@ -914,10 +976,15 @@ fn animate(
             *anchors = confirmed;
         }
         for i in 0..2 {
-            // Filter the contact independently of root motion and yaw.
-            state.feet[i] =
-                interpolate_foot_anchor(&mut anchors[i], confirmed[i], &root, foot_alpha).into();
             state.foot_weight[i] += (p.pose.foot_weight[i] - state.foot_weight[i]) * foot_alpha;
+            // Filter the contact independently of root motion and yaw.
+            state.feet[i] = interpolate_foot_anchor(
+                &mut anchors[i],
+                confirmed[i],
+                &root,
+                foot_anchor_alpha(time.delta_secs(), state.foot_weight[i]),
+            )
+            .into();
             state.foot_normal[i] = p.pose.foot_normal[i];
             let delta = p.pose.foot_yaw[i] - state.foot_yaw[i];
             state.foot_yaw[i] += delta.sin().atan2(delta.cos()) * foot_alpha;
