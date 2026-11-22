@@ -1181,6 +1181,57 @@ mod tests {
     }
 
     #[test]
+    fn inventory_grid_pending_is_not_replayed_after_close_or_disconnect() {
+        for disconnect in [false, true] {
+            let (mut app, mut authority, item) = fixture();
+            key(&mut app, KeyCode::Enter);
+            key(&mut app, KeyCode::ArrowDown);
+            key(&mut app, KeyCode::Enter);
+            let mut server = RenetServer::new(data::renet_config());
+            server.add_connection(7, false);
+            let Some(InventoryRequest::Operate(op)) = transfer(&mut app, &mut server) else {
+                panic!("expected exactly one submitted move");
+            };
+            assert!(app.world().resource::<Panel>().pending.is_some());
+
+            if disconnect {
+                app.world_mut().resource_mut::<RenetClient>().disconnect();
+            }
+            key(&mut app, KeyCode::Tab);
+            let panel = app.world().resource::<Panel>();
+            assert!(!panel.open && panel.pending.is_none() && panel.drag.is_none());
+            assert!(panel.feedback.is_none() && panel.cue.is_none());
+            assert!(transfer(&mut app, &mut server).is_none());
+
+            if !disconnect {
+                // Closing the UI cannot retract a move already sent to the
+                // authority. A later reply must not restore the old ghost.
+                let reply = authority.apply(&mut OperationSession::new(KEY), op, |id| id == OWN);
+                assert_eq!(reply.result, OperationResult::Committed);
+                for body in [
+                    UpdateBody::Result {
+                        id: op.id,
+                        result: reply.result,
+                    },
+                    UpdateBody::Snapshot(authority.snapshot(OWN, |id| id == OWN).unwrap()),
+                ] {
+                    app.world_mut()
+                        .resource_mut::<State>()
+                        .apply(InventoryUpdate { session: KEY, body });
+                }
+                key(&mut app, KeyCode::Tab);
+                let panel = app.world().resource::<Panel>();
+                assert!(panel.open && panel.pending.is_none() && panel.drag.is_none());
+                assert!(panel.cue.is_none());
+                let grid = app.world().resource::<State>().owned_grid(1, 7).unwrap();
+                let (_, moved) = grid.items.iter().find(|(id, _)| *id == item).unwrap();
+                assert_eq!(moved.placement, placement(0, 1));
+                assert!(transfer(&mut app, &mut server).is_none());
+            }
+        }
+    }
+
+    #[test]
     fn inventory_grid_keyboard_move_waits_for_authoritative_placement() {
         let (mut app, mut authority, item) = fixture();
         key(&mut app, KeyCode::Enter);
