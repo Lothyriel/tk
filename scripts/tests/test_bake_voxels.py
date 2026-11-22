@@ -51,28 +51,43 @@ def metrics(asset):
 
 
 class VoxelBakeTests(unittest.TestCase):
-    def test_bottle_has_translucent_panels_with_visible_seams_on_all_sides(self):
+    def test_bottle_keeps_a_connected_opaque_profile_around_translucent_windows(self):
         bottle = bake.load(bake.SOURCES / "item_water500.json")
         materials = {material["id"]: material for material in bottle["materials"]}
         for material in ("pet", "ribs"):
             self.assertEqual(materials[material]["alpha_mode"], "blend")
             self.assertTrue(0 < materials[material]["color"][3] < 1)
-        self.assertEqual(materials["seam"]["color"][3], 1)
+        self.assertEqual(materials["frame"]["color"][3], 1)
         meshes = {mesh["material"]: mesh for mesh in bottle["parts"][0]["meshes"]}
-        # Both edges of every cardinal view contain a continuous opaque strip,
-        # while the central panel still draws as translucent PET.
+        # Test the outermost baked face along cardinal viewing rays. A window
+        # must have no opaque backing between the opposing PET faces.
         for axis in (0, 2):
             lateral = 2 - axis
             for sign in (-1, 1):
                 normal = [0, 0, 0]
                 normal[axis] = sign
-                seam = [p for p, n in zip(meshes["seam"]["positions"], meshes["seam"]["normals"])
-                        if n == normal and abs(p[axis]) >= 0.029]
-                for side in (-1, 1):
-                    edge = [p for p in seam if side * p[lateral] > 0.018]
-                    self.assertGreater(max(p[1] for p in edge) - min(p[1] for p in edge), 0.15)
-                self.assertTrue(any(n == normal and abs(p[axis]) >= 0.029
-                                    for p, n in zip(meshes["pet"]["positions"], meshes["pet"]["normals"])))
+
+                def hits(x, y):
+                    result = []
+                    for material, mesh in meshes.items():
+                        for i in range(0, len(mesh["indices"]), 3):
+                            indices = mesh["indices"][i:i + 3]
+                            if mesh["normals"][indices[0]] != normal:
+                                continue
+                            vertices = [mesh["positions"][j] for j in indices]
+                            if (min(p[lateral] for p in vertices) < x < max(p[lateral] for p in vertices)
+                                    and min(p[1] for p in vertices) < y < max(p[1] for p in vertices)):
+                                result.append((sign * vertices[0][axis], material))
+                    return sorted(result, reverse=True)
+
+                for y in (0.033, 0.135):
+                    self.assertEqual(hits(0, y)[0][1], "pet")
+                    self.assertTrue(all(m == "pet" for _, m in hits(0, y)))
+                    for x in (-0.018, 0.018):
+                        self.assertEqual(hits(x, y)[0][1], "frame")
+                for y in (0.003, 0.012, 0.079, 0.161, 0.169, 0.178, 0.19):
+                    self.assertEqual(hits(0, y)[0][1], "frame")
+                self.assertEqual(hits(0, 0.202)[0][1], "cap")
 
     def test_beacon_authoring_reports_duplicate_id_and_stale_bake(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
