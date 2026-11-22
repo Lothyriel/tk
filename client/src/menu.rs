@@ -93,6 +93,10 @@ impl Menu {
         self.pending.is_some()
     }
 
+    pub(crate) fn focused_widget(&self) -> Option<Entity> {
+        self.selected
+    }
+
     pub(crate) fn replaces_hud(&self) -> bool {
         !matches!(self.surface, Surface::Playing | Surface::Inventory)
     }
@@ -125,11 +129,18 @@ pub(crate) struct NavOrder(u16);
 #[derive(Component)]
 pub(crate) struct BenchScroll;
 
+/// A projected marker focuses its normal workbench row without cycling a part.
+#[derive(Component)]
+pub(crate) struct BenchFocusTarget(pub Entity);
+
 #[derive(Message)]
 pub(crate) struct Activation(pub Entity);
 
 #[derive(Message)]
-struct PointerActivation(Entity);
+struct PointerActivation {
+    entity: Entity,
+    focus_only: bool,
+}
 
 #[derive(Component)]
 struct Root;
@@ -147,11 +158,23 @@ pub(crate) fn widget(order: u16) -> impl Bundle {
 
 fn record_activation(
     event: On<PointerClick>,
-    buttons: Query<&NavOrder>,
+    buttons: Query<(Has<NavOrder>, Option<&BenchFocusTarget>)>,
     mut activations: MessageWriter<PointerActivation>,
 ) {
-    if event.button == PointerButton::Primary && buttons.contains(event.entity) {
-        activations.write(PointerActivation(event.entity));
+    if event.button == PointerButton::Primary
+        && let Ok((button, target)) = buttons.get(event.entity)
+    {
+        if let Some(target) = target {
+            activations.write(PointerActivation {
+                entity: target.0,
+                focus_only: true,
+            });
+        } else if button {
+            activations.write(PointerActivation {
+                entity: event.entity,
+                focus_only: false,
+            });
+        }
     }
 }
 
@@ -385,12 +408,11 @@ fn route(
     let previous = menu.selected;
     let clicked = pointer
         .read()
-        .map(|event| event.0)
         .filter(|entity| {
             window.focused
                 && old == menu.surface
                 && !consumed
-                && candidates.iter().any(|entry| entry.0 == *entity)
+                && candidates.iter().any(|entry| entry.0 == entity.entity)
         })
         .last();
     let index = candidates
@@ -411,14 +433,22 @@ fn route(
         Some(index) => index,
         None => 0,
     };
-    menu.selected = clicked.or_else(|| candidates.get(index).map(|entry| entry.0));
+    menu.selected = clicked
+        .map(|event| event.entity)
+        .or_else(|| candidates.get(index).map(|entry| entry.0));
     let key_activate = window.focused
         && !consumed
         && !navigated
         && old == menu.surface
         && previous == menu.selected
         && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space));
-    let Some(entity) = clicked.or_else(|| key_activate.then_some(menu.selected).flatten()) else {
+    if clicked.is_some_and(|event| event.focus_only) {
+        return;
+    }
+    let Some(entity) = clicked
+        .map(|event| event.entity)
+        .or_else(|| key_activate.then_some(menu.selected).flatten())
+    else {
         return;
     };
     let Ok((_, _, action, bench)) = widgets.get(entity) else {
@@ -820,6 +850,52 @@ mod tests {
         focus(&app, ready);
         key(&mut app, KeyCode::Enter);
         assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 1);
+    }
+
+    #[test]
+    fn menu_socket_marker_focuses_row_without_cycling_then_enter_edits() {
+        let mut app = fixture();
+        let kit = common::catalog::catalog()
+            .configuration(common::WeaponId::M4A1)
+            .unwrap();
+        let bench = button(&mut app, Action::Bench);
+        let part = button(&mut app, loadout::ui::Action::Part(0));
+        let marker = app
+            .world_mut()
+            .query::<(Entity, &BenchFocusTarget)>()
+            .iter(app.world())
+            .find(|(_, target)| target.0 == part)
+            .unwrap()
+            .0;
+        click(&mut app, bench);
+        app.update();
+        app.world_mut().resource_mut::<loadout::Editor>().draft =
+            Some(common::catalog::WeaponKit {
+                weapon: kit.clone(),
+                reserves: vec![],
+            });
+        click(&mut app, marker);
+        key(&mut app, KeyCode::Enter);
+        focus(&app, part);
+        assert_eq!(
+            app.world()
+                .resource::<loadout::Editor>()
+                .draft
+                .as_ref()
+                .unwrap()
+                .weapon,
+            kit
+        );
+        key(&mut app, KeyCode::Enter);
+        assert_ne!(
+            app.world()
+                .resource::<loadout::Editor>()
+                .draft
+                .as_ref()
+                .unwrap()
+                .weapon,
+            kit
+        );
     }
 
     #[test]

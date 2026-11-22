@@ -52,10 +52,13 @@ impl Default for VisualBindings {
     }
 }
 
-type BoundPiece = (u16, u32, String, Transform);
+pub(crate) type BoundPiece = (u16, u32, String, Transform);
 
 impl VisualBindings {
-    fn pieces(&self, spec: &common::catalog::ResolvedWeapon) -> Result<Vec<BoundPiece>, String> {
+    pub(crate) fn pieces(
+        &self,
+        spec: &common::catalog::ResolvedWeapon,
+    ) -> Result<Vec<BoundPiece>, String> {
         let asset = self
             .weapons
             .get(&spec.definition)

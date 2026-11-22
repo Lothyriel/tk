@@ -19,6 +19,9 @@ pub(crate) mod item_review;
 
 pub struct Plugin;
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct InstantiateModels;
+
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VoxelCache>()
@@ -29,7 +32,7 @@ impl bevy::prelude::Plugin for Plugin {
                 (
                     configured::assemble,
                     remove_models,
-                    instantiate,
+                    instantiate.in_set(InstantiateModels),
                     configured::pose.in_set(configured::PoseConfigured),
                 )
                     .chain()

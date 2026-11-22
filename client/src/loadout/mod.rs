@@ -21,6 +21,7 @@ pub struct Plugin;
 pub(crate) fn setup_test_widgets(app: &mut App) {
     app.insert_resource(preview::PreviewImage(Handle::default()))
         .init_resource::<Editor>()
+        .init_resource::<preview::Preview>()
         .add_systems(Startup, ui::setup)
         .add_systems(
             Update,
@@ -40,6 +41,7 @@ pub(crate) fn setup_test_widgets(app: &mut App) {
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Editor>()
+            .init_resource::<preview::Preview>()
             .add_systems(Startup, (preview::setup, ui::setup).chain())
             .add_systems(
                 Update,
@@ -57,7 +59,12 @@ impl bevy::prelude::Plugin for Plugin {
             )
             .add_systems(
                 Update,
-                (ui::refresh, preview::update).in_set(ClientSystems::Present),
+                (
+                    preview::update.before(crate::render::voxel::InstantiateModels),
+                    ui::refresh,
+                )
+                    .chain()
+                    .in_set(ClientSystems::Present),
             );
     }
 }

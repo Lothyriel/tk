@@ -131,8 +131,12 @@ without changing FOV. In-game handling review remains pending; see the
 ### Configure a weapon
 
 In the lobby, activate **Weapon workbench**. Choose primary or sidearm, edit the
-draft and activate **Apply**. The preview and its properties show only the server-confirmed kit.
-Invalid drafts show the resolver's dependency/interface/clearance reason.
+draft and activate **Apply**. The preview shows compatible changes immediately,
+without equipping them. Click a numbered socket in the 3D preview to focus its
+row, or use Tab/arrows to move focus in the list; activate the row to cycle options.
+The preview labels draft, submitted and confirmed assemblies separately.
+Invalid drafts show the resolver's dependency/interface/clearance reason and
+display the confirmed assembly instead.
 Removing an optional parent also removes its draft descendants; Apply commits
 the whole selection atomically. **Discard draft** restores the confirmed kit.
 Use **Back to lobby** or Esc to close the workbench and restore focus to its

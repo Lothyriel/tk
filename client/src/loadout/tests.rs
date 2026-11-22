@@ -33,11 +33,16 @@ fn fixture() -> (App, Arsenal, ConfigurationPublisher) {
         .insert_resource(session)
         .insert_resource(PlayerId(7))
         .insert_resource(client)
-        .insert_resource(preview::PreviewImage(Handle::default()))
         .init_resource::<Editor>()
+        .init_resource::<Assets<Image>>()
+        .init_resource::<preview::Preview>()
+        .init_resource::<crate::render::voxel::configured::VisualBindings>()
         .add_message::<crate::menu::Activation>()
-        .add_systems(Startup, ui::setup)
-        .add_systems(Update, (synchronize, interact).chain());
+        .add_systems(Startup, (preview::setup, ui::setup).chain())
+        .add_systems(
+            Update,
+            (synchronize, interact, preview::update, ui::refresh).chain(),
+        );
     app.update();
     app.world_mut().resource_mut::<Editor>().visible = true;
     (app, arsenal, publisher)
@@ -56,8 +61,19 @@ fn press(app: &mut App, action: ui::Action) {
     app.update();
 }
 
+fn shown_part(app: &mut App, asset: &str) -> Option<Transform> {
+    app.world_mut()
+        .query::<(&crate::render::voxel::VoxelModel, &Transform)>()
+        .iter(app.world())
+        .find_map(|(part, pose)| (part.asset == asset).then_some(*pose))
+}
+
+fn preview_view(app: &App) -> Option<&preview::View> {
+    app.world().resource::<preview::Preview>().view.as_ref()
+}
+
 #[test]
-fn lobby_panel_clicks_submit_compact_kit_and_wait_for_confirmed_preview() {
+fn lobby_panel_clicks_preview_compact_kit_and_wait_for_confirmed_publication() {
     let (mut app, mut arsenal, mut publisher) = fixture();
     for row in [0, 1, 2, 3] {
         press(&mut app, ui::Action::Part(row));
@@ -82,10 +98,15 @@ fn lobby_panel_clicks_submit_compact_kit_and_wait_for_confirmed_preview() {
             .resolved
             .magazine_size,
         30,
-        "draft never replaces the confirmed preview"
+        "draft preview never replaces the confirmed cache"
     );
+    assert_eq!(preview_view(&app), Some(&preview::View::Draft));
+    assert!(shown_part(&mut app, "m4a1_pmag_20").is_some());
+    assert!(shown_part(&mut app, "m4a1_magazine_30").is_none());
+    press(&mut app, ui::Action::Apply);
     press(&mut app, ui::Action::Apply);
     assert_eq!(app.world().resource::<Editor>().pending, Some(1));
+    assert_eq!(preview_view(&app), Some(&preview::View::Pending));
     let mut server = RenetServer::new(data::renet_config());
     server.add_connection(7, false);
     for packet in app
@@ -96,6 +117,7 @@ fn lobby_panel_clicks_submit_compact_kit_and_wait_for_confirmed_preview() {
         server.process_packet_from(packet, 7).unwrap();
     }
     let bytes = server.receive_message(7, CONFIGURATION_CHANNEL).unwrap();
+    assert!(server.receive_message(7, CONFIGURATION_CHANNEL).is_none());
     let command = ConfigurationCommand::decode(&bytes).unwrap();
     let result = CommandLedger::default().execute(1, command, true, &mut arsenal, catalog());
     assert_eq!(result.outcome, CommandOutcome::Applied);
@@ -121,6 +143,7 @@ fn lobby_panel_clicks_submit_compact_kit_and_wait_for_confirmed_preview() {
         .unwrap();
     app.update();
     assert_eq!(app.world().resource::<Editor>().pending, None);
+    assert_eq!(preview_view(&app), Some(&preview::View::Confirmed));
     let session = app.world().resource::<ClientSession>();
     let accepted = session
         .configurations
@@ -157,6 +180,10 @@ fn lobby_panel_reports_dependencies_removes_subtrees_and_enforces_ready_lock() {
         .resolve(catalog())
         .unwrap_err();
     assert!(!error.message.is_empty());
+    assert!(
+        matches!(preview_view(&app), Some(preview::View::Invalid(reason)) if reason.contains(&error.message))
+    );
+    assert!(shown_part(&mut app, "m4a1_rc2").is_none());
     press(&mut app, ui::Action::Apply);
     assert!(app.world().resource::<Editor>().pending.is_none());
     assert!(
@@ -177,6 +204,13 @@ fn lobby_panel_reports_dependencies_removes_subtrees_and_enforces_ready_lock() {
             .iter()
             .any(|p| p.definition == DefinitionId(133))
     );
+    assert!(shown_part(&mut app, "m4a1_pro").is_some());
+    assert!(
+        app.world()
+            .resource::<preview::Preview>()
+            .socket(9)
+            .is_some()
+    );
     press(&mut app, ui::Action::Part(8)); // remove mount AND optic
     let kit = app.world().resource::<Editor>().draft.as_ref().unwrap();
     assert!(
@@ -187,6 +221,13 @@ fn lobby_panel_reports_dependencies_removes_subtrees_and_enforces_ready_lock() {
     );
     kit.resolve(catalog()).unwrap();
     let before = kit.clone();
+    assert!(shown_part(&mut app, "m4a1_pro").is_none());
+    assert!(
+        app.world()
+            .resource::<preview::Preview>()
+            .socket(9)
+            .is_none()
+    );
     app.world_mut().resource_mut::<ClientSession>().players[0]
         .participant
         .ready = true;
@@ -197,6 +238,7 @@ fn lobby_panel_reports_dependencies_removes_subtrees_and_enforces_ready_lock() {
         Some(&before)
     );
     assert!(app.world().resource::<Editor>().pending.is_none());
+    assert_eq!(preview_view(&app), Some(&preview::View::Locked));
     let session = app.world().resource::<ClientSession>();
     assert_eq!(
         session
@@ -208,4 +250,72 @@ fn lobby_panel_reports_dependencies_removes_subtrees_and_enforces_ready_lock() {
             .weapon,
         catalog().configuration(WeaponId::M4A1).unwrap()
     );
+}
+
+#[test]
+fn lobby_panel_rail_marker_tracks_preview_and_discard_restores_camera_and_kit() {
+    let (mut app, _, _) = fixture();
+    app.update();
+    let socket = |app: &App| {
+        app.world()
+            .resource::<preview::Preview>()
+            .socket(1)
+            .unwrap()
+    };
+    let camera = |app: &mut App| {
+        *app.world_mut()
+            .query_filtered::<&Transform, With<preview::PreviewCamera>>()
+            .single(app.world())
+            .unwrap()
+    };
+    let baseline_camera = camera(&mut app);
+    press(&mut app, ui::Action::Part(1));
+    let before = socket(&app);
+    let before_pose = shown_part(&mut app, "m4a1_ctr").unwrap();
+    press(&mut app, ui::Action::Position(1));
+    let after = socket(&app);
+    let after_pose = shown_part(&mut app, "m4a1_ctr").unwrap();
+    assert_ne!(before_pose.translation, after_pose.translation);
+    assert_ne!(before, after);
+    assert_eq!(camera(&mut app), baseline_camera);
+    press(&mut app, ui::Action::Reset);
+    app.update();
+    assert_eq!(preview_view(&app), Some(&preview::View::Confirmed));
+    assert!(shown_part(&mut app, "m4a1_ctr").is_none());
+    assert!(shown_part(&mut app, "m4a1_stock").is_some());
+    assert_eq!(camera(&mut app), baseline_camera);
+}
+
+#[test]
+fn lobby_panel_server_rejection_restores_confirmed_assembly() {
+    let (mut app, mut arsenal, _) = fixture();
+    press(&mut app, ui::Action::Part(0));
+    press(&mut app, ui::Action::Apply);
+    let mut server = RenetServer::new(data::renet_config());
+    server.add_connection(7, false);
+    for packet in app
+        .world_mut()
+        .resource_mut::<RenetClient>()
+        .get_packets_to_send()
+    {
+        server.process_packet_from(packet, 7).unwrap();
+    }
+    let bytes = server.receive_message(7, CONFIGURATION_CHANNEL).unwrap();
+    let result = CommandLedger::default().execute(
+        1,
+        ConfigurationCommand::decode(&bytes).unwrap(),
+        false,
+        &mut arsenal,
+        catalog(),
+    );
+    assert_eq!(result.outcome, CommandOutcome::Locked);
+    app.world_mut()
+        .resource_mut::<ClientSession>()
+        .configurations
+        .last_result = Some(result);
+    app.update();
+    assert_eq!(preview_view(&app), Some(&preview::View::Confirmed));
+    assert_eq!(app.world().resource::<Editor>().status, "Locked");
+    assert!(shown_part(&mut app, "m4a1_magazine_30").is_some());
+    assert!(shown_part(&mut app, "m4a1_pmag_20").is_none());
 }

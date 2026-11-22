@@ -96,6 +96,10 @@ pub(super) const ROWS: &[Row] = &[
     },
 ];
 
+pub(super) fn initial_position(row: &Row) -> u16 {
+    if row.node == 7 { 12 } else { 0 }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct Editor {
     pub visible: bool,
@@ -139,18 +143,19 @@ impl Editor {
             };
             if result.outcome != CommandOutcome::Applied {
                 self.pending = None;
+                self.source = None;
                 self.status = result
                     .reason
                     .clone()
                     .unwrap_or_else(|| format!("{:?}", result.outcome));
-                return;
+            } else {
+                if result.revision != Some(entry.packet.revision) {
+                    return; // Result can arrive before publication.
+                }
+                self.pending = None;
+                self.source = None;
+                self.status = "Server confirmed the kit.".into();
             }
-            if result.revision != Some(entry.packet.revision) {
-                return; // Result can arrive before publication.
-            }
-            self.pending = None;
-            self.source = None;
-            self.status = "Server confirmed the kit.".into();
         }
         let source = (entry.packet.epoch, entry.packet.handle);
         if self.source != Some(source) {
@@ -194,7 +199,7 @@ impl Editor {
         }
         let current = kit.weapon.components.iter().find(|p| p.node == row.node);
         let definition = current.map_or(0, |p| p.definition.0);
-        let position = current.map_or(if row.node == 7 { 12 } else { 0 }, |p| p.position);
+        let position = current.map_or_else(|| initial_position(row), |p| p.position);
         let next = row.choices[(row
             .choices
             .iter()
