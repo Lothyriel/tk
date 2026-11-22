@@ -114,7 +114,7 @@ the other combatant to the lobby, where a new pair can prepare another duel.
 | W, A, S, D | Move |
 | Mouse | Look |
 | Left Shift / Left Ctrl | Run / crouch |
-| Z | Toggle prone; remap to an unused letter with `TK_PRONE_KEY` |
+| Z | Toggle prone; remap to an unused letter with `TK_PRONE_KEY` (e.g. `X`); invalid or reserved letters fall back to Z |
 | Space | Jump while active; never respawn during the current raid |
 | Hold Q / E | Gradually lean left / right; release both keys (or hold both) to return to neutral |
 | 1 / 2 | Equip your selected primary / pistol |

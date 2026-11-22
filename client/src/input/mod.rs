@@ -20,6 +20,7 @@ pub(crate) struct InventoryInput;
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LocalInput>()
+            .init_resource::<ProneBinding>()
             .init_resource::<inventory_panel::Panel>()
             .add_systems(Startup, inventory_panel::grid::setup)
             .add_systems(
@@ -97,7 +98,18 @@ struct ProneBinding(KeyCode);
 
 impl Default for ProneBinding {
     fn default() -> Self {
-        let key = std::env::var("TK_PRONE_KEY").unwrap_or_default();
+        match std::env::var("TK_PRONE_KEY") {
+            Ok(key) => Self::parse(&key).unwrap_or_else(|| {
+                warn!("TK_PRONE_KEY requires an unused letter; using Z");
+                Self(KeyCode::KeyZ)
+            }),
+            Err(_) => Self(KeyCode::KeyZ),
+        }
+    }
+}
+
+impl ProneBinding {
+    fn parse(key: &str) -> Option<Self> {
         let letters = [
             KeyCode::KeyA,
             KeyCode::KeyB,
@@ -126,13 +138,16 @@ impl Default for ProneBinding {
             KeyCode::KeyY,
             KeyCode::KeyZ,
         ];
-        let value = match key.as_bytes() {
-            [letter] if letter.is_ascii_alphabetic() => {
-                letters[usize::from(letter.to_ascii_lowercase() - b'a')]
-            }
-            _ => KeyCode::KeyZ,
+        let [letter] = key.as_bytes() else {
+            return None;
         };
-        Self(value)
+        let letter = letter.to_ascii_lowercase();
+        // Keep gameplay and overlay shortcuts unambiguous, including the
+        // default reload letter even when this session remaps reload.
+        if !letter.is_ascii_lowercase() || b"abdefiqrsvw".contains(&letter) {
+            return None;
+        }
+        Some(Self(letters[usize::from(letter - b'a')]))
     }
 }
 
@@ -310,7 +325,7 @@ mod tests {
             .insert_resource(PlayerId(7))
             .init_resource::<LocalInput>()
             .init_resource::<ButtonInput<KeyCode>>()
-            .init_resource::<ProneBinding>()
+            .insert_resource(ProneBinding(KeyCode::KeyZ))
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<Time<Real>>()
             .add_systems(Update, keyboard);
@@ -326,6 +341,49 @@ mod tests {
             },
         ));
         app
+    }
+
+    #[test]
+    fn prone_binding_is_registered_and_rejects_reserved_letters() {
+        let mut app = App::new();
+        app.add_plugins(Plugin);
+        assert!(app.world().contains_resource::<ProneBinding>());
+        for key in ["R", "i", "W", "f", "Q", "E", "V", "Space", "é", ""] {
+            assert!(ProneBinding::parse(key).is_none(), "{key:?}");
+        }
+        assert_eq!(ProneBinding::parse("x").unwrap().0, KeyCode::KeyX);
+        assert_eq!(ProneBinding::parse("X").unwrap().0, KeyCode::KeyX);
+    }
+
+    #[test]
+    fn remapped_prone_does_not_consume_reload_or_the_old_binding() {
+        let mut app = input_app();
+        app.insert_resource(ProneBinding::parse("X").unwrap());
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+        for key in [KeyCode::KeyZ, KeyCode::KeyR] {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+            app.update();
+            assert_eq!(app.world().resource::<LocalInput>().prone_sequence, 0);
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyX);
+        app.update();
+        let input = app.world().resource::<LocalInput>();
+        assert_eq!(input.prone_sequence, 1);
+        assert_eq!(input.reload_sequence, 1);
     }
 
     #[test]
