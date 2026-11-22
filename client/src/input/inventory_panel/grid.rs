@@ -2126,6 +2126,12 @@ mod tests {
 
     #[test]
     fn inventory_grid_mouse_merge_previews_and_confirms_partial_remainder() {
+        for ack_first in [false, true] {
+            assert_partial_merge_order(ack_first);
+        }
+    }
+
+    fn assert_partial_merge_order(ack_first: bool) {
         let (mut app, mut authority, _) = fixture_with_stacks(true);
         mouse(&mut app, Vec2::splat(-0.375), true);
         mouse(&mut app, Vec2::new(0.125, -0.375), true);
@@ -2143,12 +2149,45 @@ mod tests {
             panic!("expected Merge");
         };
         assert!(matches!(op.action, InventoryAction::Merge { .. }));
-        apply_stack_operation(&mut app, &mut authority, op);
+        let reply = authority.apply(&mut OperationSession::new(KEY), op, |id| id == OWN);
+        assert_eq!(reply.result, OperationResult::Committed);
+        let ack = UpdateBody::Result {
+            id: op.id,
+            result: reply.result,
+        };
+        let delta = UpdateBody::Delta(reply.commit.unwrap().project(KEY, |id| id == OWN));
+        let (first, second) = if ack_first {
+            (ack, delta)
+        } else {
+            (delta, ack)
+        };
+        let receive = |app: &mut App, body| {
+            app.world_mut()
+                .resource_mut::<State>()
+                .apply(InventoryUpdate { session: KEY, body });
+            app.update();
+        };
+        receive(&mut app, first);
+        let panel = app.world().resource::<Panel>();
+        assert_eq!(panel.pending.map(|pending| pending.operation), Some(op.id));
+        assert!(panel.cue.is_none());
+        assert!(transfer(&mut app, &mut server).is_none());
+
+        receive(&mut app, second);
+        assert!(app.world().resource::<Panel>().pending.is_none());
         assert_eq!(
             app.world().resource::<Panel>().feedback,
             Some("Merge confirmed: remainder in source stack")
         );
+        assert_eq!(
+            app.world_mut().resource_mut::<Panel>().take_cue(),
+            Some(InventoryCue::Confirmed)
+        );
         let snapshot = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        assert_eq!(
+            app.world().resource::<State>().owned_grid(1, 7),
+            Some(&snapshot)
+        );
         assert_eq!(
             snapshot
                 .items
@@ -2157,5 +2196,14 @@ mod tests {
                 .collect::<Vec<_>>(),
             [2, 3]
         );
+        receive(
+            &mut app,
+            UpdateBody::Result {
+                id: op.id,
+                result: OperationResult::Committed,
+            },
+        );
+        assert!(app.world_mut().resource_mut::<Panel>().take_cue().is_none());
+        assert!(transfer(&mut app, &mut server).is_none());
     }
 }
