@@ -24,7 +24,11 @@ impl bevy::prelude::Plugin for Plugin {
             .add_systems(Startup, inventory_panel::grid::setup)
             .add_systems(
                 Update,
-                inventory_panel::grid::present.in_set(ClientSystems::Present),
+                (
+                    inventory_panel::grid::present,
+                    inventory_panel::grid::present_tooltip,
+                )
+                    .in_set(ClientSystems::Present),
             )
             .add_systems(
                 Update,

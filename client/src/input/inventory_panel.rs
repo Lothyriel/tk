@@ -16,6 +16,13 @@ pub(crate) struct Panel {
     pending: Option<grid::Pending>,
     feedback: Option<&'static str>,
     context: Option<grid::Context>,
+    cue: Option<InventoryCue>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InventoryCue {
+    Confirmed,
+    Rejected,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -145,6 +152,14 @@ pub(super) fn update(
 }
 
 impl Panel {
+    pub(crate) fn take_cue(&mut self) -> Option<InventoryCue> {
+        self.cue.take()
+    }
+
+    pub(crate) fn record_cue(&mut self, cue: InventoryCue) {
+        self.cue = Some(cue);
+    }
+
     fn inspect(&mut self, item: ItemInstanceId) {
         self.inspection = Some(Inspection {
             item,

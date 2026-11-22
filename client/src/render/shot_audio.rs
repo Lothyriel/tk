@@ -1,5 +1,9 @@
 //! Original procedural game effects; no recordings or external assets.
-use crate::{ClientSystems, sync::ClientSession};
+use crate::{
+    ClientSystems,
+    input::inventory_panel::{InventoryCue, Panel},
+    sync::ClientSession,
+};
 use bevy::{
     audio::{AddAudioSource, ChannelCount, Decodable, SampleRate, Source, Volume},
     prelude::*,
@@ -117,6 +121,9 @@ fn synth(weapon: WeaponKind, softened: bool) -> SynthShot {
 #[derive(Resource)]
 struct Cues([Handle<SynthShot>; 14]);
 
+#[derive(Resource)]
+struct InventoryCues([Handle<SynthShot>; 2]);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HandlingCue {
     Removed = 3,
@@ -202,6 +209,10 @@ fn prepare(mut commands: Commands, mut assets: ResMut<Assets<SynthShot>>) {
         assets.add(synth_contact(610.0, 210.0)),
         assets.add(synth_contact(1100.0, 240.0)),
     ]));
+    commands.insert_resource(InventoryCues([
+        assets.add(synth_contact(1_350.0, 155.0)),
+        assets.add(synth_contact(215.0, 105.0)),
+    ]));
 }
 
 #[derive(Component)]
@@ -236,11 +247,11 @@ struct History {
 fn present(
     mut commands: Commands,
     time: Res<Time>,
-    session: Res<ClientSession>,
-    local: Res<PlayerId>,
+    (session, local): (Res<ClientSession>, Res<PlayerId>),
     settings: (Res<Muted>, Res<Cues>),
     voices: Query<(Entity, &Voice)>,
     mut history: Local<History>,
+    inventory: (Option<ResMut<Panel>>, Option<Res<InventoryCues>>),
 ) {
     let (muted, cues) = settings;
     let now = time.elapsed_secs();
@@ -271,6 +282,17 @@ fn present(
         ));
         active += 1;
     };
+    // UI cues use the same muted, bounded playback path, never shot events.
+    // Consume even while muted so a later unmute cannot replay an operation.
+    if let (Some(mut panel), Some(ui)) = inventory
+        && let Some(cue) = panel.take_cue()
+    {
+        let index = match cue {
+            InventoryCue::Confirmed => 0,
+            InventoryCue::Rejected => 1,
+        };
+        play(&ui.0[index], Vec3::ZERO, false, 0.13);
+    }
     for shot in &session.shots {
         if !history.shots.observe(shot.id) {
             continue;
@@ -500,6 +522,38 @@ mod tests {
             ),
             Some(HandlingCue::Selector)
         );
+    }
+
+    #[test]
+    fn inventory_audio_consumes_muted_cues_and_plays_one_unmuted_voice() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<ClientSession>()
+            .init_resource::<Panel>()
+            .insert_resource(PlayerId(7))
+            .insert_resource(Muted(true))
+            .insert_resource(Cues(std::array::from_fn(|_| Handle::default())))
+            .insert_resource(InventoryCues(std::array::from_fn(|_| Handle::default())))
+            .add_systems(Update, present);
+        let count = |app: &mut App| {
+            let world = app.world_mut();
+            world.query::<&AudioPlayer<SynthShot>>().iter(world).count()
+        };
+        app.world_mut()
+            .resource_mut::<Panel>()
+            .record_cue(InventoryCue::Rejected);
+        app.update();
+        assert_eq!(count(&mut app), 0);
+        app.world_mut().resource_mut::<Muted>().0 = false;
+        app.update();
+        assert_eq!(count(&mut app), 0);
+        app.world_mut()
+            .resource_mut::<Panel>()
+            .record_cue(InventoryCue::Confirmed);
+        app.update();
+        assert_eq!(count(&mut app), 1);
+        app.update();
+        assert_eq!(count(&mut app), 1);
     }
 
     #[test]

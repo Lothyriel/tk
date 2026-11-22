@@ -1,9 +1,10 @@
-use super::Panel;
+use super::{InventoryCue, Panel};
 use crate::sync::inventory::{Operate, State};
 use bevy::{
     ecs::system::SystemParam,
     prelude::*,
-    ui::{FocusPolicy, RelativeCursorPosition},
+    ui::{FocusPolicy, RelativeCursorPosition, UiScale},
+    window::PrimaryWindow,
 };
 use bevy_renet2::prelude::RenetClient;
 use common::catalog::{
@@ -115,6 +116,9 @@ pub(in crate::input) struct Feedback;
 
 #[derive(Component)]
 pub(in crate::input) struct Tile;
+
+#[derive(Component)]
+pub(in crate::input) struct ItemTooltip;
 
 fn footprint(item: &ProjectedItem) -> Footprint {
     planned_items()[item.definition.as_str()].footprint
@@ -270,11 +274,15 @@ pub(super) fn reconcile(panel: &mut Panel, inventory: &State, raid: u32, client:
                         }),
                 };
                 panel.pending = None;
+                if confirmed.is_some() {
+                    panel.record_cue(InventoryCue::Confirmed);
+                }
                 panel.feedback = Some(confirmed.unwrap_or("Inventory changed after operation"));
             }
         }
         Some(OperationResult::Conflict | OperationResult::Expired) => {
             panel.pending = None;
+            panel.record_cue(InventoryCue::Rejected);
             panel.feedback = Some(if matches!(pending.expected, Expected::Move) {
                 "Move rejected: inventory changed"
             } else {
@@ -283,6 +291,7 @@ pub(super) fn reconcile(panel: &mut Panel, inventory: &State, raid: u32, client:
         }
         Some(_) => {
             panel.pending = None;
+            panel.record_cue(InventoryCue::Rejected);
             panel.feedback = Some(if matches!(pending.expected, Expected::Move) {
                 "Move rejected by server"
             } else {
@@ -599,6 +608,22 @@ fn reason(verdict: Option<Result<(), PlacementError>>) -> &'static str {
 }
 
 pub(in crate::input) fn setup(mut commands: Commands) {
+    commands.spawn((
+        ItemTooltip,
+        Pickable::IGNORE,
+        FocusPolicy::Pass,
+        GlobalZIndex(230),
+        Text::default(),
+        TextFont::from_font_size(13.0),
+        BackgroundColor(Color::srgb(0.04, 0.08, 0.12)),
+        Node {
+            display: Display::None,
+            position_type: PositionType::Absolute,
+            padding: UiRect::all(Val::Px(6.0)),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+    ));
     commands
         .spawn((
             GridRoot,
@@ -659,6 +684,73 @@ pub(in crate::input) fn setup(mut commands: Commands) {
                     }
                 });
         });
+}
+
+fn tooltip_rect(pointer: Vec2, viewport: Vec2) -> (Vec2, Vec2) {
+    let size = Vec2::new(212.0, 64.0).min(viewport);
+    let next = pointer + Vec2::splat(12.0);
+    let before = pointer - size - Vec2::splat(12.0);
+    let origin = Vec2::new(
+        if next.x + size.x > viewport.x {
+            before.x
+        } else {
+            next.x
+        },
+        if next.y + size.y > viewport.y {
+            before.y
+        } else {
+            next.y
+        },
+    )
+    .clamp(Vec2::ZERO, viewport - size);
+    (origin, size)
+}
+
+pub(in crate::input) fn present_tooltip(
+    (panel, inventory): (Res<Panel>, Res<State>),
+    (session, player): (Res<crate::sync::ClientSession>, Res<common::PlayerId>),
+    window: Single<&Window, With<PrimaryWindow>>,
+    scale: Option<Res<UiScale>>,
+    board: Single<&RelativeCursorPosition, With<Board>>,
+    mut tooltip: Single<(&mut Node, &mut Text), With<ItemTooltip>>,
+) {
+    let show = || {
+        if !panel.open
+            || panel.inspection.is_some()
+            || panel.context.is_some()
+            || panel.drag.is_some()
+            || panel.pending.is_some()
+        {
+            return None;
+        }
+        let grid = inventory
+            .owned_grid(session.raid.raid_id, player.0)
+            .filter(known_grid)?;
+        let (_, item) = item_at(grid, cell_at(&board, grid.size)?)?;
+        let pointer = window.cursor_position()?;
+        let scale = scale.as_ref().map_or(1.0, |scale| scale.0).max(0.01);
+        let viewport = Vec2::new(window.width(), window.height()) / scale;
+        let (origin, size) = tooltip_rect(pointer / scale, viewport);
+        let name = planned_items()[item.definition.as_str()].name;
+        Some((
+            origin,
+            size,
+            format!("{name}\nQuantity: {} · {:?}", item.quantity, item.condition),
+        ))
+    };
+    if let Some((origin, size, text)) = show() {
+        let (node, label) = &mut *tooltip;
+        node.display = Display::Flex;
+        node.left = Val::Px(origin.x);
+        node.top = Val::Px(origin.y);
+        node.width = Val::Px(size.x);
+        node.height = Val::Px(size.y);
+        if label.as_str() != text {
+            **label = Text::new(text);
+        }
+    } else {
+        tooltip.0.display = Display::None;
+    }
 }
 
 fn rectangle(cell: Placement, size: [u8; 2], grid: [u8; 2]) -> Node {
@@ -926,6 +1018,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn inventory_grid_tooltip_clamps_at_all_edges_and_large_scale() {
+        for viewport in [
+            Vec2::new(1280., 720.),
+            Vec2::new(640., 360.),
+            Vec2::new(130., 44.),
+        ] {
+            for pointer in [
+                Vec2::ZERO,
+                viewport,
+                Vec2::new(0., viewport.y),
+                Vec2::new(viewport.x, 0.),
+            ] {
+                let (origin, size) = tooltip_rect(pointer, viewport);
+                assert!(origin.cmpge(Vec2::ZERO).all());
+                assert!((origin + size).cmple(viewport).all());
+                assert_eq!(size, Vec2::new(212., 64.).min(viewport));
+            }
+        }
+        assert_eq!(
+            tooltip_rect(Vec2::ZERO, Vec2::splat(500.)).0,
+            Vec2::splat(12.)
+        );
+        assert_eq!(
+            tooltip_rect(Vec2::splat(500.), Vec2::splat(500.)).0,
+            Vec2::new(276., 424.)
+        );
+    }
+
     const KEY: SessionKey = SessionKey {
         raid_epoch: 1,
         session_epoch: 1,
@@ -1084,6 +1205,7 @@ mod tests {
         app.world_mut().resource_mut::<State>().apply(result);
         app.update();
         assert!(app.world().resource::<Panel>().pending.is_some());
+        assert_eq!(app.world_mut().resource_mut::<Panel>().take_cue(), None);
         assert_eq!(
             app.world()
                 .resource::<State>()
@@ -1106,6 +1228,12 @@ mod tests {
             app.world().resource::<Panel>().feedback,
             Some("Move confirmed")
         );
+        assert_eq!(
+            app.world_mut().resource_mut::<Panel>().take_cue(),
+            Some(InventoryCue::Confirmed)
+        );
+        app.update();
+        assert_eq!(app.world_mut().resource_mut::<Panel>().take_cue(), None);
     }
 
     #[test]
@@ -1167,6 +1295,12 @@ mod tests {
         let panel = app.world().resource::<Panel>();
         assert!(panel.pending.is_none());
         assert_eq!(panel.feedback, Some("Move rejected: inventory changed"));
+        assert_eq!(
+            app.world_mut().resource_mut::<Panel>().take_cue(),
+            Some(InventoryCue::Rejected)
+        );
+        app.update();
+        assert_eq!(app.world_mut().resource_mut::<Panel>().take_cue(), None);
         assert!(app.world().resource::<State>().owned_grid(1, 7).is_none());
         assert!(transfer(&mut app, &mut server).is_none());
     }
@@ -1207,6 +1341,7 @@ mod tests {
             app.world().resource::<Panel>().feedback,
             Some("Drop requested; waiting for inventory update")
         );
+        assert_eq!(app.world_mut().resource_mut::<Panel>().take_cue(), None);
         assert!(
             app.world()
                 .resource::<State>()

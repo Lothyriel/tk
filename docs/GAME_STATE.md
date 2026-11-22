@@ -134,6 +134,10 @@ the other combatant to the lobby, where a new pair can prepare another duel.
 The six ground seeds are distinct, single items. That starting set by itself
 does not offer a stack to split or two compatible stacks to merge.
 
+Hover a backpack item to see its confirmed quantity and condition. Move, split,
+and merge play a short cue after confirmation or explicit rejection unless game
+audio is muted. A drop request does not play a confirmation cue.
+
 For less first-person camera movement, launch the client with
 `TK_CAMERA_BOB=reduced` or `TK_CAMERA_BOB=off`. This changes only the
 cosmetic step motion, not stance, mouse aim, or collision.
