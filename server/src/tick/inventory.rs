@@ -18,11 +18,21 @@ use common::{
 const REQUESTS_PER_WINDOW: u8 = 4;
 const WINDOW_TICKS: u8 = 16;
 
+/// Granted by authoritative interaction code, never by an inventory packet.
+/// Shared compartments occupy the namespace above player connection IDs.
+#[derive(Component)]
+pub(super) struct OpenContainer {
+    pub raid_id: u32,
+    pub id: CompartmentId,
+    pub size: Footprint,
+}
+
 struct Peer {
     entity: Entity,
     key: SessionKey,
     operations: OperationSession,
     remaining: u8,
+    open: Option<CompartmentId>,
 }
 
 #[derive(Default)]
@@ -49,7 +59,7 @@ pub(super) fn receive(
     mut server: ResMut<RenetServer>,
     lobby: Res<Lobby>,
     raid: Res<RaidState>,
-    participants: Query<&Participant>,
+    participants: Query<(&Participant, Option<&OpenContainer>)>,
     mut state: Local<Endpoint>,
 ) {
     process(&mut server, &lobby, &raid, &participants, &mut state);
@@ -59,7 +69,7 @@ fn process(
     server: &mut RenetServer,
     lobby: &Lobby,
     raid: &RaidState,
-    participants: &Query<&Participant>,
+    participants: &Query<(&Participant, Option<&OpenContainer>)>,
     state: &mut Endpoint,
 ) {
     if state.raid != Some(raid.raid_id) {
@@ -84,12 +94,14 @@ fn process(
     });
     let refill = state.window_tick == 0;
     state.window_tick = (state.window_tick + 1) % WINDOW_TICKS;
-    for client in server.clients_id() {
+    let clients = server.clients_id();
+    // Reconcile every view before executing any command so fanout uses this
+    // tick's grants, independent of connection iteration order.
+    for &client in &clients {
         let Some(&entity) = lobby.players.get(&client) else {
             continue;
         };
         let own = CompartmentId(client);
-        let owns = |id| id == own;
         if state
             .peers
             .get(&client)
@@ -112,45 +124,95 @@ fn process(
                     key,
                     operations: OperationSession::new(key),
                     remaining: REQUESTS_PER_WINDOW,
+                    open: None,
                 },
             );
             send(server, client, key, UpdateBody::Begin);
             if server.is_connected(client) {
-                send_snapshot(authority, server, client, key, own);
+                send_snapshot(authority, server, client, key, own, |_| true);
             }
         }
         let peer = state.peers.get_mut(&client).expect("connected peer");
         if refill {
             peer.remaining = REQUESTS_PER_WINDOW;
         }
-        while peer.remaining > 0 && server.is_connected(client) {
+        let grant = participants
+            .get(entity)
+            .ok()
+            .and_then(|(participant, grant)| {
+                grant.filter(|grant| {
+                    raid.phase == RaidPhase::Active
+                        && participant.status == RaidStatus::Active
+                        && grant.raid_id == raid.raid_id
+                        && grant.id.0 >= (1_u64 << 63)
+                })
+            });
+        let open = grant.map(|grant| grant.id);
+        if peer.open != open && server.is_connected(client) {
+            if let Some(closed) = peer.open {
+                send(server, client, peer.key, UpdateBody::Closed(closed));
+            }
+            peer.open = open;
+            if let Some(grant) = grant
+                && server.is_connected(client)
+            {
+                if authority.revision(grant.id).is_none() {
+                    authority
+                        .register_compartment(grant.id, grant.size)
+                        .expect("new shared compartment");
+                }
+                send_snapshot(authority, server, client, peer.key, grant.id, |_| true);
+            }
+        }
+    }
+    for client in clients {
+        while server.is_connected(client) {
+            let Some(peer) = state
+                .peers
+                .get_mut(&client)
+                .filter(|peer| peer.remaining > 0)
+            else {
+                break;
+            };
             let Some(bytes) = server.receive_message(client, CHANNEL) else {
                 break;
             };
             peer.remaining -= 1;
+            let key = peer.key;
+            let open = peer.open;
+            let can_access = |id| id == CompartmentId(client) || open == Some(id);
             match InventoryRequest::decode(&bytes) {
                 Ok(InventoryRequest::Resync {
                     session,
                     compartment,
                 }) if session == peer.key => {
-                    send_snapshot(authority, server, client, peer.key, compartment);
+                    send_snapshot(authority, server, client, key, compartment, can_access);
                 }
                 Ok(InventoryRequest::Operate(request)) if request.session == peer.key => {
                     let active = raid.phase == RaidPhase::Active
                         && participants
-                            .get(entity)
-                            .is_ok_and(|p| p.status == RaidStatus::Active);
-                    let reply =
-                        authority.apply(&mut peer.operations, request, |id| active && owns(id));
+                            .get(peer.entity)
+                            .is_ok_and(|(p, _)| p.status == RaidStatus::Active);
+                    let reply = authority
+                        .apply(&mut peer.operations, request, |id| active && can_access(id));
                     if let Some(commit) = reply.commit {
-                        let deltas = commit.project(peer.key, owns);
-                        send(server, client, peer.key, UpdateBody::Delta(deltas));
+                        for (&recipient, view) in &state.peers {
+                            if !server.is_connected(recipient) {
+                                continue;
+                            }
+                            let deltas = commit.project(view.key, |id| {
+                                id == CompartmentId(recipient) || view.open == Some(id)
+                            });
+                            if !deltas.is_empty() {
+                                send(server, recipient, view.key, UpdateBody::Delta(deltas));
+                            }
+                        }
                     }
                     if server.is_connected(client) {
                         send(
                             server,
                             client,
-                            peer.key,
+                            key,
                             UpdateBody::Result {
                                 id: request.id,
                                 result: reply.result,
@@ -170,9 +232,10 @@ fn send_snapshot(
     client: u64,
     key: SessionKey,
     id: CompartmentId,
+    may_read: impl Fn(CompartmentId) -> bool,
 ) {
     use common::catalog::item_inventory::SnapshotError;
-    match authority.snapshot(id, |id| id == CompartmentId(client)) {
+    match authority.snapshot(id, may_read) {
         Ok(snapshot) => send(server, client, key, UpdateBody::Snapshot(snapshot)),
         Err(SnapshotError::Unavailable) => send(server, client, key, UpdateBody::Closed(id)),
         Err(SnapshotError::TooManyItems) => server.disconnect(client),
@@ -245,7 +308,7 @@ mod tests {
             move |mut server: ResMut<RenetServer>,
                   lobby: Res<Lobby>,
                   raid: Res<RaidState>,
-                  participants: Query<&Participant>| {
+                  participants: Query<(&Participant, Option<&OpenContainer>)>| {
                 process(&mut server, &lobby, &raid, &participants, &mut endpoint);
             },
         );
@@ -321,5 +384,84 @@ mod tests {
         let other_updates = pull(&mut app, 8, &mut other);
         assert_eq!(other_updates.len(), 1);
         assert_eq!(other_updates[0].body, UpdateBody::Closed(id));
+
+        let shared = CompartmentId(1 << 63);
+        let entities = [7, 8].map(|client| app.world().resource::<Lobby>().players[&client]);
+        for entity in entities {
+            app.world_mut().entity_mut(entity).insert(OpenContainer {
+                raid_id: 2,
+                id: shared,
+                size: Footprint::new(4, 4).unwrap(),
+            });
+        }
+        app.update();
+        for updates in [pull(&mut app, 7, &mut owner), pull(&mut app, 8, &mut other)] {
+            assert!(
+                matches!(&updates[0].body, UpdateBody::Snapshot(s) if s.version.id == shared && s.items.is_empty())
+            );
+        }
+        let shared_location = GridLocation {
+            compartment: shared,
+            ..location
+        };
+        let transfer = InventoryOperation {
+            id: 2,
+            expected: [
+                VersionedCompartment { id, revision: 1 },
+                VersionedCompartment {
+                    id: shared,
+                    revision: 0,
+                },
+            ],
+            action: InventoryAction::Move {
+                item,
+                destination: shared_location,
+            },
+            ..request
+        };
+        push(
+            &mut app,
+            7,
+            &mut owner,
+            &[InventoryRequest::Operate(transfer)],
+        );
+        app.update();
+        let updates = pull(&mut app, 7, &mut owner);
+        assert!(matches!(&updates[0].body, UpdateBody::Delta(d) if d.len() == 2));
+        let updates = pull(&mut app, 8, &mut other);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].session, initial_other[0].session);
+        assert!(matches!(&updates[0].body, UpdateBody::Delta(d)
+            if d.len() == 1 && d[0].version.id == shared && d[0].items[0].id == item));
+
+        app.world_mut()
+            .entity_mut(entities[1])
+            .remove::<OpenContainer>();
+        push(
+            &mut app,
+            7,
+            &mut owner,
+            &[InventoryRequest::Operate(InventoryOperation {
+                id: 3,
+                expected: [VersionedCompartment {
+                    id: shared,
+                    revision: 1,
+                }; 2],
+                action: InventoryAction::Move {
+                    item,
+                    destination: GridLocation {
+                        placement: destination.placement,
+                        ..shared_location
+                    },
+                },
+                ..request
+            })],
+        );
+        app.update();
+        let updates = pull(&mut app, 7, &mut owner);
+        assert!(matches!(&updates[0].body, UpdateBody::Delta(d) if d[0].version.revision == 2));
+        let updates = pull(&mut app, 8, &mut other);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].body, UpdateBody::Closed(shared));
     }
 }
