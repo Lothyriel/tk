@@ -245,6 +245,227 @@ fn inventory_udp_private_resync_under_loss() {
 
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn inventory_udp_contested_item_converges_under_loss() {
+    use super::super::super::inventory::{OpenContainer, UdpInventoryFixture};
+    use common::{
+        catalog::{
+            CompartmentId,
+            item_grid::{Footprint, Placement, Rotation},
+            item_inventory::{
+                Condition, GridLocation, Inventory, InventoryAction, InventoryOperation,
+                InventoryReplica, OperationResult, ReplicaUpdate, VersionedCompartment,
+            },
+        },
+        replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+    };
+    let mut harness = Harness::new();
+    let mut first = UdpPeer::new(7, harness.address, harness.now, true);
+    let mut second = UdpPeer::new(8, harness.address, harness.now, true);
+    harness.pump(&mut [&mut first, &mut second], 192);
+    let shared = CompartmentId(1 << 63);
+    let size = Footprint::new(4, 4).unwrap();
+    let placement = Placement {
+        x: 0,
+        y: 0,
+        rotation: Rotation::Upright,
+    };
+    let mut inventory = Inventory::default();
+    inventory.register_compartment(shared, size, None).unwrap();
+    let item = inventory
+        .insert_seed(
+            "med.bandage",
+            Condition::Damaged,
+            2,
+            GridLocation {
+                compartment: shared,
+                placement,
+            },
+        )
+        .unwrap();
+    harness
+        .app
+        .insert_resource(UdpInventoryFixture(1, Some(inventory)));
+    for client in [7, 8] {
+        let entity = harness.app.world().resource::<Lobby>().players[&client];
+        harness
+            .app
+            .world_mut()
+            .entity_mut(entity)
+            .insert(OpenContainer {
+                raid_id: 1,
+                id: shared,
+                size,
+            });
+    }
+    first.input.lobby_sequence = 1;
+    second.input.lobby_sequence = 1;
+    harness.pump(&mut [&mut first, &mut second], 600);
+    assert_eq!(
+        harness.app.world().resource::<RaidState>().phase,
+        RaidPhase::Active
+    );
+    let drain = |peer: &mut UdpPeer| {
+        std::iter::from_fn(|| peer.peer.network.receive_message(CHANNEL))
+            .map(|bytes| InventoryUpdate::decode(&bytes).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let mut views = Vec::new();
+    for (peer, own) in [
+        (&mut first, CompartmentId(7)),
+        (&mut second, CompartmentId(8)),
+    ] {
+        let updates: Vec<_> = drain(peer)
+            .into_iter()
+            .filter(|u| u.session.raid_epoch == 1)
+            .collect();
+        assert_eq!(updates.len(), 3);
+        let session = updates[0].session;
+        assert_eq!(updates[0].body, UpdateBody::Begin);
+        let mut replica = InventoryReplica::new(session);
+        for update in updates.into_iter().skip(1) {
+            let UpdateBody::Snapshot(snapshot) = update.body else {
+                panic!("expected initial snapshot");
+            };
+            assert_eq!(
+                replica.apply_snapshot(session, snapshot),
+                ReplicaUpdate::Applied
+            );
+        }
+        assert_eq!(replica.get(shared).unwrap().items[0].0, item);
+        assert!(replica.get(own).unwrap().items.is_empty());
+        let expected = [VersionedCompartment {
+            id: shared,
+            revision: 0,
+        }; 2];
+        let operation = InventoryOperation {
+            session,
+            id: 1,
+            expected,
+            action: InventoryAction::Move {
+                item,
+                destination: GridLocation {
+                    compartment: shared,
+                    placement: Placement {
+                        x: own.0 as u8 - 6,
+                        ..placement
+                    },
+                },
+            },
+        };
+        for _ in 0..2 {
+            peer.peer.network.send_message(
+                CHANNEL,
+                InventoryRequest::Operate(operation).encode().unwrap(),
+            );
+        }
+        views.push((session, replica));
+    }
+    harness.pump(&mut [&mut first, &mut second], 160);
+    let mut winners = 0;
+    for (peer, (session, replica)) in [&mut first, &mut second].into_iter().zip(&mut views) {
+        let mut deltas = 0;
+        let mut results = Vec::new();
+        for update in drain(peer) {
+            assert_eq!(update.session, *session);
+            match update.body {
+                UpdateBody::Delta(delta) => {
+                    deltas += 1;
+                    assert_eq!(
+                        replica.apply_deltas(*session, delta),
+                        ReplicaUpdate::Applied
+                    );
+                }
+                UpdateBody::Result { id: 1, result } => results.push(result),
+                body => panic!("unexpected update: {body:?}"),
+            }
+        }
+        assert_eq!(deltas, 1);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], results[1]);
+        match results[0] {
+            OperationResult::Committed => winners += 1,
+            OperationResult::Conflict => {}
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+        assert!(peer.dropped.load(Ordering::Relaxed) > 0);
+    }
+    assert_eq!(winners, 1);
+    let snapshot = views[0].1.get(shared).unwrap();
+    assert_eq!(views[1].1.get(shared), Some(snapshot));
+    assert_eq!(snapshot.version.revision, 1);
+    assert_eq!(snapshot.items.len(), 1);
+    assert_eq!(
+        (
+            snapshot.items[0].0,
+            snapshot.items[0].1.quantity,
+            snapshot.items[0].1.condition
+        ),
+        (item, 2, Condition::Damaged)
+    );
+
+    // Transfer the surviving stack out of the shared view. Only its new
+    // owner may see the destination; the other peer sees just the removal.
+    let own = CompartmentId(7);
+    let session = views[0].0;
+    let transfer = InventoryOperation {
+        session,
+        id: 2,
+        expected: [snapshot.version, views[0].1.get(own).unwrap().version],
+        action: InventoryAction::Move {
+            item,
+            destination: GridLocation {
+                compartment: own,
+                placement,
+            },
+        },
+    };
+    first.peer.network.send_message(
+        CHANNEL,
+        InventoryRequest::Operate(transfer).encode().unwrap(),
+    );
+    harness.pump(&mut [&mut first, &mut second], 160);
+    for (index, (peer, (session, replica))) in [&mut first, &mut second]
+        .into_iter()
+        .zip(&mut views)
+        .enumerate()
+    {
+        let mut updates = drain(peer).into_iter();
+        let update = updates.next().unwrap();
+        assert_eq!(update.session, *session);
+        let UpdateBody::Delta(delta) = update.body else {
+            panic!("expected transfer delta");
+        };
+        assert_eq!(delta.len(), if index == 0 { 2 } else { 1 });
+        assert_eq!(
+            replica.apply_deltas(*session, delta),
+            ReplicaUpdate::Applied
+        );
+        let shared_view = replica.get(shared).unwrap();
+        assert_eq!(shared_view.version.revision, 2);
+        assert!(shared_view.items.is_empty());
+        if index == 0 {
+            let (_, destination_item) = &replica.get(own).unwrap().items[0];
+            assert_eq!(replica.get(own).unwrap().items[0].0, item);
+            assert_eq!(
+                (destination_item.quantity, destination_item.condition),
+                (2, Condition::Damaged)
+            );
+            assert_eq!(
+                updates.next().unwrap().body,
+                UpdateBody::Result {
+                    id: 2,
+                    result: OperationResult::Committed
+                }
+            );
+        } else {
+            assert!(replica.get(own).is_none());
+        }
+        assert!(updates.next().is_none());
+    }
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn replication_udp_solo_dual_loss_and_late_join() {
     for loss in [false, true] {
         let mut harness = Harness::new();
