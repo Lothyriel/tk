@@ -57,6 +57,20 @@ Procure `ARENA MENU PROBE PASS` no log. Os eventos sintéticos de janela do
 Bevy percorrem o picking por coordenadas no layout real. Não certificam
 dispositivos do SO, legibilidade nem perda UDP. A sonda não registra mídia.
 
+Para verificar stale, cancelar e reconectar no mesmo cliente, compile
+`cargo build --locked -p client -p server` e, com a tela disponível para
+focar a janela do cliente, execute:
+
+```sh
+python scripts/stale_reconnect.py --bin-dir target/debug --output target/stale-reconnect
+```
+
+O script pausa e retoma apenas o servidor descartável que ele inicia.
+A sonda usa Enter sintético no Bevy sobre os widgets focados, verifica
+o aviso de stale com transporte conectado, o cancelamento e o retorno
+ao lobby com ID novo e sem Ready. Não registra mídia nem certifica
+dispositivos físicos.
+
 Para verificar os limites e o foco inicial do lobby conectado, inicie um
 servidor local novo e execute, com `TK_PREFERENCES_PATH` isolado:
 

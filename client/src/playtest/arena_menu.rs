@@ -20,6 +20,7 @@ use common::{
 use crate::{ClientSystems, menu::Menu, sync::ClientSession};
 
 mod lobby_review;
+mod stale_reconnect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Resource)]
 pub(crate) enum Probe {
@@ -60,6 +61,22 @@ impl Probe {
 
 impl Plugin for Probe {
     fn build(&self, app: &mut App) {
+        if let Some(path) = std::env::var_os("TK_STALE_RECONNECT_DIR") {
+            assert_eq!(*self, Self::Keyboard);
+            for flag in [
+                "TK_LOBBY_REVIEW_SCALE",
+                "TK_PREFERENCES_FLOW",
+                "TK_PREFERENCES_SCREENSHOT",
+                "TK_PREFERENCES_REVIEW_SCALE",
+            ] {
+                assert!(
+                    std::env::var_os(flag).is_none(),
+                    "incompatible flag: {flag}"
+                );
+            }
+            stale_reconnect::install(app, path.into());
+            return;
+        }
         if let Ok(value) = std::env::var("TK_LOBBY_REVIEW_SCALE") {
             assert_eq!(*self, Self::Keyboard);
             for flag in [
