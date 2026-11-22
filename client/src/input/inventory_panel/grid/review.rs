@@ -2,14 +2,17 @@
 use std::{collections::HashSet, path::PathBuf};
 
 use bevy::{
+    input::{ButtonState, InputSystems, mouse::MouseButtonInput},
     render::view::screenshot::{Capturing, Screenshot, save_to_disk},
     ui::{UiGlobalTransform, UiSystems},
+    window::InternalWindowState,
 };
 
 use super::*;
 
 pub(crate) struct GridReview {
     pub automated: bool,
+    pub pointer_checkpoint: bool,
 }
 
 impl Plugin for GridReview {
@@ -27,11 +30,22 @@ impl Plugin for GridReview {
             );
             app.insert_resource(UiScale(scale));
         }
-        app.insert_resource(Output {
-            directory,
-            automated: self.automated,
-        })
-        .add_systems(PostUpdate, observe.after(UiSystems::PostLayout));
+        app.init_resource::<Observed>()
+            .insert_resource(Output {
+                directory,
+                automated: self.automated,
+            })
+            .add_systems(PostUpdate, observe.after(UiSystems::PostLayout));
+        if self.pointer_checkpoint {
+            app.init_resource::<PointerRoute>()
+                .add_systems(
+                    PreUpdate,
+                    pointer_checkpoint
+                        .before(InputSystems)
+                        .before(UiSystems::Focus),
+                )
+                .add_systems(PostUpdate, restore_pointer.after(observe));
+        }
     }
 }
 
@@ -39,6 +53,132 @@ impl Plugin for GridReview {
 struct Output {
     directory: PathBuf,
     automated: bool,
+}
+
+#[derive(Resource, Default)]
+struct Observed(HashSet<&'static str>);
+
+#[derive(Resource, Default)]
+struct PointerRoute {
+    target: Option<(SessionKey, VersionedCompartment, ItemInstanceId, f64)>,
+    pressed: bool,
+    released: bool,
+    finished: bool,
+    saved_window_state: Option<InternalWindowState>,
+}
+
+fn restore_pointer(
+    mut route: ResMut<PointerRoute>,
+    mut window: Single<&mut Window, With<PrimaryWindow>>,
+) {
+    if let Some(saved) = route.saved_window_state.take() {
+        window.bypass_change_detection().internal = saved;
+    }
+}
+
+fn cell_center(size: [u8; 2], board_size: Vec2, placement: Placement) -> Vec2 {
+    ((Vec2::new(placement.x.into(), placement.y.into()) + Vec2::splat(0.5))
+        / Vec2::new(size[0].into(), size[1].into())
+        - Vec2::splat(0.5))
+        * board_size
+}
+
+type PointerState<'w> = (
+    Res<'w, Panel>,
+    Res<'w, State>,
+    Res<'w, crate::sync::ClientSession>,
+    Res<'w, common::PlayerId>,
+    Res<'w, Time<Real>>,
+);
+
+fn pointer_checkpoint(
+    mut route: ResMut<PointerRoute>,
+    (panel, inventory, session, player, time): PointerState,
+    observed: Res<Observed>,
+    board: Single<(&ComputedNode, &UiGlobalTransform, &RelativeCursorPosition), With<Board>>,
+    mut window: Single<(Entity, &mut Window), With<PrimaryWindow>>,
+    mut mouse: MessageWriter<MouseButtonInput>,
+) {
+    if route.finished {
+        return;
+    }
+    let button = |state| MouseButtonInput {
+        button: MouseButton::Right,
+        state,
+        window: window.0,
+    };
+    if route.pressed && !route.released {
+        mouse.write(button(ButtonState::Released));
+        route.released = true;
+    }
+    let now = time.elapsed_secs_f64();
+    if let Some((_, _, _, started)) = route.target {
+        assert!(
+            now - started < 8.0,
+            "GRID POINTER checkpoint timed out before observing hover and context"
+        );
+    }
+    if !window.1.focused || !panel.open || panel.inspection.is_some() || !session.playing(player.0)
+    {
+        return;
+    }
+    let Some(grid) = inventory
+        .owned_grid(session.raid.raid_id, player.0)
+        .filter(known_grid)
+    else {
+        return;
+    };
+    let Some(key) = inventory.grid_session() else {
+        return;
+    };
+    let (node, transform, cursor) = *board;
+    if node.size().min_element() <= 0.0 {
+        return;
+    }
+    let Some((id, item)) = grid.items.first() else {
+        return;
+    };
+    let (old_key, version, target, _) = *route.target.get_or_insert((key, grid.version, *id, now));
+    assert_eq!(
+        (key, grid.version, *id),
+        (old_key, version, target),
+        "inventory changed during GRID POINTER checkpoint"
+    );
+    if observed.0.contains("context") {
+        assert!(route.pressed && observed.0.contains("hover"));
+        assert!(panel.context.is_some_and(|context| context.item == target
+            && context.version == version
+            && context.session == key));
+        info!(
+            "GRID POINTER hover/context observed for item={} revision={} (synthetic Bevy input)",
+            target.0, version.revision
+        );
+        route.finished = true;
+        return;
+    }
+    let point = *transform * cell_center(grid.size, node.size(), item.placement);
+    // Winit applies changed cursor positions in Last. Restore the exact
+    // backend cache in PostUpdate, after UI focus and tooltip presentation.
+    assert!(
+        point.cmpge(Vec2::ZERO).all()
+            && point.x < window.1.physical_width() as f32
+            && point.y < window.1.physical_height() as f32,
+        "GRID POINTER cell is outside the window: {point:?}"
+    );
+    if !route.pressed
+        && observed.0.contains("hover")
+        && cell_at(cursor, grid.size)
+            .and_then(|cell| item_at(grid, cell))
+            .is_some_and(|(id, _)| *id == target)
+    {
+        mouse.write(button(ButtonState::Pressed));
+        route.pressed = true;
+    }
+    route.saved_window_state = Some(window.1.internal);
+    window
+        .1
+        .bypass_change_detection()
+        .set_physical_cursor_position(Some(point.as_dvec2()));
 }
 
 type Role = (
@@ -113,7 +253,8 @@ fn observe(
     // A prior frame awaiting GPU readback must not hide a transient state
     // in this frame. Only an unclaimed request competes for this render target.
     screenshots: Query<(), (With<Screenshot>, Without<Capturing>)>,
-    mut seen: Local<HashSet<&'static str>>,
+    mut seen: ResMut<Observed>,
+    pointer: Option<Res<PointerRoute>>,
 ) {
     if !window.focused
         || !panel.open
@@ -199,7 +340,12 @@ fn observe(
             _ => return,
         }
     };
-    if (output.automated && matches!(state, "hover" | "context")) || !seen.insert(state) {
+    if matches!(state, "hover" | "context")
+        && (output.automated || pointer.is_some_and(|route| route.target.is_none()))
+    {
+        return;
+    }
+    if !seen.0.insert(state) {
         return;
     }
     let inside = [root, board, feedback]
@@ -229,6 +375,42 @@ fn observe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_grid_pointer_uses_physical_cell_coordinates_and_restores_window_state() {
+        let size = [4, 4];
+        let local = cell_center(
+            size,
+            Vec2::splat(200.0),
+            Placement {
+                x: 2,
+                y: 1,
+                rotation: Rotation::QuarterTurn,
+            },
+        );
+        let transform = UiGlobalTransform::from_translation(Vec2::new(600.0, 300.0));
+        let point = transform * local;
+        assert_eq!(point, Vec2::new(625.0, 275.0));
+        let mut app = App::new();
+        let mut window = Window::default();
+        window.set_physical_cursor_position(Some(Vec2::new(12.0, 24.0).as_dvec2()));
+        let saved = window.internal;
+        window.set_physical_cursor_position(Some(point.as_dvec2()));
+        let entity = app.world_mut().spawn((PrimaryWindow, window)).id();
+        app.insert_resource(PointerRoute {
+            saved_window_state: Some(saved),
+            ..default()
+        })
+        .add_systems(PostUpdate, restore_pointer);
+        app.update();
+        assert_eq!(app.world().get::<Window>(entity).unwrap().internal, saved);
+        assert!(
+            app.world()
+                .resource::<PointerRoute>()
+                .saved_window_state
+                .is_none()
+        );
+    }
 
     #[test]
     fn inventory_grid_review_checks_physical_bounds_at_review_sizes() {

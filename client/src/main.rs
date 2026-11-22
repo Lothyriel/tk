@@ -14,7 +14,10 @@ fn main() {
     let playtest = std::env::args().any(|argument| argument == "--playtest");
     let grid_probe = std::env::args().any(|argument| argument == "--inventory-grid-probe");
     let arena_menu_probe = playtest::arena_menu::Probe::requested();
-    let grid_review = std::env::args().any(|argument| argument == "--inventory-grid-review");
+    let grid_pointer =
+        std::env::args().any(|argument| argument == "--inventory-grid-pointer-checkpoint");
+    let grid_review =
+        grid_pointer || std::env::args().any(|argument| argument == "--inventory-grid-review");
     let voxel_grid = playtest && std::env::var_os("TK_PLAYTEST_INVENTORY_GRID").is_some();
     assert!(
         !voxel_grid
@@ -31,6 +34,10 @@ fn main() {
     assert!(
         !grid_probe || !(playtest || item_review || arena_menu_probe.is_some()),
         "run the inventory grid probe without other playtest or review modes"
+    );
+    assert!(
+        !grid_pointer || !playtest,
+        "the inventory pointer checkpoint is standalone"
     );
     assert!(
         !grid_review
@@ -94,6 +101,7 @@ fn main() {
     if grid_review {
         app.add_plugins(input::inventory_panel::GridReview {
             automated: voxel_grid,
+            pointer_checkpoint: grid_pointer,
         });
     }
     app.run();

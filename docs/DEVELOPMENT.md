@@ -99,6 +99,24 @@ evidência pendente; não congele o estado, simule confirmação ou atrase o
 servidor para obter a imagem. `inside` não substitui revisão de legibilidade,
 foco, sobreposição ou áudio. Não há injeção de input nem vídeo neste modo.
 
+#### Checkpoint de ponteiro (hover e contexto)
+
+Após coordenação, use o cliente normal com servidor real e diretório novo:
+
+```sh
+TK_GRID_REVIEW_DIR="$HOME/tmp/tar56-pointer-720" TK_PLAYTEST_VIEWPORT=1280x720 \
+  TK_GRID_REVIEW_UI_SCALE=1.25 cargo run --locked -p client -- \
+  --inventory-grid-pointer-checkpoint
+```
+
+Colete um item confirmado, abra a grade com Tab e mantenha a janela em
+foco sem interagir. O checkpoint aponta para uma célula do primeiro item
+usando o layout do Bevy, espera o tooltip e envia um clique direito
+sintético. Procure `GRID POINTER hover/context observed` e confirme que
+`grid-hover.png` e `grid-context.png` foram gravados. O checkpoint deixa o
+contexto aberto, não seleciona nenhuma ação e não prova inspeção nem
+entrada do dispositivo físico. É separado da rota de teclado e da telemetria.
+
 ## Entradas compartilhadas
 
 OpenCode e Codex descobrem skills do projeto em `.agents/skills/`.
