@@ -51,10 +51,11 @@ impl bevy::prelude::Plugin for Plugin {
 fn cursor_control(
     session: Res<ClientSession>,
     id: Res<PlayerId>,
-    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    window: Single<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
     menu: Res<crate::menu::Menu>,
 ) {
-    let captured = session.playing(id.0) && !menu.owns_input();
+    let (window, mut cursor) = window.into_inner();
+    let captured = window.focused && session.playing(id.0) && !menu.owns_input();
     cursor.grab_mode = if captured {
         CursorGrabMode::Locked
     } else {

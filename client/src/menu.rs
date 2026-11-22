@@ -1500,6 +1500,79 @@ mod tests {
     }
 
     #[test]
+    fn pause_preferences_stale_recovery_waits_for_window_focus_before_capturing_cursor() {
+        let mut app = fixture();
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+        let mut window = app
+            .world_mut()
+            .query_filtered::<Entity, With<PrimaryWindow>>();
+        let window = window.single(app.world()).unwrap();
+        let assert_cursor = |app: &App, mode, visible| {
+            let cursor = app.world().get::<CursorOptions>(window).unwrap();
+            assert_eq!((cursor.grab_mode, cursor.visible), (mode, visible));
+        };
+        let settings = button(&mut app, Action::Settings);
+        let more = button(&mut app, Action::FovMore);
+        let apply = button(&mut app, Action::ApplySettings);
+        let quit = button(&mut app, Action::Quit);
+        let applied = *app.world().resource::<Preferences>();
+        key(&mut app, KeyCode::Escape);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        click(&mut app, settings);
+        app.update();
+        click(&mut app, more);
+        app.update();
+        focus(&app, more);
+        assert_eq!(app.world().resource::<Menu>().settings.unwrap().fov, 75);
+        assert_cursor(&app, CursorGrabMode::None, true);
+
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+        click(&mut app, apply);
+        key(&mut app, KeyCode::Escape);
+        let menu = app.world().resource::<Menu>();
+        assert_eq!(menu.surface, Surface::Settings);
+        assert_eq!(menu.settings.unwrap().fov, 75);
+        focus(&app, more);
+        assert_eq!(*app.world().resource::<Preferences>(), applied);
+        assert_cursor(&app, CursorGrabMode::None, true);
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs(2));
+        app.update();
+        let menu = app.world().resource::<Menu>();
+        assert_eq!(menu.surface, Surface::Connection);
+        assert!(menu.settings.is_none() && !menu.paused());
+        focus(&app, quit);
+        assert_eq!(app.world().get::<Outline>(more).unwrap().color, Color::NONE);
+        assert_cursor(&app, CursorGrabMode::None, true);
+
+        app.world_mut()
+            .resource_mut::<ClientSession>()
+            .last_received = 2.0;
+        app.update();
+        let menu = app.world().resource::<Menu>();
+        assert_eq!(menu.surface, Surface::Playing);
+        assert!(menu.settings.is_none() && menu.focused_widget().is_none());
+        assert_eq!(app.world().get::<Outline>(quit).unwrap().color, Color::NONE);
+        assert_eq!(*app.world().resource::<Preferences>(), applied);
+        assert_cursor(&app, CursorGrabMode::None, true);
+
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+        app.update();
+        assert_cursor(&app, CursorGrabMode::Locked, false);
+    }
+
+    #[test]
     fn arena_preferences_return_focus_to_the_invoking_control() {
         for escape in [false, true] {
             let mut app = fixture();
