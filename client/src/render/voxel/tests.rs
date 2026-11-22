@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn inventory_visuals_bottle_caches_blended_pet_and_opaque_trim() {
+    let mut cache = VoxelCache::default();
+    let mut meshes = Assets::default();
+    let mut materials = Assets::default();
+    let bottle = cache
+        .load("item_water500", &mut meshes, &mut materials)
+        .unwrap();
+    let mut blended = 0;
+    let mut opaque = 0;
+    for surface in &bottle.parts[0].surfaces {
+        let material = materials.get(&surface.material).unwrap();
+        match material.alpha_mode {
+            AlphaMode::Blend => {
+                assert!(material.base_color.alpha() > 0.0 && material.base_color.alpha() < 1.0);
+                blended += 1;
+            }
+            AlphaMode::Opaque => {
+                assert_eq!(material.base_color.alpha(), 1.0);
+                opaque += 1;
+            }
+            other => panic!("unexpected bottle alpha mode {other:?}"),
+        }
+    }
+    assert_eq!((blended, opaque), (2, 2));
+    let count = materials.len();
+    cache
+        .load("item_water500", &mut meshes, &mut materials)
+        .unwrap();
+    assert_eq!(materials.len(), count);
+}
+
+#[test]
 fn inventory_visuals_resolve_and_colliders_match_baked_geometry() {
     use common::catalog::item_manifest::{
         ActiveItems, ITEM_VISUALS_FILE, ItemAssetBinding, S1_SEEDS, item_visuals,

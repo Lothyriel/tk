@@ -94,6 +94,16 @@ struct MaterialSource {
     color: [f32; 4],
     roughness: f32,
     metallic: f32,
+    #[serde(default)]
+    alpha_mode: MaterialAlpha,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum MaterialAlpha {
+    #[default]
+    Opaque,
+    Blend,
 }
 
 #[derive(Deserialize, PartialEq)]
@@ -215,6 +225,10 @@ impl VoxelCache {
                             ),
                             perceptual_roughness: m.roughness,
                             metallic: m.metallic,
+                            alpha_mode: match m.alpha_mode {
+                                MaterialAlpha::Opaque => AlphaMode::Opaque,
+                                MaterialAlpha::Blend => AlphaMode::Blend,
+                            },
                             ..default()
                         }),
                     )
