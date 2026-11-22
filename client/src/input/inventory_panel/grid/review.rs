@@ -32,8 +32,8 @@ impl Plugin for GridReview {
         if let Ok(value) = std::env::var("TK_GRID_REVIEW_UI_SCALE") {
             let scale: f32 = value.parse().expect("numeric grid review UI scale");
             assert!(
-                (0.75..=1.5).contains(&scale),
-                "grid review scale must be 0.75–1.5"
+                (0.75..=2.0).contains(&scale),
+                "grid review scale must be 0.75–2.0"
             );
             app.insert_resource(UiScale(scale));
         }

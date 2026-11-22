@@ -342,7 +342,7 @@ def main():
     parser.add_argument("--inventory-grid-bench", action="store_true",
                         help="Measure paired idle panel states at the confirmed solo loot checkpoint")
     parser.add_argument("--inventory-grid-review-scale", type=float, metavar="SCALE",
-                        help="Enable static grid-only captures at UI scale SCALE (0.75–1.5)")
+                        help="Enable static grid-only captures at UI scale SCALE (0.75–2.0)")
     parser.add_argument("--inventory-grid-pointer-checkpoint", action="store_true",
                         help="Capture hover and context before keyboard grid operations")
     parser.add_argument("--inventory-grid-inspect", action="store_true",
@@ -422,8 +422,8 @@ def main():
     if args.inventory_grid_pointer_checkpoint and not grid_review:
         parser.error("--inventory-grid-pointer-checkpoint requires --inventory-grid-review-scale")
     if grid_review and not (args.inventory_grid and args.viewport and not args.inventory_telemetry
-                            and 0.75 <= args.inventory_grid_review_scale <= 1.5):
-        parser.error("--inventory-grid-review-scale needs scale 0.75–1.5, --inventory-grid, "
+                            and 0.75 <= args.inventory_grid_review_scale <= 2.0):
+        parser.error("--inventory-grid-review-scale needs scale 0.75–2.0, --inventory-grid, "
                      "--viewport and no inventory telemetry")
     if args.inventory_telemetry and not (
         sys.platform == "linux" and args.inventory_grid and Path("/proc/self/status").is_file()
