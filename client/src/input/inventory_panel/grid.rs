@@ -363,10 +363,12 @@ pub(super) fn interact(
         {
             panel.drag = None;
         }
-        if keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::Tab) {
-            context.focus = (context.focus + 1) % CONTEXT_ACTIONS.len();
-        } else if keys.just_pressed(KeyCode::ArrowUp) {
+        let tab = keys.just_pressed(KeyCode::Tab);
+        let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+        if keys.just_pressed(KeyCode::ArrowUp) || (tab && shift) {
             context.focus = (context.focus + CONTEXT_ACTIONS.len() - 1) % CONTEXT_ACTIONS.len();
+        } else if keys.just_pressed(KeyCode::ArrowDown) || tab {
+            context.focus = (context.focus + 1) % CONTEXT_ACTIONS.len();
         }
         let action = if mouse.is_some_and(|b| b.just_pressed(MouseButton::Left)) {
             pointer
@@ -1895,6 +1897,43 @@ mod tests {
             assert!(panel.consumed_escape);
             assert_eq!((panel.open, panel.drag.is_some()), (open, drag));
         }
+    }
+
+    #[test]
+    fn inventory_grid_context_reverse_tab_focuses_close_without_dropping() {
+        let (mut app, _, item) = fixture();
+        let focus = |app: &mut App| {
+            let world = app.world_mut();
+            let mut labels = world.query_filtered::<&Text, With<ContextLabel>>();
+            let focused: Vec<_> = labels
+                .iter(world)
+                .filter(|label| label.starts_with("› "))
+                .collect();
+            assert_eq!(focused.len(), 1);
+            focused[0].as_str().to_owned()
+        };
+        let reverse_tab = |app: &mut App, shift| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(shift);
+            keys.press(KeyCode::Tab);
+            app.update();
+        };
+        key(&mut app, KeyCode::ContextMenu);
+        assert_eq!(focus(&mut app), "› Inspect");
+        reverse_tab(&mut app, KeyCode::ShiftLeft);
+        assert_eq!(focus(&mut app), "› Close");
+        key(&mut app, KeyCode::Tab);
+        assert_eq!(focus(&mut app), "› Inspect");
+        reverse_tab(&mut app, KeyCode::ShiftRight);
+        assert_eq!(focus(&mut app), "› Close");
+        key(&mut app, KeyCode::Enter);
+        let panel = app.world().resource::<Panel>();
+        assert!(panel.open && panel.context.is_none() && panel.inspection.is_none());
+        assert_eq!(panel.selected, Some(item));
+        let mut server = RenetServer::new(data::renet_config());
+        server.add_connection(7, false);
+        assert!(transfer(&mut app, &mut server).is_none());
     }
 
     #[test]
