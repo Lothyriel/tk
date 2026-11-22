@@ -13,6 +13,10 @@ pub use authority::{
     InventoryAuthority, InventoryOperation, OperationReply, OperationResult, OperationSession,
     SessionKey, VersionedCompartment,
 };
+mod projection;
+pub use projection::{
+    CompartmentDelta, InventorySnapshot, ItemDelta, ProjectedItem, SnapshotError, VersionedCommit,
+};
 mod transaction;
 pub use transaction::{InventoryAction, InventoryChange, InventoryCommit, TransactionError};
 
