@@ -177,7 +177,12 @@ fn rekey_root(world: &mut World, id: u64) {
             Transform::from_xyz(0.0, 1.0, 0.0),
             PlayerVisualState::default(),
         ));
-        world.resource_mut::<Lobby>().players.insert(id, root);
+        // The offline root owns the cameras but is not a lobby participant.
+        // Leaving a 0 -> root alias would make snapshot pruning despawn the
+        // same entity that the new connected ID is about to update.
+        if id != 0 {
+            world.resource_mut::<Lobby>().players.insert(id, root);
+        }
     }
 }
 
@@ -293,6 +298,8 @@ mod tests {
         assert!(world.resource::<RenetClient>().is_disconnected());
         assert!(!world.contains_resource::<NetcodeClientTransport>());
         assert!(world.get_entity(remote).is_err());
+        assert!(world.resource::<Lobby>().players.is_empty());
+        assert!(world.get::<LocalPlayer>(root).is_some());
         server_transport
             .update(Duration::from_millis(8), &mut server)
             .unwrap();
@@ -303,6 +310,7 @@ mod tests {
         let fresh = world.resource::<PlayerId>().0;
         assert_ne!(fresh, old);
         assert_eq!(world.resource::<Lobby>().players[&fresh], root);
+        assert_eq!(world.resource::<Lobby>().players.len(), 1);
         assert_eq!(world.resource::<sync::ClientSession>().last_sequence, 0);
         assert_eq!(
             world

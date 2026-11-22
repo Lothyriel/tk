@@ -96,3 +96,121 @@ impl bevy::prelude::Plugin for ClientPlugin {
             .add_plugins(menu::Plugin);
     }
 }
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    use bevy_renet2::{
+        netcode::NetcodeClientTransport,
+        prelude::{DefaultChannel, RenetClient, RenetServer},
+    };
+    use common::{catalog::*, data, replication::*, *};
+
+    #[test]
+    fn first_lobby_snapshot_runs_client_presentation_without_a_renderer() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            WindowPlugin::default(),
+            TransformPlugin,
+            bevy::input::InputPlugin,
+            bevy::input_focus::InputFocusPlugin,
+            bevy::camera::CameraPlugin,
+            bevy::mesh::MeshPlugin,
+            bevy::gizmos::GizmoPlugin,
+            bevy::audio::AudioPlugin::default(),
+            bevy::light::LightPlugin,
+            bevy::picking::DefaultPickingPlugins,
+        ))
+        .init_asset::<StandardMaterial>()
+        .init_asset::<Image>()
+        .configure_sets(
+            Update,
+            (
+                ClientSystems::Receive,
+                ClientSystems::Input,
+                ClientSystems::Send,
+                ClientSystems::Present,
+            )
+                .chain(),
+        )
+        .add_plugins((ClientPlugin, hud::Plugin));
+        app.finish();
+        app.cleanup();
+        app.update();
+        let id = app.world().resource::<PlayerId>().0;
+        assert_ne!(id, 0);
+        let root = app.world().resource::<Lobby>().players[&id];
+        app.world_mut().remove_resource::<NetcodeClientTransport>();
+        app.world_mut()
+            .resource_mut::<RenetClient>()
+            .set_connected();
+        let mut server = RenetServer::new(data::renet_config());
+        server.add_connection(id, false);
+        let fingerprint = catalog_fingerprint(CATALOG_SOURCE);
+        let mut publisher = ConfigurationPublisher::new(1, fingerprint).unwrap();
+        let weapon = EquippedWeapon::new(
+            catalog(),
+            WeaponInstanceId(1),
+            catalog().configuration(WeaponId::M4A1).unwrap(),
+        )
+        .unwrap();
+        let handle = publisher
+            .register(id, EquipmentSlot::Primary, weapon.instance())
+            .unwrap();
+        server.send_message(
+            id,
+            DefaultChannel::ReliableOrdered,
+            data::encode(&ServerMessage::ClientConnected { id }),
+        );
+        for message in [
+            ConfigurationMessage::Epoch {
+                epoch: 1,
+                catalog: fingerprint,
+            },
+            ConfigurationMessage::Configuration(publisher.entries()[0].clone()),
+        ] {
+            server.send_message(id, CONFIGURATION_CHANNEL, data::encode(&message));
+        }
+        server.send_message(
+            id,
+            DefaultChannel::Unreliable,
+            data::encode(&WorldSnapshot {
+                configuration_epoch: 1,
+                sequence: 1,
+                simulation_time: 0.1,
+                destroyed_cells: Default::default(),
+                raid: Default::default(),
+                players: vec![ClientData {
+                    id,
+                    alive: true,
+                    configuration: handle,
+                    weapon_instance: weapon.instance().id,
+                    mechanics: weapon.mechanics().snapshot(),
+                    ..default()
+                }],
+                projectiles: vec![],
+                impact_marks: vec![],
+                fired_projectiles: vec![],
+                physics_pieces: vec![],
+            }),
+        );
+        for packet in server.get_packets_to_send(id).unwrap() {
+            app.world_mut()
+                .resource_mut::<RenetClient>()
+                .process_packet(packet);
+        }
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world().resource::<sync::ClientSession>().last_sequence,
+            1
+        );
+        let players = &app.world().resource::<Lobby>().players;
+        assert_eq!(players.len(), 1);
+        assert_eq!(players[&id], root);
+        assert!(app.world().get::<LocalPlayer>(root).is_some());
+        assert!(app.world().get::<PlayerVisualState>(root).unwrap().alive);
+    }
+}

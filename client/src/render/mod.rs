@@ -3,8 +3,8 @@
 use crate::{ClientSystems, sync::ClientSession};
 use bevy::{camera::visibility::RenderLayers, light::NotShadowCaster, prelude::*};
 use common::{
-    Client, Lobby, LocalInput, LocalPlayer, PLAYER_CROUCH_VIEW_OFFSET, PLAYER_VIEW_HEIGHT,
-    PlayerId, PlayerVisualState, WeaponKind,
+    Client, LocalInput, LocalPlayer, PLAYER_CROUCH_VIEW_OFFSET, PLAYER_VIEW_HEIGHT, PlayerId,
+    PlayerVisualState, WeaponKind,
 };
 use common::{combat::SurfaceKind, map::*, raid::EXTRACTION_RADIUS};
 pub(crate) mod actors;
@@ -210,23 +210,19 @@ pub(crate) fn reset_connection_visuals(world: &mut World) {
     }
 }
 
-fn spawn_view_model(mut commands: Commands, mut lobby: ResMut<Lobby>, player_id: Res<PlayerId>) {
-    let player = commands
-        .spawn((
-            Client { id: player_id.0 },
-            LocalPlayer,
-            Transform::from_xyz(0.0, 1.0, 0.0),
-            Visibility::default(),
-            children![world_camera(), view_model_camera(),],
-            PlayerVisualState {
-                alive: true,
-                weapon: WeaponKind::Rifle,
-                ..default()
-            },
-        ))
-        .id();
-
-    lobby.players.insert(player_id.0, player);
+fn spawn_view_model(mut commands: Commands, player_id: Res<PlayerId>) {
+    commands.spawn((
+        Client { id: player_id.0 },
+        LocalPlayer,
+        Transform::from_xyz(0.0, 1.0, 0.0),
+        Visibility::default(),
+        children![world_camera(), view_model_camera(),],
+        PlayerVisualState {
+            alive: true,
+            weapon: WeaponKind::Rifle,
+            ..default()
+        },
+    ));
 }
 
 /// Keep one presentation container per equipped class; configured contents are
