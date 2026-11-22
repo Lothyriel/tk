@@ -1584,6 +1584,15 @@ mod tests {
 
     #[test]
     fn inventory_grid_rejects_invalid_moves_and_resyncs_after_authority_conflict() {
+        inventory_grid_conflict_resync(false);
+    }
+
+    #[test]
+    fn inventory_grid_tab_closes_pending_then_resyncs_without_replay() {
+        inventory_grid_conflict_resync(true);
+    }
+
+    fn inventory_grid_conflict_resync(close_while_pending: bool) {
         let (mut app, mut authority, item) = fixture();
         crate::sync::add_inventory_test_receive(&mut app);
         let mut server = RenetServer::new(data::renet_config());
@@ -1625,6 +1634,34 @@ mod tests {
         assert!(panel.pending.is_some());
         assert_confirmed(&app, &original);
         assert_eq!(op.expected, [original.version; 2]);
+        if close_while_pending {
+            let world = app.world_mut();
+            assert_eq!(
+                world
+                    .query::<&GhostKind>()
+                    .iter(world)
+                    .filter(|kind| matches!(kind, GhostKind::Pending))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                app.world().resource::<State>().pending_operation_id(),
+                Some(op.id)
+            );
+            assert_eq!(app.world().resource::<State>().outcome(op.id), None);
+            key(&mut app, KeyCode::Tab);
+            let panel = app.world().resource::<Panel>();
+            assert!(!panel.open && panel.pending.is_none() && panel.drag.is_none());
+            assert!(panel.feedback.is_none() && panel.cue.is_none());
+            assert_eq!(
+                app.world().resource::<State>().pending_operation_id(),
+                Some(op.id),
+                "closing the panel clears only visual pending"
+            );
+            assert_eq!(app.world().resource::<State>().outcome(op.id), None);
+            assert_confirmed(&app, &original);
+            assert!(transfer(&mut app, &mut server).is_none());
+        }
         let other_item = original.items.iter().find(|(id, _)| *id != item).unwrap().0;
         // Advance authority while the view is stale. Move only the bandage,
         // so the attempted water move is still geometrically legal.
@@ -1676,10 +1713,18 @@ mod tests {
         );
         let panel = app.world().resource::<Panel>();
         assert!(panel.pending.is_none());
-        assert_eq!(panel.feedback, Some("Move rejected: inventory changed"));
+        assert_eq!(panel.open, !close_while_pending);
+        assert_eq!(
+            panel.feedback,
+            (!close_while_pending).then_some("Move rejected: inventory changed")
+        );
         assert_eq!(
             app.world_mut().resource_mut::<Panel>().take_cue(),
-            Some(InventoryCue::Rejected)
+            (!close_while_pending).then_some(InventoryCue::Rejected)
+        );
+        assert_eq!(
+            app.world().resource::<State>().outcome(op.id),
+            Some(OperationResult::Conflict)
         );
         assert!(app.world().resource::<State>().owned_grid(1, 7).is_none());
         let Some(InventoryRequest::Resync {
@@ -1690,6 +1735,7 @@ mod tests {
             panic!("expected private grid resync");
         };
         assert_eq!((session, compartment), (KEY, OWN));
+        app.update();
         assert!(transfer(&mut app, &mut server).is_none());
         let water = latest.items.iter().find(|(id, _)| *id == item).unwrap();
         assert_eq!(
@@ -1704,6 +1750,18 @@ mod tests {
         assert_confirmed(&app, &latest);
         assert_eq!(app.world_mut().resource_mut::<Panel>().take_cue(), None);
         assert!(transfer(&mut app, &mut server).is_none());
+        if close_while_pending {
+            assert!(!app.world().resource::<Panel>().open);
+            key(&mut app, KeyCode::Tab);
+            let panel = app.world().resource::<Panel>();
+            assert!(panel.open && panel.pending.is_none() && panel.drag.is_none());
+            assert!(panel.feedback.is_none() && panel.cue.is_none());
+            assert_confirmed(&app, &latest);
+            assert_eq!(app.world().resource::<State>().last_operation_id(), op.id);
+            let world = app.world_mut();
+            assert_eq!(world.query::<&GhostKind>().iter(world).count(), 0);
+            assert!(transfer(&mut app, &mut server).is_none());
+        }
     }
 
     #[test]
