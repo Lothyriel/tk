@@ -335,6 +335,7 @@ pub(super) fn weapons_tick(
 
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct ProjectileEnvironment<'w, 's> {
+    lives: Query<'w, 's, &'static super::arena::Life>,
     surfaces: Query<
         'w,
         's,
@@ -382,6 +383,7 @@ pub(super) fn projectiles_tick(
     environment: ProjectileEnvironment,
 ) {
     let ProjectileEnvironment {
+        lives,
         surfaces,
         mut physics_pieces,
         rubble,
@@ -455,6 +457,9 @@ pub(super) fn projectiles_tick(
                     if target == projectile.owner_entity
                         || !body.alive()
                         || p.status != RaidStatus::Active
+                        || lives
+                            .get(target)
+                            .is_ok_and(|life| projectile.id < life.projectile_floor)
                     {
                         continue;
                     }

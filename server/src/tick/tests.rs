@@ -3399,5 +3399,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
     assert_eq!(cover.cuts.len(), 1);
     assert_eq!(cover.cuts[0].cell, cell.id);
     assert_eq!(cover.raid_id, snapshot.raid.raid_id);
-    assert_eq!(PROTOCOL_ID, 24);
+    assert_eq!(PROTOCOL_ID, 25);
 }

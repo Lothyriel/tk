@@ -154,6 +154,7 @@ mod tests {
             configuration: 1,
             weapon_instance: WeaponInstanceId(73),
             life: 4,
+            respawn_ticks: 301,
             ..default()
         };
         player.body.anatomy.separate(Segment::LeftForearm);
@@ -212,6 +213,7 @@ mod tests {
         assert_eq!(decoded.fired_projectiles[0].weapon, WeaponId::MP5);
         assert_eq!(decoded.players[0].weapon_instance, WeaponInstanceId(73));
         assert_eq!(decoded.players[0].life, 4);
+        assert_eq!(decoded.players[0].respawn_ticks, 301);
         assert_eq!(decoded.raid.mode, raid::MatchMode::ArenaSolo);
         assert_eq!(decoded.raid.loot_available, [true, false, true]);
         decoded.players[0].weapon_id = WeaponId(9999);

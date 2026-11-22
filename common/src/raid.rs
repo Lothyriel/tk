@@ -14,6 +14,7 @@ pub const RAID_SECONDS: f32 = 300.0;
 pub const EXTRACTION_SECONDS: f32 = 5.0;
 pub const EXTRACTION_RADIUS: f32 = 2.5;
 pub const ARENA_RESPAWN_SECONDS: f32 = 3.0;
+pub const SIMULATION_HZ: u16 = 128;
 
 pub fn in_extraction_zone(position: Vec3) -> bool {
     let offset = position - Vec3::from(EXTRACTION_CENTER);
@@ -34,6 +35,21 @@ pub enum MatchMode {
     #[default]
     Raid,
     ArenaSolo,
+    ArenaPvp,
+}
+
+impl MatchMode {
+    pub fn is_arena(self) -> bool {
+        self != Self::Raid
+    }
+
+    pub fn arena_players(self) -> Option<usize> {
+        match self {
+            Self::Raid => None,
+            Self::ArenaSolo => Some(1),
+            Self::ArenaPvp => Some(2),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
@@ -78,7 +94,12 @@ impl RaidState {
         if !matches!(self.phase, RaidPhase::Lobby | RaidPhase::Countdown) {
             return false;
         }
-        if total == 0 || ready != total || (self.mode == MatchMode::ArenaSolo && total != 1) {
+        let can_start = match self.mode {
+            MatchMode::Raid => total > 0 && ready == total,
+            MatchMode::ArenaSolo => ready == 1 && total == 1,
+            MatchMode::ArenaPvp => ready == 2,
+        };
+        if !can_start {
             self.phase = RaidPhase::Lobby;
             self.seconds_left = 0.0;
         } else if self.phase == RaidPhase::Lobby {

@@ -15,7 +15,7 @@ pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 24;
+pub const PROTOCOL_ID: u64 = 25;
 pub const SNAPSHOT_INTERVAL: f32 = 1.0 / 60.0;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
@@ -72,6 +72,16 @@ pub struct ClientData {
     pub id: ClientId,
     pub weapon_instance: WeaponInstanceId,
     pub mechanics: catalog::MechanicalSnapshot,
+    /// Fixed ticks until the current dead Arena actor may respawn.
+    pub respawn_ticks: u16,
+    /// Changes even if every snapshot between death and respawn was lost.
+    /// Cannot wrap within a stale transport session (at least 768 seconds).
+    pub life: u8,
+    pub weapon: WeaponKind,
+    pub weapon_slot: EquipmentSlot,
+    pub crouched: bool,
+    pub alive: bool,
+    pub bot: bool,
     pub pos: [f32; 3],
     pub rot: CameraInput,
     pub health: f32,
@@ -84,14 +94,6 @@ pub struct ClientData {
     pub participant: raid::Participant,
     pub pose: humanoid::PoseState,
     pub recoil: recoil::PackedRecoil,
-    pub weapon: WeaponKind,
-    pub weapon_slot: EquipmentSlot,
-    pub crouched: bool,
-    pub alive: bool,
-    pub bot: bool,
-    /// Changes even if all snapshots between death and respawn were lost.
-    /// A wrap takes at least 768 seconds, beyond the stale session timeout.
-    pub life: u8,
 }
 
 impl ClientData {
@@ -107,6 +109,7 @@ impl ClientData {
 #[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
 pub struct ClientInput {
     pub lobby_sequence: u32,
+    pub arena_life: Option<(u32, u8)>,
     pub mode: raid::MatchMode,
     /// Explicit Active → Lobby command, distinct from an unready intent.
     pub arena_leave: bool,

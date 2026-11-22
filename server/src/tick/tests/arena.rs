@@ -261,3 +261,68 @@ fn arena_solo_bot_can_eliminate_a_player_and_target_the_replacement() {
     }
     panic!("surviving bot did not damage the replacement player");
 }
+
+#[test]
+fn arena_pvp_ignores_flight_already_in_progress_when_the_target_respawns() {
+    let mut app = app();
+    let victim = add_player(&mut app, PLAYER, Loadout::default());
+    let shooter = add_player(&mut app, 8, Loadout::default());
+    for player in [victim, shooter] {
+        app.world_mut().get_mut::<ClientInput>(player).unwrap().mode = MatchMode::ArenaPvp;
+        ready(&mut app, player);
+    }
+    steps(&mut app, 390);
+    assert_eq!(
+        app.world().resource::<RaidState>().mode,
+        MatchMode::ArenaPvp
+    );
+    kill(&mut app, victim);
+    steps(&mut app, 384);
+    assert_eq!(human(&app), victim);
+    let next_id = app.world().resource::<WorldState>().next_projectile_id;
+    // A projectile already in flight when the next body arrives. Keep it
+    // outside the hit volume until the authoritative body exists.
+    let spawn = super::super::arena::PLAYER_SPAWNS[0];
+    let inject = |app: &mut App, id, position, velocity| {
+        app.world_mut()
+            .spawn((
+                Projectile {
+                    id,
+                    weapon: WeaponId::M4A1,
+                    velocity,
+                    damage: 250.0,
+                    penetration: 200.0,
+                    lifetime: 1.0,
+                    owner_entity: shooter,
+                    penetrated: Vec::new(),
+                },
+                Transform::from_translation(position),
+            ))
+            .id()
+    };
+    let origin = spawn + Vec3::new(0.0, 0.3, 2.0);
+    let stale = inject(&mut app, next_id, origin, Vec3::ZERO);
+    app.world_mut()
+        .resource_mut::<WorldState>()
+        .next_projectile_id += 1;
+    steps(&mut app, 1);
+    let replacement = human(&app);
+    assert_ne!(replacement, victim);
+    app.world_mut()
+        .get_mut::<Projectile>(stale)
+        .unwrap()
+        .velocity = -Vec3::Z * 600.0;
+    steps(&mut app, 1);
+    assert_eq!(
+        app.world().get::<BodyHealth>(replacement).unwrap().parts,
+        BodyHealth::default().parts,
+    );
+
+    // Same shot path, but this ID was authorized after the replacement.
+    inject(&mut app, next_id + 1, origin, -Vec3::Z * 600.0);
+    steps(&mut app, 1);
+    assert!(
+        app.world().get::<BodyHealth>(replacement).unwrap().total() < BodyHealth::default().total(),
+        "the replacement must still take damage from fresh projectiles"
+    );
+}

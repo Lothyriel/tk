@@ -22,7 +22,7 @@ pub(super) fn lobby_tick(
     mut players: Query<
         (
             &Client,
-            &ClientInput,
+            &mut ClientInput,
             &mut Participant,
             &mut BodyHealth,
             &mut ArmorState,
@@ -30,6 +30,7 @@ pub(super) fn lobby_tick(
             &mut MovementState,
             &mut Collider,
             &mut Transform,
+            &mut arena::Life,
         ),
         Without<Bot>,
     >,
@@ -52,15 +53,28 @@ pub(super) fn lobby_tick(
             player.ready = false;
         }
     }
+    if raid.phase == RaidPhase::Lobby && !players.iter().any(|(_, _, p, ..)| p.ready) {
+        // An idle preference must not block someone else's explicit ready
+        // request. Break simultaneous requests by stable connection ID.
+        raid.mode = players
+            .iter()
+            .filter(|(_, input, ..)| total == 1 || input.mode != MatchMode::ArenaSolo)
+            .min_by_key(|(client, input, p, ..)| {
+                (
+                    input.arena_leave || !new_lobby_command(input, p),
+                    input.mode == MatchMode::Raid,
+                    client.id,
+                )
+            })
+            .map_or(MatchMode::Raid, |(_, input, ..)| input.mode);
+    }
+    let mut ready = players.iter().filter(|(_, _, p, ..)| p.ready).count();
     let mut return_requested = false;
     for (_, input, mut player, _, _, mut arsenal, ..) in &mut players {
         if raid.phase == RaidPhase::Lobby
             && !player.ready
             && let Some(loadout) = input.loadout.validated()
         {
-            if total == 1 {
-                raid.mode = input.mode;
-            }
             if loadout.primary != arsenal.loadout.primary {
                 let replacement = fixture.arsenal(loadout);
                 let mut kits = arsenal.kits().to_vec();
@@ -80,36 +94,59 @@ pub(super) fn lobby_tick(
             arsenal.loadout = loadout;
             player.loadout = loadout;
         }
-        let advance = input.lobby_sequence.wrapping_sub(player.last_command);
-        if advance == 0 || advance >= (1 << 31) {
+        if !new_lobby_command(&input, &player) {
             continue;
         }
         player.last_command = input.lobby_sequence;
         match raid.phase {
             RaidPhase::Lobby | RaidPhase::Countdown if !input.arena_leave => {
-                if player.ready || raid.mode == input.mode {
-                    player.ready = !player.ready;
+                if player.ready {
+                    player.ready = false;
+                    ready -= 1;
+                } else if !(raid.mode == MatchMode::ArenaPvp && raid.phase == RaidPhase::Countdown)
+                    && raid.mode == input.mode
+                    && raid.mode.arena_players().is_none_or(|max| ready < max)
+                {
+                    player.ready = true;
+                    ready += 1;
                 }
             }
             RaidPhase::Debrief => return_requested = true,
-            RaidPhase::Active if raid.mode == MatchMode::ArenaSolo && input.arena_leave => {
+            RaidPhase::Active
+                if raid.mode.is_arena()
+                    && input.arena_leave
+                    && player.status != RaidStatus::Waiting =>
+            {
                 return_requested = true;
             }
             _ => (),
         }
     }
 
+    if raid.phase == RaidPhase::Active
+        && let Some(expected) = raid.mode.arena_players()
+    {
+        let roster = players
+            .iter()
+            .filter(|(_, _, p, ..)| p.status != RaidStatus::Waiting)
+            .count();
+        return_requested |= roster != expected;
+    }
     if players.is_empty() || return_requested {
         raid.reset_lobby();
         if players.is_empty() {
             raid.mode = MatchMode::Raid;
         }
-        for (_, input, mut player, _, _, mut arsenal, ..) in &mut players {
+        for (_, input, mut player, mut body, _, mut arsenal, _, _, _, mut life) in &mut players {
             player.return_to_lobby();
+            if raid.mode.is_arena() {
+                *body = BodyHealth::default();
+                *life = default();
+            }
             *arsenal = arsenal
                 .restocked(common::catalog::catalog(), player.loadout)
                 .expect("confirmed raid kits");
-            arsenal.synchronize_sequences(input);
+            arsenal.synchronize_sequences(&input);
         }
     }
 
@@ -117,11 +154,15 @@ pub(super) fn lobby_tick(
     let started = raid.advance_lobby(ready, total, time.delta_secs());
     if started {
         // Sort by stable network id; query iteration order is not a spawn allocation policy.
-        let mut ids: Vec<_> = players.iter().map(|(client, ..)| client.id).collect();
+        let mut ids: Vec<_> = players
+            .iter()
+            .filter(|(_, _, p, ..)| p.ready)
+            .map(|(client, ..)| client.id)
+            .collect();
         ids.sort_unstable();
         for (
             client,
-            input,
+            mut input,
             mut player,
             mut body,
             mut armor,
@@ -129,22 +170,27 @@ pub(super) fn lobby_tick(
             mut movement,
             mut collider,
             mut transform,
+            mut life,
         ) in &mut players
         {
+            let Some(index) = ids.iter().position(|id| *id == client.id) else {
+                continue;
+            };
             player.begin();
             *body = BodyHealth::default();
             *armor = ArmorState::from_loadout(player.loadout);
             *arsenal = arsenal
                 .restocked(common::catalog::catalog(), player.loadout)
                 .expect("confirmed raid kits");
-            arsenal.synchronize_sequences(input);
+            arsenal.synchronize_sequences(&input);
             movement.velocity = Vec3::ZERO;
             set_crouched_state(&mut movement, &mut collider, &mut transform, false);
             *collider = Collider::capsule_y(PLAYER_COLLIDER_HALF_HEIGHT, PLAYER_COLLIDER_RADIUS);
             *movement = MovementState::default();
-            let index = ids.iter().position(|id| *id == client.id).unwrap();
-            transform.translation = if raid.mode == MatchMode::ArenaSolo {
-                arena::PLAYER_SPAWNS[0]
+            *life = arena::Life::new(index == 1, world_state.next_projectile_id);
+            transform.translation = if raid.mode.is_arena() {
+                *input = arena::transition_input(&input);
+                life.spawns()[0]
             } else {
                 Vec3::from(SPAWN_CENTER)
                     + Vec3::new(
@@ -197,8 +243,10 @@ pub(super) fn lobby_tick(
         world_state.fired_projectiles.clear();
     }
     if started && raid.mode == MatchMode::ArenaSolo {
-        commands.spawn(bots::bundle(u64::MAX, arena::BOT_SPAWNS[0], &time));
-    } else if started && !pov_fixture() {
+        commands
+            .spawn(bots::bundle(u64::MAX, arena::BOT_SPAWNS[0], &time))
+            .insert(arena::Life::new(true, world_state.next_projectile_id));
+    } else if started && raid.mode == MatchMode::Raid && !pov_fixture() {
         for (i, position) in BOT_POSITIONS.into_iter().enumerate() {
             commands.spawn(bots::bundle(
                 u64::MAX - i as u64,
@@ -213,6 +261,11 @@ pub(super) fn lobby_tick(
             raid.raid_id, previous_phase, raid.phase
         );
     }
+}
+
+fn new_lobby_command(input: &ClientInput, participant: &Participant) -> bool {
+    let advance = input.lobby_sequence.wrapping_sub(participant.last_command);
+    advance != 0 && advance < (1 << 31)
 }
 
 pub(super) fn objectives_tick(

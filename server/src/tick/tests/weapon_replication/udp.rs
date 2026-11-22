@@ -178,6 +178,133 @@ impl Harness {
 
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn arena_pvp_udp_alternates_lives_rejects_stale_input_and_releases_seat() {
+    let mut h = Harness::new();
+    let mut a = UdpPeer::new(7, h.address, h.now, false);
+    let mut b = UdpPeer::new(8, h.address, h.now, false);
+    let mut waiting = UdpPeer::new(9, h.address, h.now, false);
+    h.pump(&mut [&mut a, &mut b, &mut waiting], 64);
+    for peer in [&mut a, &mut b] {
+        peer.input.mode = MatchMode::ArenaPvp;
+        peer.input.lobby_sequence = 1;
+    }
+    h.pump(&mut [&mut a, &mut b, &mut waiting], 32);
+    waiting.input.mode = MatchMode::ArenaPvp;
+    waiting.input.lobby_sequence = 1;
+    h.pump(&mut [&mut a, &mut b, &mut waiting], 390);
+    let raid_id = a.peer.latest.as_ref().unwrap().raid.raid_id;
+    let get = |h: &Harness, id: u64| h.app.world().resource::<Lobby>().players[&id];
+    let first = get(&h, 7);
+    let second = get(&h, 8);
+    assert_ne!(
+        h.app.world().get::<Transform>(first).unwrap().translation,
+        h.app.world().get::<Transform>(second).unwrap().translation
+    );
+
+    for victim_id in [7, 8] {
+        let survivor_id = if victim_id == 7 { 8 } else { 7 };
+        let old = get(&h, victim_id);
+        let survivor = get(&h, survivor_id);
+        let before = h.app.world().get::<BodyHealth>(survivor).unwrap().parts;
+        h.app.world_mut().get_mut::<BodyHealth>(old).unwrap().parts[1] = 0.0;
+        h.pump(&mut [&mut a, &mut b, &mut waiting], 32);
+        for peer in [&a, &b] {
+            let snapshot = peer.peer.latest.as_ref().unwrap();
+            assert_eq!(snapshot.raid.mode, MatchMode::ArenaPvp);
+            assert_eq!(snapshot.raid.phase, RaidPhase::Active);
+            assert_eq!(snapshot.raid.raid_id, raid_id);
+            assert_eq!(snapshot.players.len(), 3);
+            assert!(snapshot.players.iter().all(|p| !p.bot));
+            let victim = snapshot.players.iter().find(|p| p.id == victim_id).unwrap();
+            assert_eq!(victim.participant.status, RaidStatus::Dead);
+            assert!((1..384).contains(&victim.respawn_ticks));
+            let extra = snapshot.players.iter().find(|p| p.id == 9).unwrap();
+            assert_eq!(extra.participant.status, RaidStatus::Waiting);
+            assert!(!extra.alive);
+        }
+        let victim = if victim_id == 7 { &mut a } else { &mut b };
+        victim.input.arena_life = Some((raid_id, 0));
+        victim.input.arena_leave = true;
+        victim.input.fire = true;
+        victim.input.fire_pressed_sequence = 1;
+        // Emulate a packet from life 0 arriving after the body replacement.
+        // Let the old tagged input queue only after the server has respawned.
+        steps(&mut h.app, 360);
+        let next = get(&h, victim_id);
+        assert_ne!(next, old);
+        let before_shots = h.app.world().resource::<WorldState>().next_projectile_id;
+        victim.input.lobby_sequence = 2;
+        h.pump(&mut [&mut a, &mut b, &mut waiting], 16);
+        assert_eq!(
+            h.app.world().resource::<WorldState>().next_projectile_id,
+            before_shots
+        );
+        assert_eq!(get(&h, victim_id), next);
+        assert_eq!(get(&h, survivor_id), survivor);
+        assert_eq!(
+            h.app.world().get::<BodyHealth>(survivor).unwrap().parts,
+            before
+        );
+        for peer in [&a, &b] {
+            let snapshot = peer.peer.latest.as_ref().unwrap();
+            assert_eq!(snapshot.raid.phase, RaidPhase::Active);
+            let p = snapshot.players.iter().find(|p| p.id == victim_id).unwrap();
+            assert!(p.alive);
+            assert_eq!(p.life, 1);
+            assert_eq!(p.respawn_ticks, 0);
+        }
+        let victim = if victim_id == 7 { &mut a } else { &mut b };
+        victim.input.arena_life = Some((raid_id, 1));
+        victim.input.lobby_sequence = 1;
+        victim.input.arena_leave = false;
+        victim.input.forward = true;
+        // Point away from the other player while verifying fire and control.
+        victim.input.camera.yaw = if victim_id == 7 {
+            std::f32::consts::PI
+        } else {
+            0.0
+        };
+        let start = h.app.world().get::<Transform>(next).unwrap().translation;
+        h.pump(&mut [&mut a, &mut b, &mut waiting], 24);
+        assert!(h.app.world().resource::<WorldState>().next_projectile_id > before_shots);
+        assert!(
+            h.app
+                .world()
+                .get::<Transform>(next)
+                .unwrap()
+                .translation
+                .distance(start)
+                > 0.1
+        );
+        let victim = if victim_id == 7 { &mut a } else { &mut b };
+        victim.input.fire = false;
+        victim.input.forward = false;
+    }
+    h.app
+        .world_mut()
+        .resource_mut::<RenetServer>()
+        .disconnect(8);
+    h.pump(&mut [&mut a, &mut waiting], 32);
+    let snapshot = a.peer.latest.as_ref().unwrap();
+    assert_eq!(snapshot.raid.phase, RaidPhase::Lobby);
+    assert_eq!(snapshot.players.len(), 2);
+    assert!(
+        snapshot
+            .players
+            .iter()
+            .all(|p| !p.alive && !p.participant.ready && p.id != 8)
+    );
+    a.input.arena_life = None;
+    a.input.lobby_sequence = 2;
+    waiting.input.lobby_sequence = 2;
+    h.pump(&mut [&mut a, &mut waiting], 420);
+    let snapshot = a.peer.latest.as_ref().unwrap();
+    assert_eq!(snapshot.raid.raid_id, raid_id + 1);
+    assert!(snapshot.players.iter().all(|p| p.alive && p.life == 0));
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     use common::{
         catalog::{

@@ -25,7 +25,7 @@ pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Time::<Fixed>::from_hz(128.0))
+        app.insert_resource(Time::<Fixed>::from_hz(f64::from(SIMULATION_HZ)))
             .init_resource::<WorldState>()
             .init_resource::<destruction::Structure>()
             .init_resource::<RaidState>()
@@ -271,7 +271,8 @@ fn recv_players_input(
     mut server: ResMut<RenetServer>,
     lobby: Res<Lobby>,
     time: Res<Time>,
-    mut players: Query<(&mut ClientInput, &mut LastInput)>,
+    raid: Res<RaidState>,
+    mut players: Query<(&mut ClientInput, &mut LastInput, &arena::Life, &Participant)>,
 ) {
     for client_id in server.clients_id() {
         // Bound work per client per tick; the transport also bounds its receive queues.
@@ -284,8 +285,15 @@ fn recv_players_input(
                 continue;
             };
             if let Some(&entity) = lobby.players.get(&client_id)
-                && let Ok((mut current, mut last)) = players.get_mut(entity)
+                && let Ok((mut current, mut last, life, participant)) = players.get_mut(entity)
             {
+                let expected = (raid.phase == RaidPhase::Active
+                    && raid.mode.is_arena()
+                    && participant.status != RaidStatus::Waiting)
+                    .then_some((raid.raid_id, life.generation));
+                if input.arena_life != expected {
+                    continue;
+                }
                 *current = input;
                 last.received_at = time.elapsed_secs();
             }
@@ -458,6 +466,7 @@ fn send_world_snapshot(
                 ClientData {
                     id: client.id,
                     life: life.generation,
+                    respawn_ticks: life.respawn_ticks,
                     pos: t.translation.into(),
                     rot: t.rotation.into(),
                     crouched: movement.crouched,

@@ -1,7 +1,8 @@
-//! Continuous solo Arena life cycle; movement, impacts, ragdolls and bot AI
+//! Continuous Arena life cycle; movement, impacts, ragdolls and bot AI
 //! still use the same simulation as a raid.
 use super::{
-    Bot, LastInput, Projectile, can_occupy_character, character_bundle, physical::PhysicsPiece,
+    Bot, LastInput, Projectile, WorldState, can_occupy_character, character_bundle,
+    physical::PhysicsPiece,
 };
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
@@ -23,12 +24,48 @@ pub(super) const BOT_SPAWNS: [Vec3; 3] = [
 #[derive(Component, Default)]
 pub(super) struct Life {
     pub generation: u8,
+    pub projectile_floor: u64,
+    pub respawn_ticks: u16,
     respawn_at: f64,
+    far_seat: bool,
+}
+
+impl Life {
+    pub fn new(far_seat: bool, projectile_floor: u64) -> Self {
+        Self {
+            far_seat,
+            projectile_floor,
+            ..default()
+        }
+    }
+
+    pub fn spawns(&self) -> [Vec3; 3] {
+        if self.far_seat {
+            BOT_SPAWNS
+        } else {
+            PLAYER_SPAWNS
+        }
+    }
+}
+
+pub(super) fn transition_input(input: &ClientInput) -> ClientInput {
+    ClientInput {
+        lobby_sequence: input.lobby_sequence,
+        mode: input.mode,
+        arena_leave: input.arena_leave,
+        loadout: input.loadout,
+        camera: input.camera,
+        fire_pressed_sequence: input.fire_pressed_sequence,
+        reload_sequence: input.reload_sequence,
+        inspect_sequence: input.inspect_sequence,
+        selector_sequence: input.selector_sequence,
+        ..default()
+    }
 }
 
 pub(super) fn tick(
     mut commands: Commands,
-    time: Res<Time>,
+    clock: (Res<Time>, Res<WorldState>),
     mut raid: ResMut<RaidState>,
     context: ReadRapierContext,
     mut lobby: ResMut<Lobby>,
@@ -46,13 +83,15 @@ pub(super) fn tick(
     )>,
     remnants: (Query<(Entity, &PhysicsPiece)>, Query<(Entity, &Projectile)>),
 ) {
-    if raid.phase != RaidPhase::Active || raid.mode != MatchMode::ArenaSolo {
+    if raid.phase != RaidPhase::Active || !raid.mode.is_arena() {
         return;
     }
     let Ok(context) = context.single() else {
         return;
     };
+    let (time, world) = clock;
     let now = time.elapsed_secs_f64();
+    let (pieces, projectiles) = &remnants;
     for (entity, client, root, mut participant, mut body, kit, input, last, mut life, bot) in
         &mut actors
     {
@@ -63,19 +102,23 @@ pub(super) fn tick(
             body.parts[1] = 0.0;
             participant.fail(RaidStatus::Dead);
             life.respawn_at = now + f64::from(ARENA_RESPAWN_SECONDS);
+            for (projectile, _) in projectiles.iter().filter(|(_, p)| p.owner_entity == entity) {
+                commands.entity(projectile).despawn();
+            }
             info!("Arena actor {} died (life {})", client.id, life.generation);
         }
         if participant.status != RaidStatus::Dead {
             continue;
         }
         let remaining = (life.respawn_at - now).max(0.0) as f32;
-        if !bot {
+        life.respawn_ticks = (remaining * f32::from(SIMULATION_HZ)).ceil() as u16;
+        if !bot && raid.mode == MatchMode::ArenaSolo {
             raid.seconds_left = remaining;
         }
         if remaining > 0.0 {
             continue;
         }
-        let spawns = if bot { BOT_SPAWNS } else { PLAYER_SPAWNS };
+        let spawns = life.spawns();
         let Some(spawn) = spawns
             .into_iter()
             .find(|center| can_occupy_character(entity, &context, *center, false))
@@ -84,12 +127,8 @@ pub(super) fn tick(
             // or the map, even when the nominal delay has already elapsed.
             continue;
         };
-        let (pieces, projectiles) = &remnants;
         for (piece, _) in pieces.iter().filter(|(_, p)| p.owner == client.id) {
             commands.entity(piece).despawn();
-        }
-        for (projectile, _) in projectiles.iter().filter(|(_, p)| p.owner_entity == entity) {
-            commands.entity(projectile).despawn();
         }
         // Replace the body rather than partially clearing physical components.
         // Retain the connection and confirmed kit, not transient actions or wounds.
@@ -98,18 +137,7 @@ pub(super) fn tick(
         let mut arsenal = kit
             .restocked(common::catalog::catalog(), participant.loadout)
             .expect("confirmed Arena kits");
-        let input = ClientInput {
-            lobby_sequence: input.lobby_sequence,
-            mode: input.mode,
-            arena_leave: input.arena_leave,
-            loadout: input.loadout,
-            camera: input.camera,
-            fire_pressed_sequence: input.fire_pressed_sequence,
-            reload_sequence: input.reload_sequence,
-            inspect_sequence: input.inspect_sequence,
-            selector_sequence: input.selector_sequence,
-            ..default()
-        };
+        let input = transition_input(input);
         arsenal.synchronize_sequences(&input);
         let generation = life.generation.wrapping_add(1);
         let armor = ArmorState::from_loadout(participant.loadout);
@@ -125,7 +153,7 @@ pub(super) fn tick(
             },
             Life {
                 generation,
-                respawn_at: 0.0,
+                ..Life::new(life.far_seat, world.next_projectile_id)
             },
         ));
         if bot {

@@ -88,7 +88,18 @@ impl bevy::prelude::Plugin for Plugin {
     }
 }
 
-fn send_input(player_input: Res<common::LocalInput>, mut client: ResMut<RenetClient>) {
+fn send_input(
+    mut player_input: ResMut<common::LocalInput>,
+    session: Res<ClientSession>,
+    player_id: Res<PlayerId>,
+    mut client: ResMut<RenetClient>,
+) {
+    player_input.arena_life = session.local(player_id.0).and_then(|actor| {
+        (session.raid.phase == RaidPhase::Active
+            && session.raid.mode.is_arena()
+            && actor.participant.status != RaidStatus::Waiting)
+            .then_some((session.raid.raid_id, actor.life))
+    });
     let input_message = data::encode(&**player_input);
 
     client.send_message(DefaultChannel::ReliableOrdered, input_message);
