@@ -13,7 +13,7 @@ use common::{
         item_manifest::{S1_SEEDS, item_visuals, planned_items},
     },
     raid::{Participant, RaidPhase, RaidState, RaidStatus},
-    replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+    replication::inventory::{CHANNEL, GroundItem, InventoryRequest, InventoryUpdate, UpdateBody},
 };
 
 // Four requests per 125 ms per peer at 128 Hz. Leave excess in Renet's bounded
@@ -47,6 +47,7 @@ struct Peer {
     operations: OperationSession,
     remaining: u8,
     open: Option<CompartmentId>,
+    ground_count: usize,
 }
 
 #[derive(Default)]
@@ -217,6 +218,7 @@ fn process(
                     operations: OperationSession::new(key),
                     remaining: REQUESTS_PER_WINDOW,
                     open: None,
+                    ground_count: 0,
                 },
             );
             send(server, client, key, UpdateBody::Begin);
@@ -225,6 +227,25 @@ fn process(
             }
         }
         let peer = state.peers.get_mut(&client).expect("connected peer");
+        // Static list changes only on spawn and cleanup. Future moves/drops
+        // must track content changes, not just the number of items.
+        if peer.ground_count != state.world_items.len() && server.is_connected(client) {
+            let items = state
+                .world_items
+                .iter()
+                .map(|item| {
+                    let seed = (item.source.0 - WORLD_SLOT_START) as u8;
+                    let visual = &item_visuals()[S1_SEEDS[usize::from(seed)]];
+                    GroundItem {
+                        id: item.id,
+                        seed,
+                        root: (item.center - Vec3::from_array(visual.collider_center())).to_array(),
+                    }
+                })
+                .collect();
+            send(server, client, peer.key, UpdateBody::Ground(items));
+            peer.ground_count = state.world_items.len();
+        }
         if refill {
             peer.remaining = REQUESTS_PER_WINDOW;
         }

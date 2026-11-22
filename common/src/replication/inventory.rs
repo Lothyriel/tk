@@ -4,7 +4,7 @@ use crate::{
         item_inventory::{
             CompartmentDelta, InventoryOperation, InventorySnapshot, OperationResult, SessionKey,
         },
-        CompartmentId,
+        CompartmentId, ItemInstanceId,
     },
     data,
 };
@@ -14,7 +14,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 pub const CHANNEL: u8 = 6;
 pub const MAX_REQUEST_BYTES: usize = 256;
 pub const MAX_UPDATE_BYTES: usize = 16 * 1024;
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 
 #[derive(Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub enum InventoryRequest {
@@ -25,19 +25,29 @@ pub enum InventoryRequest {
     },
 }
 
-#[derive(Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Archive, Serialize, Deserialize)]
 pub struct InventoryUpdate {
     pub session: SessionKey,
     pub body: UpdateBody,
 }
 
-#[derive(Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Archive, Serialize, Deserialize)]
 pub enum UpdateBody {
     Begin,
     Closed(CompartmentId),
     Snapshot(InventorySnapshot),
     Delta(Vec<CompartmentDelta>),
     Result { id: u64, result: OperationResult },
+    Ground(Vec<GroundItem>),
+}
+
+#[derive(Clone, Debug, PartialEq, Archive, Serialize, Deserialize)]
+pub struct GroundItem {
+    pub id: ItemInstanceId,
+    /// Index into S1_SEEDS, covered by the connection protocol ID.
+    pub seed: u8,
+    /// World position of the asset's authored root, not the collider center.
+    pub root: [f32; 3],
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -89,6 +99,29 @@ codec!(InventoryUpdate, MAX_UPDATE_BYTES);
 mod tests {
     use super::*;
     use bevy_renet2::prelude::{DefaultChannel, RenetClient, RenetServer};
+
+    #[test]
+    fn inventory_wire_roundtrips_ground_and_cleanup() {
+        for items in [
+            vec![GroundItem {
+                id: ItemInstanceId(7),
+                seed: 3,
+                root: [-4.25, 0.1, 3.0],
+            }],
+            vec![],
+        ] {
+            let update = InventoryUpdate {
+                session: SessionKey {
+                    raid_epoch: 3,
+                    session_epoch: 5,
+                },
+                body: UpdateBody::Ground(items),
+            };
+            let frame = update.encode().unwrap();
+            assert_eq!(InventoryUpdate::decode(&frame), Ok(update));
+        }
+        assert_eq!(InventoryUpdate::decode(&[1]), Err(WireError::Version(1)));
+    }
 
     #[test]
     fn inventory_wire_checks_bounds_versions_and_archive() {

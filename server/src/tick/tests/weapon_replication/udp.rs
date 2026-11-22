@@ -178,6 +178,74 @@ impl Harness {
 
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
+    use common::{
+        catalog::{ItemInstanceId, item_manifest::S1_SEEDS},
+        replication::inventory::{CHANNEL, InventoryUpdate, UpdateBody},
+    };
+
+    let drain = |peer: &mut UdpPeer| {
+        std::iter::from_fn(|| peer.peer.network.receive_message(CHANNEL))
+            .map(|bytes| InventoryUpdate::decode(&bytes).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let mut harness = Harness::new();
+    let mut first = UdpPeer::new(7, harness.address, harness.now, true);
+    harness.pump(&mut [&mut first], 192);
+    assert_eq!(drain(&mut first).len(), 2);
+    first.input.lobby_sequence = 1;
+    harness.pump(&mut [&mut first], 512);
+    assert_eq!(
+        harness.app.world().resource::<RaidState>().phase,
+        RaidPhase::Active
+    );
+    let initial = drain(&mut first);
+    assert_eq!(initial.len(), 3);
+    assert!(matches!(initial[0].body, UpdateBody::Begin));
+    let UpdateBody::Ground(items) = &initial[2].body else {
+        panic!("expected public ground list after bootstrap");
+    };
+    assert_eq!(initial[0].session, initial[2].session);
+    assert_eq!(items.len(), S1_SEEDS.len());
+    for (index, item) in items.iter().enumerate() {
+        assert_eq!(usize::from(item.seed), index);
+        assert_eq!(item.id, ItemInstanceId(index as u64 + 1));
+        assert!(item.root.iter().all(|x| x.is_finite()));
+    }
+
+    let mut late = UdpPeer::new(8, harness.address, harness.now, true);
+    harness.pump(&mut [&mut first, &mut late], 192);
+    assert!(drain(&mut first).is_empty());
+    let joined = drain(&mut late);
+    assert_eq!(joined.len(), 3);
+    assert_ne!(joined[2].session, initial[2].session);
+    assert_eq!(joined[2].body, initial[2].body);
+
+    // Inject only expiration to exercise the production debrief transition.
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<RaidState>()
+        .seconds_left = 0.0;
+    harness.pump(&mut [&mut first, &mut late], 160);
+    assert_eq!(
+        harness.app.world().resource::<RaidState>().phase,
+        RaidPhase::Debrief
+    );
+    for (peer, key) in [
+        (&mut first, initial[2].session),
+        (&mut late, joined[2].session),
+    ] {
+        let updates = drain(peer);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].session, key);
+        assert_eq!(updates[0].body, UpdateBody::Ground(vec![]));
+        assert!(peer.dropped.load(Ordering::Relaxed) > 0);
+    }
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn inventory_udp_private_resync_under_loss() {
     use common::{
         catalog::{CompartmentId, item_inventory::SessionKey},
@@ -514,13 +582,25 @@ fn inventory_udp_contested_item_converges_under_loss() {
     // must replace both inventories and announce the new epoch over UDP.
     harness.app.world_mut().resource_mut::<RaidState>().raid_id = 2;
     harness.pump(&mut [&mut reconnected, &mut second], 160);
+    let mut ground = None;
     for (peer, own) in [(&mut reconnected, own), (&mut second, CompartmentId(8))] {
         let updates = drain(peer);
-        assert_eq!(updates.len(), 2);
+        assert_eq!(updates.len(), 3);
         assert_eq!(updates[0].body, UpdateBody::Begin);
-        assert!(updates.iter().all(|update| update.session.raid_epoch == 2));
+        let new_key = updates[0].session;
+        assert_eq!(new_key.raid_epoch, 2);
+        assert!(updates.iter().all(|update| update.session == new_key));
         assert!(matches!(&updates[1].body, UpdateBody::Snapshot(snapshot)
             if snapshot.version.id == own && snapshot.version.revision == 0 && snapshot.items.is_empty()));
+        let UpdateBody::Ground(items) = &updates[2].body else {
+            panic!("expected freshly seeded ground list in the active raid");
+        };
+        assert_eq!(items.len(), common::catalog::item_manifest::S1_SEEDS.len());
+        if let Some(expected) = &ground {
+            assert_eq!(items, expected);
+        } else {
+            ground = Some(items.clone());
+        }
     }
 }
 
