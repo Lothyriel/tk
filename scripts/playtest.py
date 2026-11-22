@@ -24,7 +24,7 @@ POV_CAPTURES = {
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "side-cover": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "handling-route": ("rest", "walk", "run", "stop", "crouch", "left", "right",
-                       "neutral", "ads", "hip", "inspect", "cancel", "return"),
+                       "neutral", "ads", "moving-ads", "hip", "inspect", "cancel", "return"),
 }
 
 

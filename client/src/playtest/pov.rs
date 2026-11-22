@@ -286,6 +286,7 @@ impl Ads {
 pub(super) enum Handling {
     #[default]
     Aim,
+    MovingAds,
     Release,
     Inspect,
     Cancel,
@@ -309,11 +310,14 @@ impl Handling {
         let ads = player.pose.ads;
         let idle = mechanics.equipped && mechanics.kind.is_none();
         let hip = ads < 0.02 && (fov - 70.0).abs() < 2.0;
+        let aimed = ready && ads > 0.95 && (fov - 44.0).abs() < 1.0;
+        let [vx, _, vz] = player.pose.velocity;
         let (next, capture) = match self {
-            Self::Aim if ready && ads > 0.95 && (fov - 44.0).abs() < 1.0 => {
-                (Self::Release, "pov-ads")
+            Self::Aim if aimed && vx.hypot(vz) < 0.08 => (Self::MovingAds, "pov-ads"),
+            Self::MovingAds if aimed && vz > 0.6 => (Self::Release, "pov-moving-ads"),
+            Self::Release if ready && idle && hip && vx.hypot(vz) < 0.08 => {
+                (Self::Inspect, "pov-hip")
             }
-            Self::Release if ready && idle && hip => (Self::Inspect, "pov-hip"),
             Self::Inspect
                 if ready
                     && mechanics.kind == Some(ManipulationKind::Inspect)
@@ -335,7 +339,8 @@ impl Handling {
 
     pub(super) fn input(&self, input: &mut common::ClientInput) {
         input.crouch = true;
-        input.aim = matches!(self, Self::Aim | Self::Cancel);
+        input.aim = matches!(self, Self::Aim | Self::MovingAds | Self::Cancel);
+        input.backward = *self == Self::MovingAds;
         if matches!(self, Self::Swap | Self::Finish) {
             input.weapon = common::EquipmentSlot::Sidearm;
         }
@@ -356,7 +361,20 @@ mod tests {
         player.pose.ads = 1.0;
         assert_eq!(route.advance(5.0, true, &player, 50.0), Ok(None));
         assert_eq!(route.advance(5.1, true, &player, 44.0), Ok(Some("pov-ads")));
+        route.input(&mut input);
+        assert!(input.aim && input.backward);
+        assert_eq!(route.advance(5.2, true, &player, 44.0), Ok(None));
+        player.pose.velocity[2] = 1.0;
+        player.pose.ads = 0.5;
+        assert_eq!(route.advance(5.3, true, &player, 44.0), Ok(None));
+        player.pose.ads = 1.0;
+        assert_eq!(
+            route.advance(5.4, true, &player, 44.0),
+            Ok(Some("pov-moving-ads"))
+        );
         player.pose.ads = 0.0;
+        assert_eq!(route.advance(5.45, true, &player, 70.0), Ok(None));
+        player.pose.velocity[2] = 0.0;
         assert_eq!(route.advance(5.5, true, &player, 70.0), Ok(Some("pov-hip")));
         player.mechanics.kind = Some(ManipulationKind::Inspect);
         player.mechanics.fraction = 0.3;
