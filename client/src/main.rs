@@ -280,5 +280,81 @@ mod startup_tests {
         assert_eq!(players[&id], root);
         assert!(app.world().get::<LocalPlayer>(root).is_some());
         assert!(app.world().get::<PlayerVisualState>(root).unwrap().alive);
+
+        focused_ground_prompt_uses_inventory_font_and_clears(&mut app, id);
+    }
+
+    fn focused_ground_prompt_uses_inventory_font_and_clears(app: &mut App, id: u64) {
+        use inventory::{GroundItem, InventoryUpdate, UpdateBody};
+        {
+            let mut session = app.world_mut().resource_mut::<sync::ClientSession>();
+            session.raid.phase = common::raid::RaidPhase::Active;
+            session.raid.raid_id = 1;
+            session.players[0].participant.begin();
+        }
+        let key = item_inventory::SessionKey {
+            raid_epoch: 1,
+            session_epoch: 1,
+        };
+        let item = ItemInstanceId(7);
+        let seed = item_manifest::S1_SEEDS
+            .iter()
+            .position(|definition| *definition == "food.water500")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        for body in [
+            UpdateBody::Begin,
+            UpdateBody::Ground(vec![GroundItem {
+                id: item,
+                seed,
+                root: [0.0; 3],
+            }]),
+            UpdateBody::GroundFocus(Some(item)),
+        ] {
+            app.world_mut()
+                .resource_mut::<sync::inventory::State>()
+                .apply(InventoryUpdate { session: key, body });
+        }
+        app.update();
+        let world = app.world_mut();
+        assert!(world.resource::<sync::ClientSession>().playing(id));
+        let mut spans = world.query::<(&TextSpan, &TextFont, &ChildOf)>();
+        let (label, font, parent) = spans
+            .iter(world)
+            .find(|(_, _, parent)| world.get::<hud::RaidHud>(parent.parent()).is_some())
+            .unwrap();
+        assert_eq!(label.as_str(), "\nGround item: Água potável 500 ml [F]");
+        assert!(
+            !world
+                .get::<Text>(parent.parent())
+                .unwrap()
+                .contains("Ground item")
+        );
+        let bevy::text::FontSource::Handle(handle) = &font.font else {
+            panic!("ground item names must not use the ASCII subset");
+        };
+        assert_eq!(
+            world
+                .resource::<Assets<Font>>()
+                .get(handle)
+                .unwrap()
+                .data
+                .as_ref(),
+            include_bytes!("../../assets/fonts/FiraMono-Medium.ttf")
+        );
+        world
+            .resource_mut::<sync::inventory::State>()
+            .apply(InventoryUpdate {
+                session: key,
+                body: UpdateBody::GroundFocus(None),
+            });
+        app.update();
+        let world = app.world();
+        assert!(
+            !spans
+                .iter(world)
+                .any(|(span, _, _)| span.contains("Ground item"))
+        );
     }
 }
