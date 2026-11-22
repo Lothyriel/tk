@@ -25,6 +25,29 @@ pub(super) struct Drag {
     rotation: Rotation,
     mouse: bool,
     grab: [u8; 2],
+    split: Option<Split>,
+    hover: Option<[u8; 2]>,
+}
+
+#[derive(Clone, Copy)]
+struct Split {
+    quantity: u16,
+    maximum: u16,
+    choosing: bool,
+}
+
+#[derive(Clone, Copy)]
+enum Expected {
+    Move,
+    Split {
+        remainder: u16,
+        quantity: u16,
+    },
+    Merge {
+        target: ItemInstanceId,
+        remainder: u16,
+        total: u16,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -34,13 +57,26 @@ pub(super) struct Pending {
     operation: u64,
     item: ItemInstanceId,
     target: Placement,
+    expected: Expected,
 }
 
 #[derive(SystemParam)]
 pub(in crate::input) struct PointerInput<'w, 's> {
     buttons: Option<Res<'w, ButtonInput<MouseButton>>>,
     cursor: Query<'w, 's, &'static RelativeCursorPosition, With<Board>>,
+    quantity: Query<'w, 's, (&'static QuantityButton, &'static RelativeCursorPosition)>,
 }
+
+#[derive(Component, Clone, Copy)]
+enum QuantityButton {
+    Less,
+    More,
+    Confirm,
+    Cancel,
+}
+
+#[derive(Component)]
+pub(in crate::input) struct QuantityControls;
 
 #[derive(Component)]
 pub(in crate::input) struct Board;
@@ -84,10 +120,20 @@ fn cell_at(cursor: &RelativeCursorPosition, size: [u8; 2]) -> Option<[u8; 2]> {
     })
 }
 
+#[cfg(test)]
 fn check(
     grid: &InventorySnapshot,
     item: ItemInstanceId,
     target: Placement,
+) -> Option<Result<(), PlacementError>> {
+    check_placement(grid, item, target, false)
+}
+
+fn check_placement(
+    grid: &InventorySnapshot,
+    item: ItemInstanceId,
+    target: Placement,
+    split: bool,
 ) -> Option<Result<(), PlacementError>> {
     let (_, source) = grid.items.iter().find(|(id, _)| *id == item)?;
     Some(
@@ -95,10 +141,37 @@ fn check(
             Footprint::new(grid.size[0], grid.size[1])?,
             grid.items
                 .iter()
-                .filter(|(id, _)| *id != item)
+                .filter(|(id, _)| split || *id != item)
                 .map(|(_, other)| other.placement.area(footprint(other))),
         ),
     )
+}
+
+fn item_at(grid: &InventorySnapshot, [x, y]: [u8; 2]) -> Option<&(ItemInstanceId, ProjectedItem)> {
+    grid.items.iter().find(|(_, item)| {
+        let [w, h] = dimensions(item, item.placement.rotation);
+        x >= item.placement.x
+            && x - item.placement.x < w
+            && y >= item.placement.y
+            && y - item.placement.y < h
+    })
+}
+
+fn merge_plan(source: &ProjectedItem, target: &ProjectedItem) -> Result<(u16, u16), &'static str> {
+    if source.definition != target.definition
+        || source.condition != target.condition
+        || source.contents != target.contents
+    {
+        return Err("Stacks are incompatible");
+    }
+    let capacity = planned_items()[target.definition.as_str()].stack_max;
+    let moved = source
+        .quantity
+        .min(capacity.saturating_sub(target.quantity));
+    if moved == 0 {
+        return Err("Target stack is full");
+    }
+    Ok((source.quantity - moved, target.quantity + moved))
 }
 
 pub(super) fn reconcile(panel: &mut Panel, inventory: &State, raid: u32, client: u64) {
@@ -120,27 +193,68 @@ pub(super) fn reconcile(panel: &mut Panel, inventory: &State, raid: u32, client:
         None => (),
         Some(OperationResult::Committed) => {
             // The ack alone cannot move the visible tile.
-            if grid.is_some_and(|grid| {
-                grid.version.revision > pending.version.revision
-                    && grid
-                        .items
+            if let Some(grid) = grid.filter(|grid| grid.version.revision > pending.version.revision)
+            {
+                let item = |id| {
+                    grid.items
                         .iter()
-                        .any(|(id, item)| *id == pending.item && item.placement == pending.target)
-            }) {
+                        .find(|(other, _)| *other == id)
+                        .map(|(_, item)| item)
+                };
+                let confirmed = match pending.expected {
+                    Expected::Move => item(pending.item)
+                        .filter(|i| i.placement == pending.target)
+                        .map(|_| "Move confirmed"),
+                    Expected::Split {
+                        remainder,
+                        quantity,
+                    } => item(pending.item)
+                        .filter(|i| {
+                            i.quantity == remainder
+                                && grid.items.iter().any(|(id, split)| {
+                                    *id != pending.item
+                                        && split.placement == pending.target
+                                        && split.quantity == quantity
+                                        && split.definition == i.definition
+                                })
+                        })
+                        .map(|_| "Split confirmed"),
+                    Expected::Merge {
+                        target,
+                        remainder,
+                        total,
+                    } => item(target)
+                        .filter(|i| {
+                            i.quantity == total
+                                && item(pending.item).map_or(0, |i| i.quantity) == remainder
+                        })
+                        .map(|_| {
+                            if remainder == 0 {
+                                "Merge confirmed"
+                            } else {
+                                "Merge confirmed: remainder in source stack"
+                            }
+                        }),
+                };
                 panel.pending = None;
-                panel.feedback = Some("Move confirmed");
-            } else if grid.is_some_and(|grid| grid.version.revision > pending.version.revision) {
-                panel.pending = None;
-                panel.feedback = Some("Inventory changed after move");
+                panel.feedback = Some(confirmed.unwrap_or("Inventory changed after operation"));
             }
         }
         Some(OperationResult::Conflict | OperationResult::Expired) => {
             panel.pending = None;
-            panel.feedback = Some("Move rejected: inventory changed");
+            panel.feedback = Some(if matches!(pending.expected, Expected::Move) {
+                "Move rejected: inventory changed"
+            } else {
+                "Stack operation rejected: inventory changed"
+            });
         }
         Some(_) => {
             panel.pending = None;
-            panel.feedback = Some("Move rejected by server");
+            panel.feedback = Some(if matches!(pending.expected, Expected::Move) {
+                "Move rejected by server"
+            } else {
+                "Stack operation rejected by server"
+            });
         }
     }
 }
@@ -174,15 +288,7 @@ pub(super) fn interact(
         let pressed = mouse.is_some_and(|buttons| buttons.just_pressed(MouseButton::Left));
         let keyboard = keys.just_pressed(KeyCode::Enter);
         let source = if pressed {
-            cell.and_then(|[x, y]| {
-                grid.items.iter().find(|(_, item)| {
-                    let [w, h] = dimensions(item, item.placement.rotation);
-                    x >= item.placement.x
-                        && x - item.placement.x < w
-                        && y >= item.placement.y
-                        && y - item.placement.y < h
-                })
-            })
+            cell.and_then(|cell| item_at(grid, cell))
         } else if keyboard {
             grid.items
                 .iter()
@@ -193,6 +299,11 @@ pub(super) fn interact(
         if let Some((item, source)) = source {
             panel.selected = Some(*item);
             panel.feedback = None;
+            let split = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            if split && source.quantity <= 1 {
+                panel.feedback = Some("Need at least two items to split");
+                return true;
+            }
             panel.drag = Some(Drag {
                 session,
                 version: grid.version,
@@ -203,12 +314,49 @@ pub(super) fn interact(
                 grab: cell.filter(|_| pressed).map_or([0, 0], |[x, y]| {
                     [x - source.placement.x, y - source.placement.y]
                 }),
+                split: split.then(|| Split {
+                    quantity: 1,
+                    maximum: source.quantity - 1,
+                    choosing: true,
+                }),
+                hover: None,
             });
             return true;
         }
         return false;
     }
     let drag = panel.drag.as_mut().unwrap();
+    if let Some(split) = drag.split.as_mut().filter(|s| s.choosing) {
+        let button = mouse
+            .is_some_and(|b| b.just_pressed(MouseButton::Left))
+            .then(|| {
+                pointer
+                    .quantity
+                    .iter()
+                    .find_map(|(button, cursor)| cursor.cursor_over.then_some(*button))
+            })
+            .flatten();
+        if matches!(button, Some(QuantityButton::Cancel)) {
+            panel.drag = None;
+            panel.feedback = Some("Split cancelled");
+        } else if keys.just_pressed(KeyCode::Enter)
+            || matches!(button, Some(QuantityButton::Confirm))
+        {
+            split.choosing = false;
+            // The quantity confirmation is not a destination click.
+            drag.mouse = false;
+            drag.grab = [0, 0];
+        } else if keys.just_pressed(KeyCode::ArrowRight)
+            || matches!(button, Some(QuantityButton::More))
+        {
+            split.quantity = split.quantity.saturating_add(1).min(split.maximum);
+        } else if keys.just_pressed(KeyCode::ArrowLeft)
+            || matches!(button, Some(QuantityButton::Less))
+        {
+            split.quantity = split.quantity.saturating_sub(1).max(1);
+        }
+        return true;
+    }
     if keys.just_pressed(KeyCode::KeyR) {
         let (_, item) = grid.items.iter().find(|(id, _)| *id == drag.item).unwrap();
         let [w, h] = dimensions(item, drag.rotation);
@@ -239,10 +387,24 @@ pub(super) fn interact(
             .clamp(0, i16::from(grid.size[1]) - 1) as u8;
         target.rotation = drag.rotation;
     }
+    let split_click =
+        drag.split.is_some() && mouse.is_some_and(|b| b.just_pressed(MouseButton::Left));
+    if split_click {
+        drag.target = cell.map(|[x, y]| Placement {
+            x,
+            y,
+            rotation: drag.rotation,
+        });
+    }
+    drag.hover = if drag.mouse {
+        cell
+    } else {
+        drag.target.map(|p| [p.x, p.y])
+    };
     let submit = if drag.mouse {
         mouse.is_some_and(|buttons| buttons.just_released(MouseButton::Left))
     } else {
-        keys.just_pressed(KeyCode::Enter)
+        keys.just_pressed(KeyCode::Enter) || split_click
     };
     if !submit {
         return true;
@@ -252,27 +414,67 @@ pub(super) fn interact(
         panel.feedback = Some("Move cancelled outside grid");
         return true;
     };
-    let verdict = check(grid, drag.item, target);
-    if verdict != Some(Ok(())) {
-        panel.feedback = Some(reason(verdict));
-        return true;
-    }
-    if grid
-        .items
-        .iter()
-        .any(|(id, item)| *id == drag.item && item.placement == target)
-    {
-        return true;
-    }
     let id = grid.version.id;
-    let intent = Operate {
-        action: InventoryAction::Move {
-            item: drag.item,
-            destination: GridLocation {
-                compartment: id,
-                placement: target,
+    let destination = GridLocation {
+        compartment: id,
+        placement: target,
+    };
+    let (_, source) = grid.items.iter().find(|(id, _)| *id == drag.item).unwrap();
+    let anchor = drag.hover.unwrap_or([target.x, target.y]);
+    let (action, expected) = if drag.split.is_none()
+        && let Some((other, stack)) = item_at(grid, anchor).filter(|(other, _)| *other != drag.item)
+    {
+        let (remainder, total) = match merge_plan(source, stack) {
+            Ok(plan) => plan,
+            Err(message) => {
+                panel.feedback = Some(message);
+                return true;
+            }
+        };
+        (
+            InventoryAction::Merge {
+                source: drag.item,
+                target: *other,
             },
-        },
+            Expected::Merge {
+                target: *other,
+                remainder,
+                total,
+            },
+        )
+    } else {
+        let verdict = check_placement(grid, drag.item, target, drag.split.is_some());
+        if verdict != Some(Ok(())) {
+            panel.feedback = Some(reason(verdict));
+            return true;
+        }
+        if let Some(split) = drag.split {
+            (
+                InventoryAction::Split {
+                    item: drag.item,
+                    quantity: split.quantity,
+                    destination,
+                },
+                Expected::Split {
+                    remainder: source.quantity - split.quantity,
+                    quantity: split.quantity,
+                },
+            )
+        } else {
+            if source.placement == target {
+                return true;
+            }
+            (
+                InventoryAction::Move {
+                    item: drag.item,
+                    destination,
+                },
+                Expected::Move,
+            )
+        }
+    };
+    let intent = Operate {
+        action,
         scope: [id; 2],
     };
     if let Some(operation) = inventory.send_operation(client, &intent) {
@@ -282,6 +484,7 @@ pub(super) fn interact(
             operation,
             item: drag.item,
             target,
+            expected,
         });
     } else {
         panel.feedback = Some("Move not sent");
@@ -318,7 +521,7 @@ pub(in crate::input) fn setup(mut commands: Commands) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                Text::new("BACKPACK GRID\nDrag or Enter to move · R rotate · Esc cancel"),
+                Text::new("BACKPACK GRID\nDrag or Enter to move · R rotate\nShift+drag/Enter split · drop on stack to merge"),
                 TextFont::from_font_size(13.0),
             ));
             parent.spawn((
@@ -333,6 +536,21 @@ pub(in crate::input) fn setup(mut commands: Commands) {
                 BackgroundColor(Color::srgb(0.10, 0.13, 0.16)),
             ));
             parent.spawn((Feedback, Text::default(), TextFont::from_font_size(14.0)));
+            parent.spawn((QuantityControls, Node { display: Display::None, column_gap: Val::Px(5.0), ..default() }))
+                .with_children(|buttons| {
+                    for (action, label) in [
+                        (QuantityButton::Less, "−"),
+                        (QuantityButton::More, "+"),
+                        (QuantityButton::Confirm, "Choose"),
+                        (QuantityButton::Cancel, "Cancel"),
+                    ] {
+                        buttons.spawn((
+                            action, RelativeCursorPosition::default(),
+                            Node { padding: UiRect::all(Val::Px(7.0)), ..default() },
+                            BackgroundColor(Color::srgb(0.17, 0.29, 0.40)),
+                        )).with_child((FocusPolicy::Pass, Text::new(label), TextFont::from_font_size(14.0)));
+                    }
+                });
         });
 }
 
@@ -355,10 +573,13 @@ type DrawKey = (
     VersionedCompartment,
     Option<ItemInstanceId>,
     Option<(ItemInstanceId, Placement, bool)>,
+    bool,
 );
 
 type BoardNode<'w, 's> =
     Single<'w, 's, (Entity, &'static mut Node), (With<Board>, Without<GridRoot>)>;
+type QuantityNode<'w, 's> =
+    Single<'w, 's, &'static mut Node, (With<QuantityControls>, Without<GridRoot>, Without<Board>)>;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::input) fn present(
@@ -367,6 +588,7 @@ pub(in crate::input) fn present(
     (session, player): (Res<crate::sync::ClientSession>, Res<common::PlayerId>),
     mut root: Single<&mut Node, With<GridRoot>>,
     mut board: BoardNode,
+    mut quantity: QuantityNode,
     mut message: Single<&mut Text, With<Feedback>>,
     tiles: Query<Entity, With<Tile>>,
     mut last: Local<Option<DrawKey>>,
@@ -375,6 +597,12 @@ pub(in crate::input) fn present(
         .owned_grid(session.raid.raid_id, player.0)
         .filter(known_grid);
     let visible = panel.open && panel.inspection.is_none();
+    let choosing = panel.drag.and_then(|d| d.split).filter(|s| s.choosing);
+    quantity.display = if visible && choosing.is_some() {
+        Display::Flex
+    } else {
+        Display::None
+    };
     root.display = if visible {
         Display::Flex
     } else {
@@ -392,22 +620,56 @@ pub(in crate::input) fn present(
         return;
     };
     board.1.display = Display::Flex;
+    let merging = panel.drag.filter(|d| d.split.is_none()).and_then(|d| {
+        let (id, item) = item_at(grid, d.hover?)?;
+        if *id == d.item {
+            return None;
+        }
+        let (_, source) = grid.items.iter().find(|(id, _)| *id == d.item)?;
+        Some((item.placement, merge_plan(source, item)))
+    });
     let ghost = panel
         .drag
-        .and_then(|drag| drag.target.map(|target| (drag.item, target, false)))
+        .filter(|_| choosing.is_none())
+        .and_then(|drag| {
+            drag.target
+                .map(|target| (drag.item, merging.as_ref().map_or(target, |m| m.0), false))
+        })
         .or_else(|| panel.pending.map(|p| (p.item, p.target, true)));
-    let verdict = ghost.and_then(|(id, target, _)| check(grid, id, target));
-    let label = if panel.pending.is_some() {
-        "Waiting for server confirmation"
+    let split = panel.drag.and_then(|d| d.split);
+    let verdict =
+        ghost.and_then(|(id, target, _)| check_placement(grid, id, target, split.is_some()));
+    let valid = merging
+        .as_ref()
+        .map_or(verdict == Some(Ok(())), |(_, plan)| plan.is_ok());
+    let label = if let Some(split) = choosing {
+        format!(
+            "Split {} / {} · arrows or −/+ · Enter to choose",
+            split.quantity, split.maximum
+        )
+    } else if panel.pending.is_some() {
+        "Waiting for server confirmation".to_owned()
+    } else if let Some((_, plan)) = merging {
+        match plan {
+            Ok((remainder, total)) => {
+                format!("Merge: target ×{total} · source remainder ×{remainder}")
+            }
+            Err(reason) => reason.to_owned(),
+        }
+    } else if let Some(split) = split {
+        format!("Place split ×{} · {}", split.quantity, reason(verdict))
     } else if panel.drag.is_some() {
-        reason(verdict)
+        reason(verdict).to_owned()
     } else {
-        panel.feedback.unwrap_or("Select an item to move")
+        panel
+            .feedback
+            .unwrap_or("Select an item to move")
+            .to_owned()
     };
     if message.as_str() != label {
-        ***message = label.into();
+        ***message = label;
     }
-    let draw = (key, grid.version, panel.selected, ghost);
+    let draw = (key, grid.version, panel.selected, ghost, valid);
     if *last == Some(draw) {
         return;
     }
@@ -474,7 +736,7 @@ pub(in crate::input) fn present(
                 BorderColor::all(Color::WHITE),
                 BackgroundColor(if pending {
                     Color::srgba(0.72, 0.58, 0.12, 0.5)
-                } else if verdict == Some(Ok(())) {
+                } else if valid {
                     Color::srgba(0.06, 0.65, 0.38, 0.5)
                 } else {
                     Color::srgba(0.9, 0.2, 0.20, 0.5)
@@ -515,16 +777,20 @@ mod tests {
     const OWN: CompartmentId = CompartmentId(7);
 
     fn fixture() -> (App, InventoryAuthority, ItemInstanceId) {
+        fixture_with_stacks(false)
+    }
+
+    fn fixture_with_stacks(stacks: bool) -> (App, InventoryAuthority, ItemInstanceId) {
         let mut source = Inventory::default();
         source
             .register_compartment(OWN, Footprint::new(4, 4).unwrap(), None)
             .unwrap();
-        let mut seed = |definition, placement| {
+        let mut seed = |definition, placement, quantity| {
             source
                 .insert_seed(
                     definition,
                     Condition::Intact,
-                    1,
+                    quantity,
                     GridLocation {
                         compartment: OWN,
                         placement,
@@ -532,8 +798,16 @@ mod tests {
                 )
                 .unwrap()
         };
-        let movable = seed("food.water500", placement(0, 0));
-        seed("med.bandage", placement(2, 0));
+        let movable = seed(
+            if stacks {
+                "med.bandage"
+            } else {
+                "food.water500"
+            },
+            placement(0, 0),
+            if stacks { 3 } else { 1 },
+        );
+        seed("med.bandage", placement(2, 0), if stacks { 2 } else { 1 });
         let authority = InventoryAuthority::new(1, source);
         let mut state = State::default();
         for body in [
@@ -739,5 +1013,137 @@ mod tests {
         assert_eq!(panel.feedback, Some("Move rejected: inventory changed"));
         assert!(app.world().resource::<State>().owned_grid(1, 7).is_none());
         assert!(transfer(&mut app, &mut server).is_none());
+    }
+
+    fn apply_stack_operation(
+        app: &mut App,
+        authority: &mut InventoryAuthority,
+        op: common::catalog::item_inventory::InventoryOperation,
+    ) {
+        let reply = authority.apply(&mut OperationSession::new(KEY), op, |id| id == OWN);
+        assert_eq!(reply.result, OperationResult::Committed);
+        for body in [
+            UpdateBody::Snapshot(authority.snapshot(OWN, |id| id == OWN).unwrap()),
+            UpdateBody::Result {
+                id: op.id,
+                result: reply.result,
+            },
+        ] {
+            app.world_mut()
+                .resource_mut::<State>()
+                .apply(InventoryUpdate { session: KEY, body });
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.update();
+    }
+
+    #[test]
+    fn inventory_grid_split_clamps_quantity_and_waits_for_confirmed_stack() {
+        let (mut app, mut authority, item) = fixture_with_stacks(true);
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset_all();
+        keys.press(KeyCode::ShiftLeft);
+        keys.press(KeyCode::Enter);
+        app.update();
+        key(&mut app, KeyCode::ArrowLeft);
+        assert_eq!(
+            app.world()
+                .resource::<Panel>()
+                .drag
+                .unwrap()
+                .split
+                .unwrap()
+                .quantity,
+            1
+        );
+        key(&mut app, KeyCode::ArrowRight);
+        key(&mut app, KeyCode::ArrowRight);
+        assert_eq!(
+            app.world()
+                .resource::<Panel>()
+                .drag
+                .unwrap()
+                .split
+                .unwrap()
+                .quantity,
+            2
+        );
+        key(&mut app, KeyCode::Enter);
+        key(&mut app, KeyCode::ArrowDown);
+        key(&mut app, KeyCode::Enter);
+        let mut server = RenetServer::new(data::renet_config());
+        server.add_connection(7, false);
+        let Some(InventoryRequest::Operate(op)) = transfer(&mut app, &mut server) else {
+            panic!("expected Split");
+        };
+        assert_eq!(
+            op.action,
+            InventoryAction::Split {
+                item,
+                quantity: 2,
+                destination: GridLocation {
+                    compartment: OWN,
+                    placement: placement(0, 1)
+                }
+            }
+        );
+        assert_eq!(
+            app.world()
+                .resource::<State>()
+                .owned_grid(1, 7)
+                .unwrap()
+                .items[0]
+                .1
+                .quantity,
+            3
+        );
+        apply_stack_operation(&mut app, &mut authority, op);
+        assert_eq!(
+            app.world().resource::<Panel>().feedback,
+            Some("Split confirmed")
+        );
+        let snapshot = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        assert_eq!(snapshot.items.len(), 3);
+        assert!(snapshot.items.iter().any(|(id, stack)| *id != item
+            && stack.placement == placement(0, 1)
+            && stack.quantity == 2));
+        assert!(transfer(&mut app, &mut server).is_none());
+    }
+
+    #[test]
+    fn inventory_grid_mouse_merge_previews_and_confirms_partial_remainder() {
+        let (mut app, mut authority, _) = fixture_with_stacks(true);
+        mouse(&mut app, Vec2::splat(-0.375), true);
+        mouse(&mut app, Vec2::new(0.125, -0.375), true);
+        assert!(
+            app.world_mut()
+                .query_filtered::<&Text, With<Feedback>>()
+                .single(app.world())
+                .unwrap()
+                .contains("source remainder ×2")
+        );
+        mouse(&mut app, Vec2::new(0.125, -0.375), false);
+        let mut server = RenetServer::new(data::renet_config());
+        server.add_connection(7, false);
+        let Some(InventoryRequest::Operate(op)) = transfer(&mut app, &mut server) else {
+            panic!("expected Merge");
+        };
+        assert!(matches!(op.action, InventoryAction::Merge { .. }));
+        apply_stack_operation(&mut app, &mut authority, op);
+        assert_eq!(
+            app.world().resource::<Panel>().feedback,
+            Some("Merge confirmed: remainder in source stack")
+        );
+        let snapshot = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        assert_eq!(
+            snapshot
+                .items
+                .iter()
+                .map(|(_, item)| item.quantity)
+                .collect::<Vec<_>>(),
+            [2, 3]
+        );
     }
 }
