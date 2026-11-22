@@ -1332,6 +1332,59 @@ mod tests {
     }
 
     #[test]
+    fn menu_paused_preferences_keep_applied_values_when_save_fails() {
+        let mut app = fixture();
+        let applied = *app.world().resource::<Preferences>();
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+        // The fixture uses a default Store without a writable path.
+        let settings = button(&mut app, Action::Settings);
+        let scale = button(&mut app, Action::UiScaleCycle);
+        let volume = button(&mut app, Action::VolumeCycle);
+        let apply = button(&mut app, Action::ApplySettings);
+        key(&mut app, KeyCode::Escape);
+        assert_eq!(app.world().resource::<Menu>().surface, Surface::Pause);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        for control in [settings, scale, volume, apply] {
+            app.world_mut()
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .press(MouseButton::Left);
+            click(&mut app, control);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .reset_all();
+        }
+        let menu = app.world().resource::<Menu>();
+        assert_eq!(menu.surface, Surface::Settings);
+        assert_eq!(
+            menu.settings_status,
+            "Could not save; applied values unchanged."
+        );
+        let draft = menu.settings.unwrap();
+        assert_eq!((draft.ui_scale_percent, draft.volume_percent), (125, 0));
+        assert_eq!(*app.world().resource::<Preferences>(), applied);
+        assert_eq!(app.world().resource::<UiScale>().0, applied.ui_scale());
+        assert_eq!(
+            app.world().resource::<bevy::audio::GlobalVolume>().volume,
+            applied.volume()
+        );
+        key(&mut app, KeyCode::Escape);
+        let menu = app.world().resource::<Menu>();
+        assert_eq!(menu.surface, Surface::Pause);
+        assert!(menu.settings.is_none());
+        focus(&app, settings);
+        let input = app.world().resource::<LocalInput>();
+        assert!(!input.fire && !input.aim);
+        assert_eq!((input.fire_pressed_sequence, input.lobby_sequence), (0, 0));
+    }
+
+    #[test]
     fn menu_arena_mode_ready_then_leave_while_waiting_and_ready_again() {
         let mut app = fixture();
         let mode = button(&mut app, Action::Mode);
