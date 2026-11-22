@@ -180,8 +180,6 @@ def main():
         parser.error("--inventory-grid requires --voxel-loot --no-capture with one client and no video")
     if args.voxel_loot and args.pov:
         parser.error("--voxel-loot requires the full raid route")
-    if args.viewport and not (args.pov or arena or args.clean_art or args.no_capture):
-        parser.error("--viewport requires a POV or Arena route, --clean-art or --no-capture")
     if args.no_capture and (args.video or args.pov or args.weapon_debug):
         parser.error("--no-capture is for the plain raid or animation review, not visual evidence modes")
     if args.audio and not (args.no_capture and args.clients == 2):
