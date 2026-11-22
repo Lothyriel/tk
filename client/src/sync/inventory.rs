@@ -5,7 +5,10 @@ use bevy_renet2::prelude::RenetClient;
 use common::{
     catalog::{
         CompartmentId,
-        item_inventory::{InventoryReplica, ReplicaUpdate, SessionKey},
+        item_inventory::{
+            InventoryAction, InventoryOperation, InventoryReplica, OperationResult, ReplicaUpdate,
+            SessionKey, VersionedCompartment,
+        },
     },
     replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
 };
@@ -16,10 +19,25 @@ pub(super) struct State {
     replica: Option<InventoryReplica>,
     // False until enqueued. The reliable channel handles packet retransmission.
     resync: BTreeMap<CompartmentId, bool>,
+    last_operation: u64,
+    pending: Option<InventoryOperation>,
+}
+
+/// Intent from the inventory UI. Compartments are in source/destination order.
+#[derive(Message)]
+pub(crate) struct Operate {
+    pub action: InventoryAction,
+    pub scope: [CompartmentId; 2],
+}
+
+#[derive(Message)]
+pub(crate) struct OperationFinished {
+    pub id: u64,
+    pub result: OperationResult,
 }
 
 impl State {
-    fn apply(&mut self, update: InventoryUpdate) {
+    fn apply(&mut self, update: InventoryUpdate) -> Option<OperationFinished> {
         let key = update.session;
         if matches!(update.body, UpdateBody::Begin) {
             // Begin is ordered with snapshots and deltas. Ignore repeat or
@@ -30,17 +48,15 @@ impl State {
                 *self = Self {
                     session: Some(key),
                     replica: Some(InventoryReplica::new(key)),
-                    resync: BTreeMap::new(),
+                    ..Self::default()
                 };
             }
-            return;
+            return None;
         }
         if self.session != Some(key) {
-            return;
+            return None;
         }
-        let Some(replica) = self.replica.as_mut() else {
-            return;
-        };
+        let replica = self.replica.as_mut()?;
         match update.body {
             UpdateBody::Snapshot(snapshot) => {
                 let id = snapshot.version.id;
@@ -61,14 +77,46 @@ impl State {
                 replica.close(key, id);
                 self.resync.remove(&id);
             }
-            // An operation acknowledgment is never a confirmed item update.
-            UpdateBody::Result { .. } | UpdateBody::Begin => {}
+            // An acknowledgment never substitutes for a confirmed delta.
+            UpdateBody::Result { id, result } => {
+                if let Some(request) = self.pending.filter(|request| request.id == id) {
+                    self.pending = None;
+                    if matches!(result, OperationResult::Conflict | OperationResult::Expired) {
+                        for version in request.expected {
+                            self.resync.entry(version.id).or_insert(false);
+                        }
+                    }
+                    return Some(OperationFinished { id, result });
+                }
+            }
+            UpdateBody::Begin => {}
         }
+        None
+    }
+
+    fn operation(&self, intent: &Operate) -> Option<InventoryOperation> {
+        if self.pending.is_some() || intent.scope.iter().any(|id| self.resync.contains_key(id)) {
+            return None;
+        }
+        let replica = self.replica.as_ref()?;
+        let version = |id| -> Option<VersionedCompartment> { Some(replica.get(id)?.version) };
+        Some(InventoryOperation {
+            session: self.session?,
+            id: self.last_operation.checked_add(1)?,
+            expected: [version(intent.scope[0])?, version(intent.scope[1])?],
+            action: intent.action,
+        })
     }
 }
 
-pub(super) fn receive(client: Option<ResMut<RenetClient>>, mut state: ResMut<State>) {
+pub(super) fn receive(
+    client: Option<ResMut<RenetClient>>,
+    mut state: ResMut<State>,
+    mut intents: MessageReader<Operate>,
+    mut finished: MessageWriter<OperationFinished>,
+) {
     let Some(mut client) = client.filter(|client| client.is_connected()) else {
+        intents.clear();
         if state.session.is_some() {
             *state = State::default();
         }
@@ -78,8 +126,11 @@ pub(super) fn receive(client: Option<ResMut<RenetClient>>, mut state: ResMut<Sta
         let Some(bytes) = client.receive_message(CHANNEL) else {
             break;
         };
-        if let Ok(update) = InventoryUpdate::decode(&bytes) {
-            state.apply(update);
+        if let Ok(update) = InventoryUpdate::decode(&bytes)
+            && let Some(result) = state.apply(update)
+        {
+            debug!(operation_id = result.id, outcome = ?result.result, "inventory operation finished");
+            finished.write(result);
         }
     }
     if let Some(session) = state.session {
@@ -98,6 +149,19 @@ pub(super) fn receive(client: Option<ResMut<RenetClient>>, mut state: ResMut<Sta
             *sent = true;
         }
     }
+    for intent in intents.read() {
+        let Some(operation) = state.operation(intent) else {
+            continue;
+        };
+        let Ok(bytes) = InventoryRequest::Operate(operation).encode() else {
+            continue;
+        };
+        if client.can_send_message(CHANNEL, bytes.len()) {
+            client.send_message(CHANNEL, bytes);
+            state.last_operation = operation.id;
+            state.pending = Some(operation);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -106,7 +170,10 @@ mod tests {
     use bevy_renet2::prelude::RenetServer;
     use common::catalog::{
         ItemInstanceId,
-        item_inventory::{CompartmentDelta, InventorySnapshot, ItemDelta, VersionedCompartment},
+        item_grid::{Placement, Rotation},
+        item_inventory::{
+            CompartmentDelta, GridLocation, InventorySnapshot, ItemDelta, VersionedCompartment,
+        },
     };
 
     #[test]
@@ -119,6 +186,8 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(client)
             .init_resource::<State>()
+            .add_message::<Operate>()
+            .add_message::<OperationFinished>()
             .add_systems(Update, receive);
         let key = SessionKey {
             raid_epoch: 1,
@@ -191,6 +260,66 @@ mod tests {
         deliver(&mut server, &mut app, vec![snapshot(2), snapshot(1)]);
         assert_eq!(confirmed(&app), version(2));
         assert!(app.world().resource::<State>().resync.is_empty());
+        let action = InventoryAction::Move {
+            item: ItemInstanceId(1),
+            destination: GridLocation {
+                compartment: id,
+                placement: Placement {
+                    x: 1,
+                    y: 0,
+                    rotation: Rotation::Upright,
+                },
+            },
+        };
+        for _ in 0..2 {
+            app.world_mut().write_message(Operate {
+                action,
+                scope: [id; 2],
+            });
+        }
+        app.update();
+        for packet in app
+            .world_mut()
+            .resource_mut::<RenetClient>()
+            .get_packets_to_send()
+        {
+            server.process_packet_from(packet, 7).unwrap();
+        }
+        assert_eq!(
+            InventoryRequest::decode(&server.receive_message(7, CHANNEL).unwrap()),
+            Ok(InventoryRequest::Operate(InventoryOperation {
+                session: key,
+                id: 1,
+                expected: [version(2); 2],
+                action,
+            }))
+        );
+        assert!(server.receive_message(7, CHANNEL).is_none());
+        deliver(
+            &mut server,
+            &mut app,
+            vec![UpdateBody::Result {
+                id: 9,
+                result: OperationResult::Committed,
+            }],
+        );
+        assert!(app.world().resource::<State>().pending.is_some());
+        deliver(
+            &mut server,
+            &mut app,
+            vec![UpdateBody::Result {
+                id: 1,
+                result: OperationResult::Conflict,
+            }],
+        );
+        let mut cursor = bevy::ecs::message::MessageCursor::<OperationFinished>::default();
+        let mut results = cursor.read(app.world().resource::<Messages<OperationFinished>>());
+        let result = results.next().unwrap();
+        assert_eq!((result.id, result.result), (1, OperationResult::Conflict));
+        assert!(results.next().is_none());
+        assert_eq!(confirmed(&app), version(2));
+        assert!(app.world().resource::<State>().pending.is_none());
+        assert_eq!(app.world().resource::<State>().resync.get(&id), Some(&true));
         app.world_mut().remove_resource::<RenetClient>();
         app.update();
         assert!(app.world().resource::<State>().replica.is_none());
