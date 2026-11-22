@@ -542,8 +542,13 @@ fn fictional_fault_udp_late_observer_converges_without_replaying_actions() {
 fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     use common::{
         catalog::{
-            ItemInstanceId,
-            item_manifest::{S1_SEEDS, item_visuals},
+            CompartmentId, ItemInstanceId,
+            item_grid::{Placement, Rotation},
+            item_inventory::{
+                GridLocation, InventoryAction, InventoryOperation, OperationResult,
+                VersionedCompartment,
+            },
+            item_manifest::{S1_SEEDS, item_visuals, planned_items},
         },
         replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
     };
@@ -726,6 +731,113 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     );
     assert_eq!(drain(&mut late).len(), 1);
 
+    first.input.interact = false;
+    first.input.pickup_focus = None;
+    let key = initial[0].session;
+    let own = CompartmentId(7);
+    let operate = |peer: &mut UdpPeer, id, revision, action| {
+        peer.peer.network.send_message(
+            CHANNEL,
+            InventoryRequest::Operate(InventoryOperation {
+                session: key,
+                id,
+                expected: [VersionedCompartment { id: own, revision }; 2],
+                action,
+            })
+            .encode()
+            .unwrap(),
+        );
+    };
+    let committed = |peer: &mut UdpPeer, id, revision| {
+        let [delta, result]: [InventoryUpdate; 2] = drain(peer).try_into().unwrap();
+        assert_eq!((delta.session, result.session), (key, key));
+        assert_eq!(
+            result.body,
+            UpdateBody::Result {
+                id,
+                result: OperationResult::Committed
+            }
+        );
+        let UpdateBody::Delta(mut changes) = delta.body else {
+            panic!("expected private inventory delta");
+        };
+        assert_eq!(changes.len(), 1);
+        let change = changes.pop().unwrap();
+        assert_eq!(change.version, VersionedCompartment { id: own, revision });
+        change.items
+    };
+    operate(
+        &mut first,
+        1,
+        3,
+        InventoryAction::Split {
+            item: item.id,
+            quantity: 1,
+            destination: GridLocation {
+                compartment: own,
+                placement: Placement {
+                    x: 1,
+                    y: 0,
+                    rotation: Rotation::Upright,
+                },
+            },
+        },
+    );
+    harness.pump(&mut [&mut first, &mut late], 160);
+    let split = committed(&mut first, 1, 4);
+    assert_eq!(split.len(), 2);
+    assert!(split.iter().all(|change| {
+        change
+            .item
+            .as_ref()
+            .is_some_and(|stack| stack.quantity == 1)
+    }));
+    let child = split.iter().find(|change| change.id != item.id).unwrap().id;
+    let original_half = split
+        .iter()
+        .find(|change| change.id == item.id)
+        .unwrap()
+        .item
+        .as_ref()
+        .unwrap();
+    operate(
+        &mut first,
+        2,
+        4,
+        InventoryAction::Merge {
+            source: item.id,
+            target: child,
+        },
+    );
+    harness.pump(&mut [&mut first, &mut late], 160);
+    let merged = committed(&mut first, 2, 5);
+    assert_eq!(merged.len(), 2);
+    assert!(
+        merged
+            .iter()
+            .any(|change| change.id == item.id && change.item.is_none())
+    );
+    let reunited = merged
+        .iter()
+        .find(|change| change.id == child)
+        .unwrap()
+        .item
+        .as_ref()
+        .unwrap();
+    assert_eq!(reunited.definition, "med.bandage");
+    assert_eq!(reunited.quantity, 2);
+    assert_eq!(reunited.contents, original_half.contents);
+    assert_eq!(reunited.condition, original_half.condition);
+    assert_eq!(
+        u32::from(reunited.quantity) * planned_items()[reunited.definition.as_str()].mass_g,
+        70
+    );
+    assert_eq!(displayed(&first).carried, 2);
+    assert!(
+        drain(&mut late).is_empty(),
+        "private split/merge leaked to the observer"
+    );
+
     // Stage the player in the exit but keep the normal hold duration and
     // production credit/debrief transitions. No legacy crate was collected.
     let [x, _, z] = common::map::EXTRACTION_CENTER;
@@ -741,6 +853,7 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     first.input.interact = true;
     harness.pump(&mut [&mut first, &mut late], 512);
     assert_eq!(displayed(&first).status, RaidStatus::Active);
+    assert_eq!(displayed(&first).carried, 2);
     assert_eq!(displayed(&first).secured, 0);
     harness.pump(&mut [&mut first, &mut late], 256);
     assert_eq!(displayed(&first).status, RaidStatus::Extracted);
@@ -762,6 +875,14 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
         assert_eq!(updates[0].body, UpdateBody::Ground(vec![]));
         assert!(peer.dropped.load(Ordering::Relaxed) > 0);
     }
+    let authoritative = harness
+        .app
+        .world()
+        .resource::<WorldState>()
+        .inventory
+        .fixture_snapshot(own);
+    assert_eq!(authoritative.version.revision, 5);
+    assert_eq!(authoritative.items.as_slice(), &[(child, reunited.clone())]);
 
     first.input.interact = false;
     first.input.pickup_focus = None;
