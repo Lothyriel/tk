@@ -1421,6 +1421,103 @@ pub(super) fn body() -> impl Bundle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn physical_piece_trajectory_stays_bounded_through_snapshot_loss() {
+        use std::time::Duration;
+        let mut endpoints = Vec::new();
+        for (fps, drop_every_third) in [(30, false), (60, true), (165, true)] {
+            let mut app = App::new();
+            app.init_resource::<Assets<Mesh>>()
+                .init_resource::<Assets<StandardMaterial>>()
+                .init_resource::<ClientSession>()
+                .init_resource::<PoseCache>()
+                .init_resource::<Time>()
+                .insert_resource(PlayerId(7))
+                .add_systems(Startup, assets)
+                .add_systems(Update, sync_pieces);
+            let origin = Vec3::new(2.0, 1.0, -3.0);
+            app.world_mut()
+                .resource_mut::<PoseCache>()
+                .last_live
+                .insert((8, Segment::Thorax), Transform::from_translation(origin));
+            let confirmed = |packet: u32| {
+                let fraction = (packet.min(30) as f32 + 2.0) / 60.0;
+                Transform::from_translation(origin + Vec3::X * fraction)
+                    .with_rotation(Quat::from_rotation_y(fraction * 2.0))
+            };
+            let mut next_packet = 0;
+            let mut accepted = confirmed(0);
+            let mut previous = Transform::from_translation(origin);
+            let mut entity_id = None;
+            let dt = Duration::from_secs_f64(1.0 / f64::from(fps));
+            let mut peak = (0.0_f32, 0.0_f32);
+            for frame in 0..=fps {
+                while next_packet * fps <= frame * 60 {
+                    if !drop_every_third || next_packet % 3 != 1 {
+                        accepted = confirmed(next_packet);
+                        app.world_mut()
+                            .resource_mut::<ClientSession>()
+                            .physics_pieces = vec![PhysicsPieceData {
+                            id: 42,
+                            owner: 8,
+                            segment: Segment::Thorax,
+                            pose: SegmentPose {
+                                position: accepted.translation.into(),
+                                rotation: accepted.rotation.to_array(),
+                            },
+                            detached: false,
+                            bot: false,
+                        }];
+                    }
+                    next_packet += 1;
+                }
+                app.world_mut().resource_mut::<Time>().advance_by(dt);
+                app.update();
+                let world = app.world_mut();
+                let (entity, id, shown) = world
+                    .query::<(Entity, &PieceVisual, &Transform)>()
+                    .single(world)
+                    .unwrap();
+                assert_eq!(id.0, 42);
+                assert_eq!(entity, *entity_id.get_or_insert(entity));
+                if frame == 0 {
+                    assert_eq!(*shown, previous, "handoff must use last live pose");
+                }
+                let displacement = shown.translation.x - previous.translation.x;
+                let angle = shown.rotation.angle_between(previous.rotation);
+                assert_eq!(shown.translation.yz(), origin.yz());
+                assert!(
+                    displacement >= -1e-6 && shown.translation.x <= accepted.translation.x + 1e-6
+                );
+                // For this 1 m/s, 2 rad/s input with at most one consecutive
+                // missing snapshot, allow excess speed to catch up, not a snap.
+                assert!(displacement < 2.0 * dt.as_secs_f32());
+                assert!(angle < 4.0 * dt.as_secs_f32() + 0.001);
+                peak.0 = peak.0.max(displacement);
+                peak.1 = peak.1.max(angle);
+                previous = *shown;
+            }
+            assert!(previous.translation.distance(accepted.translation) < 0.001);
+            assert!(previous.rotation.angle_between(accepted.rotation) < 0.002);
+            endpoints.push(previous);
+            eprintln!(
+                "{fps} Hz loss={drop_every_third}: peak step {:.6}m/{:.6}rad",
+                peak.0, peak.1
+            );
+            app.world_mut()
+                .resource_mut::<ClientSession>()
+                .physics_pieces
+                .clear();
+            app.update();
+            assert!(app.world().get_entity(entity_id.unwrap()).is_err());
+        }
+        for peer in &endpoints[1..] {
+            assert!(peer.translation.distance(endpoints[0].translation) < 0.001);
+            assert!(peer.rotation.angle_between(endpoints[0].rotation) < 0.002);
+        }
+    }
+
     #[test]
     fn live_local_physical_meshes_do_not_cross_the_head_camera_but_remote_and_detached_parts_remain()
      {
