@@ -123,6 +123,7 @@ struct Driver {
     physical: physical::Review,
     pov_ads: pov::Ads,
     pov_inspect: pov::Inspect,
+    pov_handling: pov::Handling,
     pov_stop_lean: pov::StopLean,
     pov_stop_lean_roll: f32,
     pov_lean_since: f64,
@@ -519,7 +520,10 @@ fn drive(
             let name = match preset.as_str() {
                 "ads" => driver.pov_ads.advance(elapsed, ready, ads, world_fov),
                 "inspect" => driver.pov_inspect.advance(elapsed, ready, local.mechanics),
-                "stop-lean" | "side-cover" => {
+                "handling-route" if driver.pov_stop_lean == pov::StopLean::Finish => {
+                    driver.pov_handling.advance(elapsed, ready, local, world_fov)
+                }
+                "stop-lean" | "side-cover" | "handling-route" => {
                     // The capture runs after Present; allow the interpolation
                     // buffer to catch up before taking a static stance/roll cue.
                     let settled = session.local_motion.sample(now).is_some_and(|pose| {
@@ -531,7 +535,7 @@ fn drive(
                         roll_settled
                             && (pose.crouch - f32::from(u8::from(local.crouched))).abs() < 0.01
                     });
-                    let side_cover = preset == "side-cover";
+                    let side_cover = preset != "stop-lean";
                     let at_limit = !side_cover
                         || !matches!(driver.pov_stop_lean, pov::StopLean::Left | pov::StopLean::Right)
                         || previous_lean.abs() >= 0.299;
@@ -539,6 +543,10 @@ fn drive(
                         || !matches!(driver.pov_stop_lean, pov::StopLean::Left | pov::StopLean::Right)
                         || now - driver.pov_lean_since >= 1.65;
                     driver.pov_stop_lean.advance(elapsed, ready && settled && at_limit && observer_window, local, side_cover)
+                        .map(|capture| match capture {
+                            Some("pov-return") if preset == "handling-route" => Some("pov-neutral"),
+                            _ => capture,
+                        })
                 }
                 _ => panic!("Unknown POV preset: {preset}"),
             }
@@ -563,10 +571,17 @@ fn drive(
                 capture(&mut commands, name);
             }
             input.aim = driver.pov_ads == pov::Ads::Aim;
-            if preset == "inspect" && name == Some("pov-rest") {
+            if (preset == "inspect" && name == Some("pov-rest"))
+                || (preset == "handling-route" && name == Some("pov-hip"))
+            {
                 input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
             }
-            if matches!(preset.as_str(), "stop-lean" | "side-cover") {
+            if preset == "handling-route" && driver.pov_stop_lean == pov::StopLean::Finish {
+                driver.pov_handling.input(&mut input);
+            } else if matches!(
+                preset.as_str(),
+                "stop-lean" | "side-cover" | "handling-route"
+            ) {
                 driver
                     .pov_stop_lean
                     .input(&mut input, previous_lean, time.delta_secs());
@@ -574,7 +589,8 @@ fn drive(
             }
             if (driver.pov_ads == pov::Ads::Finish
                 || driver.pov_inspect == pov::Inspect::Finish
-                || driver.pov_stop_lean == pov::StopLean::Finish)
+                || (driver.pov_stop_lean == pov::StopLean::Finish && preset != "handling-route")
+                || driver.pov_handling == pov::Handling::Finish)
                 && (!observe || now - driver.pov_lean_since > 0.5)
                 && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
                     .join("pov-return.png")
