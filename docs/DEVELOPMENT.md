@@ -90,6 +90,15 @@ roll, a cadência efetiva e a projeção normalizada do marcador em
 `pov-trace.csv`, sem vídeo. A projeção não mede oclusão. Compare também a
 posição de parada: percorrer a mesma rota não garante a mesma trajetória.
 
+No relatório `observer_gait` em `run-settings.json`, compare os picos por
+quadro com `peak_support_excursion`: o maior deslocamento desde o primeiro
+quadro de um trecho continuamente carregado (peso > 0,95, pelo menos dois
+pares, sem lacunas de 50 ms ou mudança de faixa de velocidade). O registro
+identifica pé, timestamps e snapshots; os deslocamentos das âncoras apresentada
+e confirmada usam os mesmos extremos que o pé, e não picos independentes.
+`null` indica que não houve trecho longo o suficiente. A métrica ajuda a
+localizar deriva lenta, mas não substitui revisão em velocidade normal.
+
 Compare capturas de diretórios separados com o mesmo kit e viewport. Confira
 `run-settings.json` para hashes dos binários e projeções e `client.log` para
 estado confirmado por captura. Se a revisão não tiver animação de inspeção,

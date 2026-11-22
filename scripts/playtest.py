@@ -28,6 +28,11 @@ POV_CAPTURES = {
 }
 
 
+def _gait_displacement(first, last, prefix):
+    keys = [f"{prefix}_{axis}" for axis in "xyz"]
+    return math.dist([first[key] for key in keys], [last[key] for key in keys])
+
+
 def gait_metrics(path):
     with path.open(newline="", encoding="utf-8") as stream:
         rows = [{key: float(value) for key, value in row.items()}
@@ -40,22 +45,41 @@ def gait_metrics(path):
     for name, low, high in (("walk", 2.5, 3.7), ("run", 4.5, 7.0)):
         samples = []
         transitions = {"loading": [], "steady": [], "releasing": []}
+        support = {"left": None, "right": None}
+        peak_excursion = None
         for a, b in zip(rows, rows[1:]):
             dt = b["seconds"] - a["seconds"]
-            if dt >= 0.05 or not (low < a["speed"] < high and low < b["speed"] < high):
-                continue
+            eligible = dt < 0.05 and low < a["speed"] < high and low < b["speed"] < high
             for side in ("left", "right"):
-                if min(a[f"{side}_weight"], b[f"{side}_weight"]) <= 0.95:
+                if not eligible or min(a[f"{side}_weight"], b[f"{side}_weight"]) <= 0.95:
+                    support[side] = None
                     continue
-                distance = math.dist(
-                    [a[f"{side}_{axis}"] for axis in "xyz"],
-                    [b[f"{side}_{axis}"] for axis in "xyz"],
-                )
+
+                distance = _gait_displacement(a, b, side)
                 samples.append((distance, dt))
                 delta_weight = b[f"{side}_weight"] - a[f"{side}_weight"]
                 phase = ("loading" if delta_weight > 0.005
                          else "releasing" if delta_weight < -0.005 else "steady")
                 transitions[phase].append(distance)
+
+                # Per-frame maxima miss small deltas accumulating across a
+                # support interval. Break at gaps, speed changes and unloading;
+                # compare all three sources over the same maximum excursion.
+                first, pairs = support[side] or (a, 0)
+                pairs += 1
+                support[side] = (first, pairs)
+                if pairs < 2:
+                    continue
+                foot = _gait_displacement(first, b, side)
+                if peak_excursion is None or foot > peak_excursion["foot_m"]:
+                    peak_excursion = {
+                        "side": side, "pairs": pairs,
+                        "start_seconds": first["seconds"], "end_seconds": b["seconds"],
+                        "start_snapshot": int(first["snapshot"]), "end_snapshot": int(b["snapshot"]),
+                        "foot_m": foot,
+                        "presented_anchor_m": _gait_displacement(first, b, f"{side}_anchor"),
+                        "confirmed_anchor_m": _gait_displacement(first, b, f"{side}_confirmed"),
+                    }
         assert samples, f"No consecutive loaded {name} samples: {path}"
         peak, interval = max(samples)
         result[name] = {
@@ -63,6 +87,7 @@ def gait_metrics(path):
             "max_displacement_m": peak,
             "max_displacement_interval_s": interval,
             "median_displacement_m": statistics.median(distance for distance, _ in samples),
+            "peak_support_excursion": peak_excursion,
             "by_weight_transition": {
                 phase: {"pairs": len(distances), "max_displacement_m": max(distances, default=None)}
                 for phase, distances in transitions.items()
