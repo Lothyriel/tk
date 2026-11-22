@@ -56,7 +56,7 @@ fn project(eye: Vec3, min: Vec3, max: Vec3) -> Option<Vec3> {
 fn update(
     camera: Single<(&Camera, &GlobalTransform), With<ViewModelCamera>>,
     sockets: Query<(Entity, &Name, &GlobalTransform), With<VoxelSocket>>,
-    ancestry: Query<(&ChildOf, Option<&Visibility>, Has<WeaponViewModel>), Without<Dot>>,
+    ancestry: Query<(Option<&ChildOf>, Option<&Visibility>, Has<WeaponViewModel>), Without<Dot>>,
     children: Query<&Children>,
     mut dot: Single<
         (&mut GlobalTransform, &mut Visibility),
@@ -75,20 +75,23 @@ fn update(
         }
         let mut cursor = entity;
         let mut equipped = false;
+        let mut visibility_override = None;
+        // Visibility propagation has not run yet. Resolve the current
+        // hierarchy so a hidden parent cannot leave the separate dot visible.
         while let Ok((parent, visibility, view)) = ancestry.get(cursor) {
-            if visibility == Some(&Visibility::Hidden) {
-                break;
+            if visibility_override.is_none() {
+                visibility_override = visibility.copied().filter(|v| *v != Visibility::Inherited);
             }
-            if view {
-                equipped = true;
+            equipped |= view;
+            let Some(parent) = parent else {
                 break;
-            }
+            };
             cursor = parent.0;
         }
-        if !equipped {
+        if !equipped || visibility_override == Some(Visibility::Hidden) {
             continue;
         }
-        let Ok((parent, _, _)) = ancestry.get(entity) else {
+        let Ok((Some(parent), _, _)) = ancestry.get(entity) else {
             continue;
         };
         let Ok(siblings) = children.get(parent.0) else {
@@ -135,7 +138,7 @@ mod tests {
             Camera::default(),
             GlobalTransform::from(Transform::from_xyz(0.007, 0.0, 0.21)),
         ));
-        let root = app.world_mut().spawn_empty().id();
+        let root = app.world_mut().spawn(Visibility::Inherited).id();
         let view = app
             .world_mut()
             .spawn((
@@ -175,6 +178,22 @@ mod tests {
                 .unwrap()
                 .translation(),
             Vec3::new(0.007, 0.0, -0.065)
+        );
+        app.world_mut().entity_mut(root).insert(Visibility::Hidden);
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(dot),
+            Some(&Visibility::Hidden),
+            "a hidden ancestor must not leave a detached reticle"
+        );
+        app.world_mut()
+            .entity_mut(root)
+            .insert(Visibility::Inherited);
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(dot),
+            Some(&Visibility::Visible),
+            "restoring the inherited model must restore the reticle"
         );
         app.world_mut().entity_mut(view).insert(Visibility::Hidden);
         app.update();
