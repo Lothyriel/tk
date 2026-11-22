@@ -15,6 +15,7 @@ pub(crate) struct Panel {
     drag: Option<grid::Drag>,
     pending: Option<grid::Pending>,
     feedback: Option<&'static str>,
+    context: Option<grid::Context>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -44,7 +45,10 @@ pub(super) fn update(
         return;
     }
     if panel.open && keys.just_pressed(KeyCode::Escape) {
-        if panel.inspection.take().is_some() || panel.drag.take().is_some() {
+        if panel.context.take().is_some()
+            || panel.inspection.take().is_some()
+            || panel.drag.take().is_some()
+        {
             panel.consumed_escape = true;
             return;
         }
@@ -54,7 +58,7 @@ pub(super) fn update(
         };
         return;
     }
-    if keys.just_pressed(KeyCode::Tab) {
+    if keys.just_pressed(KeyCode::Tab) && panel.context.is_none() {
         if panel.open {
             *panel = Panel::default();
             return;
@@ -65,7 +69,11 @@ pub(super) fn update(
         return;
     }
     let raid = session.raid.raid_id;
+    let context_was_open = panel.context.is_some();
     grid::reconcile(&mut panel, &inventory, raid, player.0);
+    if context_was_open && panel.context.is_none() {
+        return; // Don't retarget an activation from an invalidated item menu.
+    }
     if panel.inspection.is_none()
         && grid::interact(
             &mut panel,
@@ -126,22 +134,44 @@ pub(super) fn update(
     };
     panel.selected = Some(grid.items[index].0);
     if keys.just_pressed(KeyCode::KeyI) && previous == Some(index) {
-        panel.inspection = Some(Inspection {
-            item: grid.items[index].0,
-            yaw_steps: 0,
-            pitch_steps: 0,
-            zoom_steps: 0,
-        });
+        panel.inspect(grid.items[index].0);
         return;
     }
     // An item disappearing in this frame must not redirect Delete to another
     // item. Only discard the selection that was already presented.
-    if keys.just_pressed(KeyCode::Delete)
-        && previous == Some(index)
-        && let Some(request) = inventory.drop_request(raid, player.0, grid.items[index].0)
-        && let Ok(bytes) = request.encode()
-        && client.can_send_message(CHANNEL, bytes.len())
-    {
-        client.send_message(CHANNEL, bytes);
+    if keys.just_pressed(KeyCode::Delete) && previous == Some(index) {
+        panel.request_drop(&inventory, &mut client, raid, player.0, grid.items[index].0);
+    }
+}
+
+impl Panel {
+    fn inspect(&mut self, item: ItemInstanceId) {
+        self.inspection = Some(Inspection {
+            item,
+            yaw_steps: 0,
+            pitch_steps: 0,
+            zoom_steps: 0,
+        });
+    }
+
+    fn request_drop(
+        &mut self,
+        inventory: &State,
+        client: &mut RenetClient,
+        raid: u32,
+        player: u64,
+        item: ItemInstanceId,
+    ) {
+        self.feedback = Some(
+            if let Some(request) = inventory.drop_request(raid, player, item)
+                && let Ok(bytes) = request.encode()
+                && client.can_send_message(CHANNEL, bytes.len())
+            {
+                client.send_message(CHANNEL, bytes);
+                "Drop requested; waiting for inventory update"
+            } else {
+                "Drop not sent"
+            },
+        );
     }
 }

@@ -60,11 +60,33 @@ pub(super) struct Pending {
     expected: Expected,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Context {
+    session: SessionKey,
+    version: VersionedCompartment,
+    item: ItemInstanceId,
+    focus: usize,
+}
+
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum ContextAction {
+    Inspect,
+    Drop,
+    Close,
+}
+
+const CONTEXT_ACTIONS: [(ContextAction, &str); 3] = [
+    (ContextAction::Inspect, "Inspect"),
+    (ContextAction::Drop, "Drop"),
+    (ContextAction::Close, "Close"),
+];
+
 #[derive(SystemParam)]
 pub(in crate::input) struct PointerInput<'w, 's> {
     buttons: Option<Res<'w, ButtonInput<MouseButton>>>,
     cursor: Query<'w, 's, &'static RelativeCursorPosition, With<Board>>,
     quantity: Query<'w, 's, (&'static QuantityButton, &'static RelativeCursorPosition)>,
+    context: Query<'w, 's, (&'static ContextAction, &'static RelativeCursorPosition)>,
 }
 
 #[derive(Component, Clone, Copy)]
@@ -77,6 +99,10 @@ enum QuantityButton {
 
 #[derive(Component)]
 pub(in crate::input) struct QuantityControls;
+#[derive(Component)]
+pub(in crate::input) struct ContextControls;
+#[derive(Component)]
+pub(in crate::input) struct ContextLabel(ContextAction);
 
 #[derive(Component)]
 pub(in crate::input) struct Board;
@@ -177,6 +203,13 @@ fn merge_plan(source: &ProjectedItem, target: &ProjectedItem) -> Result<(u16, u1
 pub(super) fn reconcile(panel: &mut Panel, inventory: &State, raid: u32, client: u64) {
     let grid = inventory.owned_grid(raid, client);
     let session = inventory.grid_session();
+    if let Some(context) = panel.context
+        && (session != Some(context.session)
+            || grid.is_none_or(|grid| grid.version != context.version))
+    {
+        panel.context = None;
+        panel.feedback = Some("Item menu closed: inventory changed");
+    }
     if let Some(drag) = panel.drag
         && (session != Some(drag.session) || grid.is_none_or(|grid| grid.version != drag.version))
     {
@@ -284,6 +317,66 @@ pub(super) fn interact(
         .ok()
         .and_then(|cursor| cell_at(cursor, grid.size));
     let mouse = pointer.buttons.as_deref();
+    if let Some(context) = panel.context.as_mut() {
+        if panel.drag.is_some_and(|drag| drag.mouse)
+            && mouse.is_some_and(|buttons| !buttons.pressed(MouseButton::Left))
+        {
+            panel.drag = None;
+        }
+        if keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::Tab) {
+            context.focus = (context.focus + 1) % CONTEXT_ACTIONS.len();
+        } else if keys.just_pressed(KeyCode::ArrowUp) {
+            context.focus = (context.focus + CONTEXT_ACTIONS.len() - 1) % CONTEXT_ACTIONS.len();
+        }
+        let action = if mouse.is_some_and(|b| b.just_pressed(MouseButton::Left)) {
+            pointer
+                .context
+                .iter()
+                .find_map(|(action, cursor)| cursor.cursor_over.then_some(*action))
+                .or(Some(ContextAction::Close))
+        } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+            Some(CONTEXT_ACTIONS[context.focus].0)
+        } else {
+            None
+        };
+        if let Some(action) = action {
+            let item = context.item;
+            panel.context = None;
+            match action {
+                ContextAction::Inspect => {
+                    panel.drag = None;
+                    panel.inspect(item);
+                }
+                ContextAction::Drop => {
+                    panel.drag = None;
+                    panel.request_drop(inventory, client, raid, owner, item);
+                }
+                ContextAction::Close => (),
+            }
+        }
+        return true;
+    }
+    let right_click = mouse.is_some_and(|buttons| buttons.just_pressed(MouseButton::Right));
+    let menu_key = keys.just_pressed(KeyCode::ContextMenu) || keys.just_pressed(KeyCode::F10);
+    if (right_click || menu_key) && panel.drag.is_none_or(|drag| drag.split.is_none()) {
+        let selected = if right_click {
+            cell.and_then(|cell| item_at(grid, cell)).map(|(id, _)| *id)
+        } else {
+            panel
+                .selected
+                .filter(|selected| grid.items.iter().any(|(id, _)| id == selected))
+        };
+        if let Some(item) = selected {
+            panel.selected = Some(item);
+            panel.context = Some(Context {
+                session,
+                version: grid.version,
+                item,
+                focus: 0,
+            });
+        }
+        return true;
+    }
     if panel.drag.is_none() {
         let pressed = mouse.is_some_and(|buttons| buttons.just_pressed(MouseButton::Left));
         let keyboard = keys.just_pressed(KeyCode::Enter);
@@ -407,6 +500,10 @@ pub(super) fn interact(
         keys.just_pressed(KeyCode::Enter) || split_click
     };
     if !submit {
+        // The mouse may have been released while a context menu covered the drag.
+        if drag.mouse && mouse.is_some_and(|buttons| !buttons.pressed(MouseButton::Left)) {
+            panel.drag = None;
+        }
         return true;
     }
     let drag = panel.drag.take().unwrap();
@@ -551,6 +648,16 @@ pub(in crate::input) fn setup(mut commands: Commands) {
                         )).with_child((FocusPolicy::Pass, Text::new(label), TextFont::from_font_size(14.0)));
                     }
                 });
+            parent.spawn((ContextControls, Node { display: Display::None, column_gap: Val::Px(5.0), ..default() }))
+                .with_children(|buttons| {
+                    for (action, label) in CONTEXT_ACTIONS {
+                        buttons.spawn((
+                            action, RelativeCursorPosition::default(),
+                            Node { padding: UiRect::all(Val::Px(7.0)), ..default() },
+                            BackgroundColor(Color::srgb(0.17, 0.29, 0.40)),
+                        )).with_child((ContextLabel(action), FocusPolicy::Pass, Text::new(label), TextFont::from_font_size(14.0)));
+                    }
+                });
         });
 }
 
@@ -578,8 +685,19 @@ type DrawKey = (
 
 type BoardNode<'w, 's> =
     Single<'w, 's, (Entity, &'static mut Node), (With<Board>, Without<GridRoot>)>;
-type QuantityNode<'w, 's> =
-    Single<'w, 's, &'static mut Node, (With<QuantityControls>, Without<GridRoot>, Without<Board>)>;
+type QuantityNode<'w, 's> = Single<
+    'w,
+    's,
+    &'static mut Node,
+    (
+        With<QuantityControls>,
+        Without<GridRoot>,
+        Without<Board>,
+        Without<ContextControls>,
+    ),
+>;
+type ContextNode<'w, 's> =
+    Single<'w, 's, &'static mut Node, (With<ContextControls>, Without<GridRoot>, Without<Board>)>;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::input) fn present(
@@ -589,7 +707,9 @@ pub(in crate::input) fn present(
     mut root: Single<&mut Node, With<GridRoot>>,
     mut board: BoardNode,
     mut quantity: QuantityNode,
-    mut message: Single<&mut Text, With<Feedback>>,
+    mut message: Single<&mut Text, (With<Feedback>, Without<ContextLabel>)>,
+    mut context_node: ContextNode,
+    mut context_labels: Query<(&ContextLabel, &mut Text), Without<Feedback>>,
     tiles: Query<Entity, With<Tile>>,
     mut last: Local<Option<DrawKey>>,
 ) {
@@ -597,6 +717,28 @@ pub(in crate::input) fn present(
         .owned_grid(session.raid.raid_id, player.0)
         .filter(known_grid);
     let visible = panel.open && panel.inspection.is_none();
+    context_node.display = if visible && panel.context.is_some() {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if let Some(context) = panel.context {
+        for (action, mut text) in &mut context_labels {
+            let (index, (_, label)) = CONTEXT_ACTIONS
+                .iter()
+                .enumerate()
+                .find(|(_, (candidate, _))| *candidate == action.0)
+                .unwrap();
+            let label = if index == context.focus {
+                format!("› {label}")
+            } else {
+                (*label).to_owned()
+            };
+            if text.as_str() != label {
+                **text = label;
+            }
+        }
+    }
     let choosing = panel.drag.and_then(|d| d.split).filter(|s| s.choosing);
     quantity.display = if visible && choosing.is_some() {
         Display::Flex
@@ -642,7 +784,21 @@ pub(in crate::input) fn present(
     let valid = merging
         .as_ref()
         .map_or(verdict == Some(Ok(())), |(_, plan)| plan.is_ok());
-    let label = if let Some(split) = choosing {
+    let label = if let Some(context) = panel.context {
+        grid.items
+            .iter()
+            .find(|(id, _)| *id == context.item)
+            .map_or_else(
+                || "Item menu".to_owned(),
+                |(_, item)| {
+                    format!(
+                        "{} ×{} · arrows / Enter · Esc",
+                        planned_items()[item.definition.as_str()].name,
+                        item.quantity
+                    )
+                },
+            )
+    } else if let Some(split) = choosing {
         format!(
             "Split {} / {} · arrows or −/+ · Enter to choose",
             split.quantity, split.maximum
@@ -1012,6 +1168,115 @@ mod tests {
         assert!(panel.pending.is_none());
         assert_eq!(panel.feedback, Some("Move rejected: inventory changed"));
         assert!(app.world().resource::<State>().owned_grid(1, 7).is_none());
+        assert!(transfer(&mut app, &mut server).is_none());
+    }
+
+    #[test]
+    fn inventory_grid_escape_closes_context_then_drag_then_panel() {
+        let (mut app, _, _) = fixture();
+        key(&mut app, KeyCode::Enter);
+        key(&mut app, KeyCode::ContextMenu);
+        assert!(app.world().resource::<Panel>().context.is_some());
+        for (open, drag) in [(true, true), (true, false), (false, false)] {
+            key(&mut app, KeyCode::Escape);
+            let panel = app.world().resource::<Panel>();
+            assert!(panel.context.is_none());
+            assert!(panel.consumed_escape);
+            assert_eq!((panel.open, panel.drag.is_some()), (open, drag));
+        }
+    }
+
+    #[test]
+    fn inventory_grid_context_drop_targets_the_displayed_revision() {
+        let (mut app, authority, item) = fixture();
+        key(&mut app, KeyCode::ContextMenu);
+        key(&mut app, KeyCode::Tab);
+        key(&mut app, KeyCode::Enter);
+        let mut server = RenetServer::new(data::renet_config());
+        server.add_connection(7, false);
+        let snapshot = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        assert_eq!(
+            transfer(&mut app, &mut server),
+            Some(InventoryRequest::Drop {
+                session: KEY,
+                revision: snapshot.version.revision,
+                item,
+            })
+        );
+        assert_eq!(
+            app.world().resource::<Panel>().feedback,
+            Some("Drop requested; waiting for inventory update")
+        );
+        assert!(
+            app.world()
+                .resource::<State>()
+                .owned_grid(1, 7)
+                .unwrap()
+                .items
+                .iter()
+                .any(|(id, _)| *id == item)
+        );
+
+        key(&mut app, KeyCode::ContextMenu);
+        key(&mut app, KeyCode::ArrowDown);
+        let mut changed = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        changed.version.revision += 1;
+        app.world_mut()
+            .resource_mut::<State>()
+            .apply(InventoryUpdate {
+                session: KEY,
+                body: UpdateBody::Snapshot(changed),
+            });
+        key(&mut app, KeyCode::Enter);
+        assert!(transfer(&mut app, &mut server).is_none());
+        assert!(app.world().resource::<Panel>().context.is_none());
+    }
+
+    #[test]
+    fn inventory_grid_mouse_context_inspects_without_sending_an_operation() {
+        let (mut app, _, selected) = fixture();
+        let board = app
+            .world_mut()
+            .query_filtered::<Entity, With<Board>>()
+            .single(app.world())
+            .unwrap();
+        *app.world_mut()
+            .get_mut::<RelativeCursorPosition>(board)
+            .unwrap() = RelativeCursorPosition {
+            cursor_over: true,
+            normalized: Some(Vec2::splat(-0.375)),
+        };
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Right);
+        app.update();
+        assert_eq!(
+            app.world().resource::<Panel>().context.unwrap().item,
+            selected
+        );
+
+        let inspect = app
+            .world_mut()
+            .query::<(Entity, &ContextAction)>()
+            .iter(app.world())
+            .find_map(|(entity, action)| (*action == ContextAction::Inspect).then_some(entity))
+            .unwrap();
+        app.world_mut()
+            .get_mut::<RelativeCursorPosition>(inspect)
+            .unwrap()
+            .cursor_over = true;
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.clear();
+        mouse.press(MouseButton::Left);
+        app.update();
+        let panel = app.world().resource::<Panel>();
+        assert!(panel.context.is_none());
+        assert_eq!(panel.inspection.unwrap().item, selected);
+        let mut server = RenetServer::new(data::renet_config());
+        server.add_connection(7, false);
         assert!(transfer(&mut app, &mut server).is_none());
     }
 
