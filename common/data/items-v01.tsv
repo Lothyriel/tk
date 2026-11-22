@@ -1,0 +1,271 @@
+id	nome	grade	massa_g	stack_max	maior_dim_cm	perfil	finalidade	direcao_visual
+med.bandage	Bandagem estéril	1x1	35	3	10	med_bleed	1 aplicação; conter sangramento externo leve	U rolo de gaze em papel branco com dobra e lacre
+med.pressure_dressing	Curativo compressivo	1x1	90	2	14	med_bleed	1 aplicação; compressão de ferida externa	U pacote espesso com almofada e fecho
+med.tourniquet	Torniquete de catraca	1x1	80	1	16	med_bleed	1 aplicação; sangramento de membro, alvo regional	U fita dobrada preta, haste e presilha visíveis
+med.elastic_wrap	Faixa elástica	1x1	65	2	12	med_future	Futuro suporte e contenção, não reparar osso inexistente	V:bandage trama bege mais larga e presilhas
+med.hemostatic_gauze	Gaze hemostática	1x1	45	2	11	med_bleed	1 aplicação; maior controle externo com tempo próprio	U envelope sanfonado com gaze compacta
+med.adhesive_dressing	Curativo adesivo	1x1	25	4	9	med_future	Futuro tratamento superficial sem sangramento ativo	U cartela plana com tiras individuais
+med.firstaid_pouch	Kit de primeiros socorros	2x2	420	1	20	med_tissue	Pool limitado para tecido lesionado não fatal	U estojo nylon vermelho, zíper e divisórias
+med.trauma_kit	Kit de trauma	2x2	850	1	26	med_tissue	Pool maior e ação mais longa; não cura órgãos	V:firstaid_pouch bolsa rígida com alça e pacotes internos
+med.field_dressing_kit	Kit de curativos de campo	1x2	260	1	21	med_bleed	3 cargas de curativo externo	U bolsa verde retangular com tampa e passadores
+med.pain_tablets	Analgésico em blister	1x1	30	1	10	med_future	6 doses futuras; sintomas de dor ainda sem sistema	U blister prateado com seis relevos
+med.antiinflammatory	Anti-inflamatório	1x1	55	1	9	med_future	10 doses futuras; não restaurar membro/órgão	U frasco âmbar baixo com tampa branca
+med.analgesic_injector	Autoinjetor analgésico	1x1	45	1	15	med_future	1 dose futura para dor; sem buff de dano	U cilindro azul com trava e janela
+med.stimulant_injector	Autoinjetor estimulante	1x1	50	1	15	med_future	1 dose futura; efeito/risco depende de status acordado	V:analgesic_injector corpo prismático, capuz e marcação distinta
+med.antiseptic	Antisséptico	1x1	140	1	12	med_future	100 ml; limpeza futura, não cura sangue	U frasco castanho translúcido com bico
+med.alcohol_wipes	Lenços antissépticos	1x1	40	4	9	med_future	Pacote lacrado; preparação de tratamento futura	U envelopes finos empilhados com cantos selados
+med.saline500	Bolsa de solução salina 500 ml	1x2	540	1	22	med_future	Suporte clínico futuro; não contar como sangue	U bolsa translúcida achatada com duas portas
+med.blood250	Bolsa de sangue 250 ml	1x2	290	1	18	med_blood	Reposição futura controlada de sangue; embalagem lacrada	V:saline500 bolsa menor vermelho escuro com etiqueta
+med.blood500	Bolsa de sangue 500 ml	1x2	560	1	24	med_blood	Maior volume futuro e massa proporcional	V:blood250 bolsa mais larga, cheia e dois tubos
+med.suture_kit	Kit de sutura	1x2	160	1	18	med_future	3 aplicações futuras de procedimento; sem regeneração mágica	U estojo aço com fio, agulha e pinça
+med.surgical_roll	Rolo cirúrgico	2x2	620	1	28	med_future	Procedimentos futuros de tecido/órgão com contrato próprio	U rolo de lona aberto com instrumentos distintos
+med.scissors	Tesoura de trauma	1x1	75	1	18	med_future	Ferramenta futura de preparação de curativo	U lâminas anguladas aço e anéis pretos
+med.splint_fold	Tala dobrável	1x2	130	1	24	med_future	Imobilização futura; fraturas ainda não existem	U lâmina espuma laranja dobrada em sanfona
+med.splint_rigid	Tala rígida	1x3	280	1	42	med_future	Suporte longo futuro com restrição volumétrica	U canal rígido perfurado e tiras de velcro
+med.chest_seal	Selo torácico	1x1	45	2	14	med_future	Lesão torácica futura; não zera sangramento interno atual	U envelope quadrado com disco e válvula
+med.burn_dressing	Curativo para queimadura	1x1	110	2	13	med_future	Queimadura futura; item médico inspecionável agora	U pacote gel espesso com aba de abertura
+med.gloves_sterile	Luvas estéreis	1x1	22	4	12	med_future	Material de procedimento futuro	U envelope com duas luvas dobradas reconhecíveis
+med.iv_set	Equipo intravenoso	1x2	85	2	20	med_future	Consumível clínico futuro para infusão	U tubo enrolado, câmara gotejadora e conectores
+med.thermometer	Termômetro clínico	1x1	35	1	14	med_future	Diagnóstico futuro; sem temperatura corporal simulada	U haste branca fina, display e ponta metálica
+food.water500	Água potável 500 ml	1x2	530	1	21	food	500 ml; hidratação S3, uso parcial	U garrafa PET transparente nervurada com tampa azul
+food.water1000	Água potável 1 L	1x3	1040	1	29	food	1000 ml; mais volume, peso e porções	V:water500 ombros altos, base larga e nervuras diferentes
+food.canteen	Cantil cheio 750 ml	1x2	920	1	22	food	750 ml; hidratação, futura recarga sem duplicar recipiente	U corpo achatado verde, corrente e tampa roscada
+food.energy_drink	Bebida energética 250 ml	1x1	280	1	13	food	Hidratação/energia em porção; sem buff instantâneo irreal	U lata fina com anel, grafismo autoral âmbar
+food.isotonic	Bebida isotônica 500 ml	1x2	550	1	22	food	Reposição hídrica e energia pequena	V:water500 gargalo largo, sulcos de pegada e líquido laranja
+food.juice	Suco em caixa 200 ml	1x1	220	1	12	food	Porção de líquido e energia	U caixa laminada com dobra e canudo
+food.soda	Refrigerante 330 ml	1x1	360	1	12	food	Porção energética e hídrica	V:energy_drink lata mais larga com gravação e marca autoral
+food.tea_bottle	Chá engarrafado 500 ml	1x2	550	1	22	food	Hidratação e energia reduzida	V:water500 garrafa facetada âmbar com rótulo próprio
+food.mre	Ração de campanha	2x2	650	1	28	food	3 porções; energia, peso remanescente	U pouch retangular bege com múltiplos sachês
+food.ration_compact	Ração compacta	1x2	250	1	16	food	2 porções densas; pouca água	U bloco laminado com tabletes marcados
+food.beef_can	Carne em conserva	1x1	360	1	9	food	1 porção energética, lata aberta no uso	U lata baixa larga com chave e relevo
+food.fish_tin	Peixe em conserva	1x1	180	1	12	food	1 porção; forma oval distinta	U lata oval baixa com tampa de puxar
+food.beans_can	Feijão enlatado	1x2	440	1	13	food	2 porções; energia e umidade	V:beef_can lata alta com aros e rótulo de grãos
+food.fruit_can	Fruta em calda	1x2	450	1	13	food	2 porções; líquido/energia	V:beans_can lata mais larga e relevo de fruta
+food.protein_bar	Barra proteica	1x1	65	3	13	food	1 porção individual; stack só lacrado	U barra espessa em embalagem metalizada
+food.cereal_bar	Barra de cereal	1x1	40	3	12	food	1 porção leve com energia menor	V:protein_bar barra fina irregular com janela de cereal
+food.crackers	Biscoitos secos	1x1	130	2	15	food	1 pacote; energia sem hidratação	U pacote cilíndrico com dobras nas pontas
+food.nuts	Castanhas	1x1	150	2	14	food	1 pacote denso em energia	U saco baixo com janela e frutos voxel internos
+food.chocolate	Chocolate amargo	1x1	100	2	16	food	1 porção; tablete segmentado	U barra plana com papel rasgado e quadrados
+food.dried_meat	Carne desidratada	1x1	100	2	17	food	1 porção salgada, sem hidratação	U pouch com zíper e tiras irregulares visíveis
+elec.battery_aa	Par de pilhas AA	1x1	48	4	6	electronic	Futura alimentação de dispositivos portáteis; escritório	U dois cilindros metálicos em blister com polos
+elec.battery9v	Bateria de 9 V	1x1	45	3	5	electronic	Futuros sensores; oficina	U bloco arredondado com dois terminais assimétricos
+elec.battery_lithium	Célula de lítio	1x1	70	3	7	electronic	Futura alimentação de lanterna; oficina	U cilindro comprido com isolador e terminal
+elec.powerbank	Bateria externa	1x1	240	1	14	electronic	Reserva elétrica futura; escritório	U bloco preto chanfrado com portas e LEDs
+elec.cable_usb	Cabo USB	1x1	45	3	12	electronic	Conexão futura e loot eletrônico	U fio enrolado com conectores distintos
+elec.cable_network	Cabo de rede	1x1	120	2	16	electronic	Manutenção futura de comunicação	U espiral azul e plugues transparentes com trava
+elec.wire_spool	Bobina de fio de cobre	1x2	420	1	18	electronic	Material condutor futuro; oficina	U carretel preto com enrolamento cobre real
+elec.pcb	Placa de circuito	1x1	90	2	14	electronic	Componente de manutenção futuro	U placa verde irregular com capacitores e trilhas
+elec.ssd	SSD de 2,5 polegadas	1x1	70	1	10	electronic	Loot compacto de escritório; dados/upgrade futuros	U caixa fina aço escuro com conector SATA e parafusos
+elec.hdd	Disco rígido mecânico	1x2	450	1	15	electronic	Armazenamento futuro distinto de SSD	U chassis aço alto, placa inferior e tampa estampada
+elec.ram	Módulo de memória	1x1	25	3	13	electronic	Componente de computador futuro	U placa estreita com chips pretos e contatos dourados
+elec.cpu	Processador	1x1	40	2	5	electronic	Componente valioso de processamento	U quadrado com dissipador metálico e substrato verde
+elec.gpu	Placa gráfica	2x2	850	1	29	electronic	Componente volumoso de alto valor relativo futuro	U placa longa com duas ventoinhas, dissipador e bracket
+elec.psu	Fonte de computador	2x2	1500	1	16	electronic	Manutenção elétrica futura	U caixa perfurada com ventoinha e chicote de cabos
+elec.fan	Ventoinha de refrigeração	1x1	130	2	12	electronic	Componente mecânico/elétrico futuro	U moldura quadrada vazada com pás radiais
+elec.fuse_pack	Cartela de fusíveis	1x1	50	3	10	electronic	Proteção de circuito futura	U tubos de vidro e terminais em suporte
+elec.relay	Relé industrial	1x1	85	3	6	electronic	Controle elétrico futuro; oficina	U caixa translúcida com bobina e pinos inferiores
+elec.capacitor_pack	Capacitores	1x1	75	3	10	electronic	Material eletrônico futuro	U cilindros de alturas distintas com fios radiais
+elec.radio_handheld	Rádio portátil	1x2	310	1	24	electronic	Comunicação futura; loot de segurança	U corpo robusto, antena flexível, PTT e display
+elec.radio_broken	Rádio avariado	1x2	280	1	23	electronic	Componente recuperável futuro, condition=damaged	V:radio_handheld antena partida e carcaça aberta
+elec.radio_base	Transceptor de bancada	2x2	2100	1	26	electronic	Equipamento de comunicação futuro	U chassis ventilado, dial e microfone espiralado
+elec.sensor_motion	Sensor de movimento	1x1	110	1	9	electronic	Detecção futura; segurança	U carcaça branca com lente fresnel facetada
+elec.sensor_pressure	Transdutor de pressão	1x1	150	1	9	electronic	Automação futura; oficina	U rosca aço, corpo sextavado e conector
+elec.camera_module	Módulo de câmera	1x1	60	1	6	electronic	Reconhecimento futuro; escritório	U PCB com lente circular elevada e flat cable
+elec.gps_board	Placa receptora GNSS	1x1	45	1	7	electronic	Componente de navegação futuro	U placa azul com patch cerâmico quadrado
+elec.multimeter	Multímetro digital	1x2	330	1	19	electronic	Diagnóstico elétrico futuro	U capa amarela, seletor circular e duas pontas
+elec.router	Roteador de rede	2x1	420	1	22	electronic	Comunicação de escritório futura	U caixa plana, duas antenas e fileira de portas
+elec.screen_cracked	Tela quebrada	2x2	480	1	24	electronic	Recuperação de componentes futura, condition=damaged	U painel fino rachado, moldura solta e cabo flat
+ind.bolts	Parafusos sextavados	1x1	180	4	10	industrial	Fixação futura; oficina	U caixa aberta com parafusos de cabeça sextavada
+ind.nuts	Porcas e arruelas	1x1	160	4	9	industrial	Fixação futura; oficina	U saco com anéis e porcas vazadas
+ind.nails	Pregos	1x1	250	3	11	industrial	Construção futura; armazém	U caixa estreita com hastes e cabeças planas
+ind.screws	Parafusos autoatarraxantes	1x1	150	3	9	industrial	Montagem leve futura	V:bolts caixa menor com pontas e cabeças cruzadas
+ind.pliers	Alicate universal	1x2	250	1	19	industrial	Ferramenta futura de manutenção	U mandíbulas dentadas, articulação e dois cabos
+ind.wire_cutter	Alicate de corte	1x1	180	1	15	industrial	Corte de fio futuro	V:pliers cabeça curta diagonal e cabos isolados
+ind.adjustable_wrench	Chave ajustável	1x2	380	1	25	industrial	Montagem mecânica futura	U aço fosco, mordente móvel e rosca
+ind.spanner_set	Jogo de chaves de boca	1x2	620	1	24	industrial	Ferramentas futuras com tamanhos diferentes	U suporte com três chaves de bocas abertas
+ind.screwdriver	Chave de fenda	1x2	120	1	22	industrial	Manutenção futura	U cabo âmbar translúcido e ponta chata
+ind.precision_driver	Kit de chaves de precisão	1x1	180	1	13	industrial	Eletrônicos futuros	U estojo fino com bits e cabo esguio
+ind.hex_keys	Chaves hexagonais	1x1	150	1	10	industrial	Montagem futura de peças	U leque de hastes em L de tamanhos distintos
+ind.hammer	Martelo	1x2	650	1	31	industrial	Construção futura, não arma melee automática	U cabeça aço com unha e cabo madeira
+ind.rubber_mallet	Marreta de borracha	1x2	520	1	30	industrial	Montagem sem impacto metálico futura	U cilindro preto grande e cabo curto
+ind.hand_drill	Furadeira manual	2x2	1500	1	26	industrial	Perfuração futura; bateria própria não sistema novo	U carcaça azul, mandril, gatilho e pack
+ind.drill_bits	Jogo de brocas	1x1	220	1	14	industrial	Consumível de perfuração futuro	U estojo com espirais de comprimentos diferentes
+ind.hacksaw	Arco de serra	3x1	480	1	40	industrial	Corte futuro	U arco aberto vermelho e lâmina estreita dentada
+ind.file	Lima metálica	1x2	220	1	28	industrial	Acabamento futuro	U haste plana texturada com cabo madeira
+ind.utility_knife	Estilete de oficina	1x1	90	1	16	industrial	Ferramenta futura, sem duplicar melee	U trilho metal, slider e ponta segmentada
+ind.tape_measure	Trena	1x1	240	1	8	industrial	Medição futura	U caixa amarela com clip e fita curva curta
+ind.duct_tape	Fita reforçada	1x1	210	2	12	industrial	Reparo futuro	U rolo cinza largo com núcleo oco e trama
+ind.electrical_tape	Fita isolante	1x1	70	3	7	industrial	Isolamento futuro	V:duct_tape rolo fino preto e núcleo menor
+ind.epoxy	Adesivo epóxi	1x1	100	2	15	industrial	Junção futura	U duas seringas ligadas com êmbolos
+ind.glue_tube	Adesivo de contato	1x1	120	2	17	industrial	Reparo de tecido futuro	U tubo amassado com tampa roscada e crimpagem
+ind.lubricant	Óleo lubrificante	1x2	330	1	20	industrial	Manutenção futura, sem desgaste de arma antecipado	U lata alta com bico fino e tampa
+ind.grease	Graxa mecânica	1x1	300	1	10	industrial	Manutenção de rolamentos futura	U pote baixo com tampa serrilhada e massa escura
+ind.bearing	Rolamento	1x1	180	3	7	industrial	Componente mecânico futuro	U dois anéis concêntricos com esferas
+ind.gear	Engrenagem	1x1	260	2	10	industrial	Transmissão futura	U disco aço dentado com cubo e furo
+ind.belt	Correia de transmissão	1x1	140	2	18	industrial	Manutenção futura	U laço de borracha dentada dobrado
+ind.hose	Mangueira reforçada	1x2	450	1	24	industrial	Fluidos industriais futuros	U espiral grossa com trama e abraçadeiras
+ind.spark_plug	Vela de ignição	1x1	55	4	9	industrial	Motor futuro; loot de oficina	U cerâmica estriada, sextavado e eletrodo
+ind.filter	Filtro de óleo	1x1	320	1	13	industrial	Manutenção de motor futura	U cilindro metálico com base roscada e furos
+ind.chain	Corrente de aço	1x2	1100	1	24	industrial	Componente pesado futuro	U elos grossos interligados em dobra
+home.soap	Sabão em barra	1x1	180	3	10	household	Limpeza futura; lavanderia	U bloco creme com cantos gastos e gravação autoral
+home.detergent	Detergente	1x2	550	1	24	household	Limpeza futura; cozinha	U frasco estreito verde com bico articulado
+home.bleach	Alvejante	1x2	1100	1	28	household	Limpeza futura; depósito	U frasco opaco com alça e tampa de segurança
+home.disinfectant	Desinfetante doméstico	1x2	600	1	25	household	Limpeza futura, não medicamento	U spray transparente com gatilho
+home.sponge	Esponjas	1x1	35	4	12	household	Material de limpeza futuro	U três blocos porosos com face abrasiva
+home.brush	Escova de limpeza	1x1	100	2	16	household	Manutenção doméstica futura	U base madeira e tufos de cerdas
+home.cloth	Pano de algodão	1x1	120	3	18	household	Tecido reutilizável futuro	U pano dobrado com bainha e trama
+home.ripstop	Tecido ripstop	1x2	320	2	25	household	Reparo de mochila futuro	U rolo fino verde com trama quadriculada
+home.fleece	Manta de fleece	2x2	650	1	35	household	Isolamento futuro e loot volumoso	U manta enrolada grossa com borda macia
+home.sewing	Kit de costura	1x1	90	1	12	household	Reparo têxtil futuro	U caixa com carretéis, agulha e botões
+home.thread	Carretéis de linha	1x1	60	3	8	household	Insumo têxtil futuro	U três carretéis com bobinamento
+home.zipper	Zíper de reposição	1x1	40	4	15	household	Reparo de bolsa futuro	U tira dentada enrolada com cursor
+home.buttons	Botões e fivelas	1x1	75	3	10	household	Material de vestuário futuro	U saco transparente com discos e fivelas
+home.plastic_bottle	Garrafa vazia reutilizável	1x2	90	2	22	household	Recipiente futuro; não hidrata	U frasco rígido transparente sem líquido e boca larga
+home.glass_jar	Pote de vidro	1x1	240	1	12	household	Armazenamento de material futuro	U cilindro largo transparente com tampa metálica
+home.food_box	Pote doméstico hermético	2x1	180	1	20	household	Recipiente futuro, sem inventário interno neste perfil	U caixa translúcida com quatro travas
+home.metal_cup	Caneca metálica	1x1	140	2	10	household	Utensílio futuro	U cilindro oco com alça angular
+home.cutlery	Talheres	1x1	110	2	19	household	Utensílio de provisões futuro	U garfo, colher côncava e faca sem fio em conjunto
+home.kettle	Chaleira	2x2	720	1	24	household	Preparo de água futuro	U corpo bojudo metal, bico curvo e alça alta
+home.pan	Frigideira	2x3	950	1	40	household	Preparo de comida futuro	U disco côncavo preto com cabo comprido
+home.candle	Velas de cera	1x1	150	3	14	household	Iluminação futura	U dois cilindros de cera com pavio
+home.matches	Caixa de fósforos	1x1	20	5	6	household	Ignição futura	U gaveta de papel com palitos e faixa abrasiva
+home.lighter	Isqueiro	1x1	25	2	8	household	Ignição futura	U corpo plástico, roda aço e protetor
+home.trash_bags	Sacos resistentes	1x1	180	2	15	household	Material impermeável futuro	U rolo preto com bordas de folhas
+home.rope	Corda de nylon	1x2	600	1	24	household	Amarração futura, sem escalada implícita	U feixe trançado com duas pontas fundidas
+home.towel	Toalha	1x2	400	1	26	household	Material absorvente futuro	U tecido felpudo dobrado em camadas
+home.toilet_paper	Papel higiênico	1x1	100	2	11	household	Suprimento cotidiano futuro	U rolo branco oco com ponta solta
+home.toothpaste	Creme dental	1x1	130	2	17	household	Higiene futura	V:ind.glue_tube tubo branco com tampa larga e ondulação
+home.shampoo	Xampu	1x2	360	1	21	household	Higiene futura	U frasco oval com tampa flip-top
+home.reusable_bag	Sacola de tecido dobrada	1x1	110	2	17	household	Material reutilizável futuro; não capacidade oculta	U tecido bege dobrado com alças expostas
+value.watch_mechanical	Relógio mecânico	1x1	120	1	9	valuable	Objeto colecionável e valor futuro; cofre	U mostrador analógico, coroa e pulseira articulada
+value.watch_pocket	Relógio de bolso	1x1	150	1	7	valuable	Coleção de mecanismo histórico	U disco latão com tampa gravada e corrente
+value.ring_gold	Anel de ouro	1x1	8	1	3	valuable	Joalheria e valor futuro	U aro fino dourado com engaste facetado
+value.necklace_silver	Colar de prata	1x1	40	1	12	valuable	Joalheria e valor futuro	U corrente enrolada e pingente geométrico
+value.bracelet	Bracelete trabalhado	1x1	55	1	8	valuable	Artesanato colecionável	U aro largo com relevo entrelaçado
+value.earrings	Par de brincos	1x1	12	1	5	valuable	Joalheria e valor futuro	U dois pendentes com pedras distintas e fecho
+value.coin_silver	Moeda de prata antiga	1x1	25	3	4	valuable	Numismática, emissão autoral identificável	U disco prateado com borda serrilhada e relevo
+value.coin_gold	Moeda de ouro comemorativa	1x1	31	2	4	valuable	Numismática com liga e espessura próprias	V:coin_silver disco grosso, relevo autoral e metal dourado
+value.coin_album	Álbum numismático	2x2	650	1	25	valuable	Coleção organizada, sem contêiner de slots	U pasta couro com páginas e cápsulas de moedas
+value.medal	Medalha histórica	1x1	85	1	10	valuable	Objeto narrativo colecionável	U medalhão bronze e fita dobrada
+value.fountain_pen	Caneta-tinteiro	1x1	35	1	14	valuable	Instrumento de escrita de precisão	U corpo preto, clipe dourado e pena bifurcada
+value.camera_film	Câmera analógica	2x2	850	1	16	valuable	Equipamento fotográfico colecionável	U couro preto, lente saliente, dial e visor
+value.lens	Lente fotográfica	1x2	650	1	15	valuable	Óptica de precisão de alto valor	U cilindro com anéis serrilhados e vidro tratado
+value.music_box	Caixa de música	2x2	550	1	18	valuable	Mecanismo colecionável	U caixa madeira com tampa, rolo e pente metálico
+value.statuette	Estatueta de bronze	1x2	950	1	22	valuable	Arte autoral figurativa	U figura de ave em pedestal com asas escalonadas
+value.porcelain	Vaso de porcelana	1x2	480	1	23	valuable	Artesanato frágil	U corpo curvo branco com gargalo estreito e motivo autoral
+value.antique_compass	Bússola antiga	1x1	220	1	9	valuable	Navegação histórica colecionável	U latão com tampa, rosa dos ventos e vidro
+value.jewel_case	Estojo de joias lacrado	2x1	380	1	19	valuable	Valioso selado, não contêiner reutilizável	U caixa veludo com dobradiça e lacre
+value.gold_ingot	Lingote certificado	1x1	500	1	9	valuable	Reserva de material valioso; sem moeda implementada	U prisma dourado trapezoidal com serial autoral
+value.silver_ingot	Lingote de prata	1x2	1000	1	14	valuable	Material valioso pesado	V:gold_ingot prisma mais longo com marcas de fundição
+value.rare_book	Livro técnico raro	2x2	1100	1	29	valuable	Coleção e informação futura	U capa couro gasta, lombada nervurada e páginas
+value.micro_lab	Medidor óptico portátil	2x2	1400	1	24	valuable	Instrumento científico valioso, diagnóstico futuro	U carcaça clara com lente, tela e alça lateral
+mission.classified_folder	Pasta de documentos classificados	2x1	280	1	30	evidence	Leitura de relatório autoral; objetivo futuro de inteligência	U pasta kraft com lacre, abas e folhas
+mission.operations_log	Diário de operações	1x2	350	1	21	evidence	Ler cronologia local; futuro objetivo de investigação	U caderno tecido com elástico e marcadores
+mission.shipping_manifest	Manifesto de carga	1x2	120	1	29	evidence	Identificar rota logística futura	U prancheta fina com folha carimbada e clip
+mission.patient_records	Prontuários de evacuação	2x1	250	1	30	evidence	Evidência hospitalar, dados fictícios autorais	V:classified_folder pasta branca com divisórias coloridas
+mission.lab_notes	Caderno de laboratório	1x2	330	1	22	evidence	Ler amostragens fictícias; missão científica futura	V:operations_log espiral metálica e páginas quadriculadas
+mission.encrypted_drive	Unidade criptografada	1x1	95	1	11	evidence	Inspecionar serial; conteúdo futuro exige contrato	U disco robusto com teclado e selo inviolável
+mission.data_tape	Fita de backup	1x1	180	1	11	evidence	Recuperação de registros futura	U cartucho quadrado com janela e trava
+mission.optical_archive	Discos de arquivo	1x1	120	1	14	evidence	Arquivo documental futuro	U estojo transparente com discos e lombada
+mission.flight_recorder	Gravador de voo	2x2	2600	1	30	evidence	Evidência de acidente; inspeção serial	U caixa laranja com nervuras, beacon e danos
+mission.camera_card	Cartão de evidência digital	1x1	5	1	4	evidence	Registro fotográfico futuro, ID rastreável	U cartão SD com selo numerado e contatos
+mission.soil_sample	Amostra de solo	1x1	220	1	12	evidence	Coleta científica futura; lacrado	U tubo largo com terra estratificada e tampa
+mission.water_sample	Amostra de água	1x1	150	1	12	evidence	Análise ambiental futura; não bebível	V:soil_sample frasco claro fino com líquido e etiqueta
+mission.tissue_sample	Amostra biológica	1x1	90	1	10	evidence	Evidência clínica fictícia lacrada	U pequeno tubo vermelho em suporte protetor
+mission.metal_sample	Amostra metalúrgica	1x1	480	1	10	evidence	Rastrear material industrial futuro	U fragmento irregular aço em saco etiquetado
+mission.chemical_sample	Ampola de reagente	1x1	110	1	12	evidence	Análise de laboratório futura; não consumível	U ampola âmbar em proteção hexagonal
+mission.prototype_board	Placa protótipo	1x2	180	1	20	evidence	Recuperação tecnológica futura	V:elec.pcb placa comprida com jumpers e módulo blindado
+mission.tracking_unit	Unidade rastreadora selada	1x1	240	1	12	evidence	Inspeção serial; objetivo futuro de rastreio	U caixa impermeável com antena embutida e lacre
+mission.beacon_core	Núcleo de baliza	1x2	650	1	20	evidence	Peça narrativa futura de sinalização	U cilindro com aletas, anéis e conector multipino
+mission.access_ledger	Livro de acessos	2x2	800	1	28	evidence	Ler entradas autorais; evidência de segurança	U livro espesso aberto com colunas e marcadores
+mission.map_annotated	Mapa anotado	2x1	80	1	30	evidence	Leitura de croqui local; pistas futuras	U papel dobrado com marcações autorais e cantos gastos
+mission.photo_packet	Envelope de fotografias	1x1	70	1	15	evidence	Inspecionar imagens autorais; narrativa futura	U envelope pardo com fotos parcialmente expostas
+mission.identity_tags	Plaquetas de identificação	1x1	35	1	7	evidence	Identidade narrativa fixa, sem copiar ID real de jogador	U duas chapas aço com corrente e gravação
+mission.sealed_letter	Carta lacrada	1x1	25	1	16	evidence	Leitura autorizada de texto fictício; entrega futura	U envelope creme com selo em relevo
+mission.prototype_sensor	Sensor experimental	2x1	420	1	21	evidence	Recuperação científica futura	U corpo alumínio com duas sondas e cabo protegido
+mission.evidence_case	Maleta de evidências selada	2x3	1800	1	38	evidence	Item único lacrado; não contêiner aberto nem quest pronta	U maleta rígida com lacres numerados e espuma visível
+key.clinic_store	Chave do depósito clínico	1x1	25	1	7	key	accessGroup key.clinic_store; armário médico da slice	U chave curta latão com cabeça oval e dentes próprios
+key.clinic_archive	Chave do arquivo clínico	1x1	22	1	6	key	Arquivo médico; futuro ponto contextual	V:clinic_store cabeça quadrada vazada e perfil dentado distinto
+key.office_safe	Chave do cofre do escritório	1x1	45	1	10	key	Cofre com valiosos; alvo físico na expansão	U chave de gorjas dupla com haste comprida
+key.office_drawer	Chave da gaveta administrativa	1x1	15	1	4	key	Gaveta de documentos	U chave plana pequena com cabeça circular
+key.server_room	Cartão da sala de servidores	1x1	8	1	9	key	Credencial reutilizável para armário eletrônico representativo	U cartão espesso com chip, faixa e impressão autoral
+key.workshop_gate	Chave da oficina	1x1	35	1	8	key	Armário de ferramentas da oficina; não requer novo mapa	U chave aço de perfil dimple com cabeça preta
+key.tool_cabinet	Chave do armário de ferramentas	1x1	20	1	6	key	Caixa industrial trancada	V:office_drawer cabeça triangular e corte distinto
+key.warehouse	Chave do depósito logístico	1x1	40	1	9	key	Baú logístico trancado	U chave grande de latão com anel e haste robusta
+key.power_panel	Chave do painel elétrico	1x1	60	1	7	key	Armário de manutenção, sem rede elétrica simulada	U chave triangular oca com três braços
+key.military_case	Chave da caixa militar	1x1	30	1	7	key	Contêiner militar de loot	V:workshop_gate capa verde com sulco e lâmina larga
+key.security_card	Cartão de segurança	1x1	8	1	9	key	Credencial reutilizável de cofre de segurança	V:server_room janela perfurada, chip em posição própria e credencial
+key.lab_card	Cartão de laboratório	1x1	9	1	9	key	Maleta científica trancada; 10 usos propostos	V:server_room invólucro rígido, contador impresso e contato distinto
+key.visitor_badge	Crachá temporário	1x1	18	1	11	key	Acesso de visitante a contêiner; uso único	U cartão em holder com clip e selo perfurado
+key.archive_card	Cartão do arquivo central	1x1	8	1	9	key	Armário documental; reutilizável	V:server_room faixa larga com recorte e holograma autoral
+key.maintenance_fob	Chaveiro eletrônico de manutenção	1x1	18	1	5	key	Contêiner técnico; RFID reutilizável	U gota plástica azul com aro e bobina em relevo
+key.service_token	Token de serviço	1x1	25	1	6	key	Caixa utilitária; reutilizável	U pastilha aço em cabo curto com contato circular
+key.locker_key	Chave do armário pessoal	1x1	17	1	5	key	Armário de roupa e provisões	V:office_drawer capa numeral, dentes laterais próprios
+key.safe_code_card	Cartão de combinação	1x1	12	1	10	key	Cofre de combinação; credential reference validada no servidor	U cartão laminado dobrável com janela de código autoral
+carry.daypack	Mochila leve de passeio	3x3	650	1	40	backpack	Grade 4x4; 12 kg; 18 L; geral, sem quick access	U nylon cinza, dois zíperes, alças e bolso frontal
+carry.assault_pack	Mochila de assalto	4x4	1400	1	50	backpack	Grade 5x5; 22 kg; 30 L; geral	U mochila verde com passadores, compressão e costas acolchoadas
+carry.hiking_pack	Mochila de caminhada	4x5	1900	1	65	backpack	Grade 5x6; 28 kg; 40 L; geral	U armação alta, barrigueira e tampa superior
+carry.courier_bag	Bolsa de mensageiro	3x2	800	1	38	backpack	Grade 5x3; 10 kg; 16 L; slot mochila	U bolsa transversal retangular com aba e alça larga
+carry.medical_pack	Mochila de resgate	4x4	1700	1	48	backpack	Grades 4x4+2x3; 18 kg; 28 L; médico/provisões/utilitário	U bolsa vermelha com abertura concha e divisórias
+carry.frame_pack	Mochila com armação	4x6	2800	1	78	backpack	Grades 5x7+2x2; 35 kg; 65 L; geral	U tubo externo aço, saco alto e bolsos laterais
+carry.compact_rig	Chest rig compacto	3x3	700	1	38	rig	4 compartimentos 1x2+2 de 1x1; 8 kg; 8 L; mag/med/ammo/util	U tiras finas e quatro pouches abertos
+carry.patrol_rig	Chest rig de patrulha	4x3	1100	1	46	rig	6 de 1x2+2 de 2x1; 12 kg; 12 L; mag/med/ammo/util	U peitoral largo com abas e bolsos horizontais
+carry.recon_rig	Chest rig de reconhecimento	3x3	850	1	40	rig	3 de 1x2+2 de 1x1+1 de 2x2; 9 kg; 10 L; mag/med/ammo/util	U frente estreita e pouch central quadrado
+carry.medic_rig	Chest rig médico	3x3	950	1	42	rig	2 de 1x2+2 de 2x2; 10 kg; 11 L; médico/utilitário	U pouches destacáveis largos e tesoura presa
+carry.heavy_rig	Chest rig de suporte	4x4	1600	1	50	rig	4 de 2x2+2 de 1x2; 16 kg; 18 L; mag/med/ammo/util	U arnês grosso com caixas frontais volumosas
+carry.armored_rig	Chest rig blindado	4x4	6500	1	48	rig	4 de 1x2+2 de 1x1; 12 kg carga; 10 L; torso Heavy/100; exclui armadura	U placa frontal/tras e pouches, alças reforçadas
+carry.medical_case	Estojo médico	2x2	450	1	24	case	Grade 3x3; 3 kg; 4 L; somente med.*	U case branco rígido com cruz autoral e travas
+carry.ammo_case	Caixa portátil de munição	2x3	1800	1	30	case	Grade 4x4; 12 kg; 8 L; cartuchos ammo perfil ammo, não magazines	U caixa aço verde, tampa dobradiça e alça
+carry.keyring	Porta-chaves	1x1	60	1	9	case	6 compartimentos 1x1; 0.3 kg; 0.2 L; chaves mecânicas apenas	U couro dobrável com seis ganchos e botão
+carry.wallet	Carteira	1x1	90	1	11	case	4 compartimentos 1x1; 0.2 kg; 0.15 L; cartões/credenciais, moeda futura	U couro gasto, dobra e slots finos
+carry.document_case	Pasta porta-documentos	2x2	550	1	32	case	Grade 4x3; 2 kg; 3 L; papéis/cartões/mídia, não amostras/maletas	U pasta rígida com fole, fecho e alça baixa
+carry.injector_case	Estojo de injetores	1x2	180	1	18	case	6 compartimentos 1x1; 0.5 kg; 0.6 L; apenas autoinjetores	U case fino espuma com seis recortes cilíndricos
+carry.magazine_case	Estojo de carregadores	2x3	750	1	32	case	6 compartimentos 1x2; 5 kg; 5 L; magazines compatíveis com footprint	U bolsa zíper com seis divisórias verticais
+carry.tool_roll	Bolsa enrolável de ferramentas	2x2	450	1	28	case	4 compartimentos 1x2; 4 kg; 4 L; ferramentas até 28 cm	U lona marrom com bolsos compridos e correias
+wear.helmet_light	Capacete balístico leve	2x2	1300	1	29	armor	Cabeça; proteção atual 22, durabilidade 40; compatível com headset baixo	U casco aramida recortado, borda, suspensão e cinta
+wear.helmet_full	Capacete de cobertura ampla	2x2	1700	1	31	armor	Cabeça; perfil inicial 22/50; bloqueia abafador externo	V:helmet_light orelhas cobertas, casco mais profundo e suspensão
+wear.helmet_bump	Capacete de impacto	2x2	650	1	28	clothing	Cabeça; sem proteção balística, impacto futuro	U casco ventilado, nervuras e pads internos
+wear.vest_soft	Colete de proteção flexível	3x3	2800	1	45	armor	Armadura; Light 18/60, thorax atual	U painéis tecido flexíveis, abas laterais e costura
+wear.plate_carrier	Colete porta-placas	3x3	7200	1	47	armor	Armadura; Heavy 40/100, thorax; sem placas modulares nesta fase	U bolsas de placa rígidas, ombreiras e cummerbund
+wear.vest_extended	Colete balístico alongado	3x4	9500	1	60	armor	Armadura; Heavy 40/120; maior massa, cobertura extra só com contrato	U torso longo com gola e aba inferior, cobertura explicada na UI
+wear.goggles	Óculos fechados de proteção	2x1	180	1	19	clothing	Olhos; proteção de fragmentos futura, sem armor bônus	U lente curva transparente, espuma e tira elástica
+wear.glasses	Óculos balísticos abertos	1x1	45	1	15	clothing	Olhos; forma leve, proteção futura explícita	U duas lentes, ponte e hastes finas
+wear.earmuffs	Abafador passivo	2x1	260	1	20	clothing	Ouvidos; atenuação sonora quando áudio correspondente existir	U conchas grandes, arco e almofadas
+wear.active_headset	Headset eletrônico	2x2	420	1	23	clothing	Ouvidos; perfil de áudio futuro, microfone sem voice chat	V:earmuffs conchas baixas, microfone articulado e módulo bateria
+wear.balaclava	Balaclava	1x1	90	1	24	clothing	Rosto; visual sem proteção balística	U tecido ajustado com recortes olhos/boca
+wear.half_mask	Máscara respiratória parcial	2x1	280	1	18	clothing	Rosto; filtragem futura, não criar gás neste épico	U borracha moldada com dois cartuchos e tiras
+wear.field_shirt	Camisa de campo	2x2	550	1	65	clothing	Torso; acompanha segmentos e não concede armor	U mangas articuladas, gola, bolsos e cotoveleiras têxteis
+wear.tactical_gloves	Luvas de trabalho	1x1	120	1	24	clothing	Mãos; visual local/remoto, sem restaurar mão ausente	U par com dedos articulados e reforços de palma
+wear.field_boots	Botas de campo	2x2	1400	1	31	clothing	Pés; visual no rig, sem penalidade nova implícita	U canos altos, cadarços, biqueira e sola tratorada
+ammo.556_ball	Cartucho 5,56×45 FMJ	1x1	12	60	6	ammo	5,56×45; ballisticRef ball de TAR-16; AR compatível	U estojo gargalo latão, projétil pontudo e espoleta
+ammo.556_ap	Cartucho 5,56×45 penetrante	1x1	12	60	6	ammo	5,56×45; AP atual traduzido por Weapon Systems	V:556_ball ponta e núcleo modelados próprios; marcação discreta
+ammo.556_tracer	Cartucho 5,56×45 traçante	1x1	12	60	6	ammo	5,56×45; efeito traçante depende TAR-13, loot antes	V:556_ball projétil mais longo e marcação da composição
+ammo.556_frangible	Cartucho 5,56×45 frangível	1x1	10	60	6	ammo	5,56×45; perfil de fragmentação futuro TAR-13	V:556_ball ponta de composto com forma curta própria
+ammo.9_ball	Cartucho 9×19 FMJ	1x1	12	50	3	ammo	9×19; MP5, perfil ball	U estojo reto curto com ogiva arredondada
+ammo.9_jhp	Cartucho 9×19 expansivo	1x1	12	50	3	ammo	9×19; hollow point por Weapon Systems	V:9_ball cavidade frontal e cortes na camisa
+ammo.9_subsonic	Cartucho 9×19 subsônico	1x1	15	50	3	ammo	9×19; projétil pesado, velocidade qualificada TAR-13	V:9_ball ogiva alongada e embalagem física própria
+ammo.9_ap	Cartucho 9×19 penetrante	1x1	10	50	3	ammo	9×19; compatibilidade e pressão qualificadas TAR-16	V:9_ball núcleo exposto e perfil pontudo
+ammo.45_ball	Cartucho .45 ACP FMJ	1x1	21	50	3	ammo	.45 ACP; M1911 de TAR-14, não pistol atual 17 tiros	U estojo largo reto e projétil arredondado pesado
+ammo.45_jhp	Cartucho .45 ACP expansivo	1x1	20	50	3	ammo	.45 ACP; perfil expansivo de TAR-13	V:45_ball cavidade larga e camisa segmentada
+ammo.45_flat	Cartucho .45 ACP ponta plana	1x1	20	50	3	ammo	.45 ACP; alimentação deve passar teste da plataforma	V:45_ball ogiva truncada com meplat plano
+ammo.45_bonded	Cartucho .45 ACP expansivo bonded	1x1	21	50	3	ammo	.45 ACP; retenção/expansão futura, não duplicar JHP sem perfil distinto	V:45_jhp geometria da cavidade e vincos próprios; ficha balística obrigatória
+ammo.mag_ar20	Carregador AR 5,56 de 20 tiros	1x2	95	1	13	magazine	Interface AR/STANAG 5,56; 20; TAR-15	U caixa curta quase reta de aço, feed lips e follower
+ammo.mag_ar30	Carregador AR 5,56 de 30 tiros	1x2	120	1	19	magazine	Interface AR/STANAG 5,56; 30; S1 vazio, integração S3	V:mag_ar20 corpo curvo mais alto com nervuras
+ammo.mag_ar40	Carregador AR 5,56 de 40 tiros	1x3	190	1	25	magazine	Interface AR/STANAG 5,56; 40; maior footprint	V:mag_ar30 curva prolongada, base e nervuras próprias
+ammo.mag_ar60	Carregador AR 5,56 de 60 tiros	2x2	450	1	22	magazine	Interface AR 5,56 quad-stack qualificada; 60	U corpo largo afunilado, feed tower e base ampla
+ammo.mag_mp15	Carregador MP5 9 mm de 15 tiros	1x1	110	1	12	magazine	Interface MP5 9×19; 15; não STANAG	U caixa curta curvada com rasgos e ressalto de retenção
+ammo.mag_mp20	Carregador MP5 9 mm de 20 tiros	1x2	130	1	15	magazine	Interface MP5 9×19; 20	V:mag_mp15 corpo médio, curvatura e janela de contagem
+ammo.mag_mp30	Carregador MP5 9 mm de 30 tiros	1x2	170	1	21	magazine	Interface MP5 9×19; 30; substitui 25 legado via contrato	V:mag_mp15 corpo longo curvo com costura e marcações
+ammo.mag_mp50	Tambor MP5 9 mm de 50 tiros	2x2	620	1	24	magazine	Interface MP5 9×19 drum qualificada; 50	U tambor circular com torre de alimentação e tampa nervurada
+ammo.mag_1911_7	Carregador M1911 .45 de 7 tiros	1x1	75	1	11	magazine	Interface Government .45 single-stack; 7; TAR-14	U caixa estreita aço com furos laterais e base lisa
+ammo.mag_1911_8	Carregador M1911 .45 de 8 tiros	1x1	85	1	12	magazine	Interface Government .45 single-stack; 8; TAR-14	V:mag_1911_7 base estendida e follower próprio
+util.compass	Bússola de campo	1x1	90	1	8	utility	Uso atual planejado: orientação pelo yaw/mundo; sem minimapa onisciente	U cápsula verde com tampa espelhada e agulha
+util.map	Mapa dobrável do pátio	2x1	70	1	30	utility	Uso: mapa estático autoral do cenário conhecido, sem revelar inimigos	U folhas dobradas com vias e legenda local
+util.flashlight	Lanterna de mão	1x2	220	1	18	utility	Uso: luz portátil ligada/desligada, carga finita na integração utilitária	U cilindro preto, refletor, lente e botão traseiro
+util.chemical_light	Bastão luminoso	1x1	35	3	15	utility	Uso: marcador luminoso temporário após ativar e descartar	U tubo translúcido com gancho e ampola interior
+util.signal_flare	Sinalizador manual	1x2	250	1	25	utility	Uso: sinal luminoso temporário, sem munição/explosivo novo	U tubo vermelho com tampa puxador e base texturada
+util.signal_mirror	Espelho de sinalização	1x1	60	1	10	utility	Finalidade futura de sinal; inspeção ótica atual	U placa polida com furo central e cordão
+util.binoculars	Binóculo compacto	2x1	480	1	17	utility	Uso: inspeção distante com zoom limitado; não óptica de arma	U dois tubos, ponte, roda de foco e oculares
+util.rangefinder	Telêmetro portátil	1x2	320	1	14	utility	Uso: distância ao raycast visível, sem alvo atrás de parede	U corpo assimétrico com duas janelas frontais e display
+util.multitool	Multiferramenta dobrável	1x1	240	1	11	utility	Ferramenta de manutenção futura; inspecionável agora	U dois cabos aço, alicate e lâminas recolhidas
+util.marker_beacon	Baliza de marcação	1x2	380	1	18	utility	Uso: baliza luminosa com estado/timer replicados; sem missão fake	U caixa selada com LED superior, botão e pé magnético

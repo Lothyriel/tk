@@ -13,6 +13,7 @@ pub use assembly::*;
 mod mechanics;
 pub use mechanics::*;
 pub mod item_grid;
+pub mod item_manifest;
 
 pub const CATALOG_VERSION: u32 = 2;
 pub const CATALOG_FILE: &str = "common/data/catalog.ron";
