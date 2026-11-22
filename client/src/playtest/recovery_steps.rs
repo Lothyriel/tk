@@ -181,17 +181,35 @@ pub(super) fn observe(
     match actor.pose.mode {
         PhysicalMode::Fallen if review.fallen.is_none() && actor.pose.physical.is_some() => {
             assert!(!ids.is_empty());
+            info!(
+                "RECOVERY EVENT Fallen identity={identity:?} local={} snapshot={snapshot} t={now:.6} attached={}",
+                id.0,
+                ids.len()
+            );
             review.fallen = Some((snapshot, ids));
         }
         PhysicalMode::Recovering => {
             let (fall, initial) = review.fallen.as_ref().expect("skipped articulated fall");
             assert!(snapshot > *fall && actor.pose.physical.is_some());
             assert_eq!(&ids, initial, "get-up replaced attached bodies");
+            if review.recovering.is_none() {
+                info!(
+                    "RECOVERY EVENT Recovering identity={identity:?} local={} snapshot={snapshot} t={now:.6} attached={}",
+                    id.0,
+                    ids.len()
+                );
+            }
             review.recovering.get_or_insert(snapshot);
         }
         PhysicalMode::Standing if let Some(recovering) = review.recovering => {
             assert!(actor.pose.physical.is_none() && ids.is_empty() && actor.pose.grounded);
             assert!(snapshot > recovering);
+            if review.standing.is_none() {
+                info!(
+                    "RECOVERY EVENT Standing identity={identity:?} local={} snapshot={snapshot} t={now:.6} weights={:?}",
+                    id.0, actor.pose.foot_weight
+                );
+            }
             let (standing, start_z) = *review.standing.get_or_insert((snapshot, actor.pos[2]));
             let travelled = start_z - actor.pos[2];
             if actor.id == id.0 {
@@ -207,7 +225,20 @@ pub(super) fn observe(
                 assert!(snapshot >= last_snapshot && now > last_time);
                 assert!(
                     now - last_time < 0.05,
-                    "observer frame gap before completing first supports"
+                    "observer frame gap before completing first supports: identity={identity:?} \
+                     standing_snapshot={standing} previous_snapshot={last_snapshot} snapshot={snapshot} \
+                     previous_t={last_time:.6} t={now:.6} gap_ms={:.3} confirmation_age_ms={:.3} \
+                     travelled_m={travelled:.4} velocity={:?} confirmed_weights={:?} intervals={:?}",
+                    (now - last_time) * 1000.0,
+                    (now - session.last_received) * 1000.0,
+                    actor.pose.velocity,
+                    actor.pose.foot_weight,
+                    review
+                        .gate
+                        .intervals
+                        .iter()
+                        .map(|i| (i.side, i.start_snapshot, i.end_snapshot, i.frames.len()))
+                        .collect::<Vec<_>>(),
                 );
             }
             assert!(
