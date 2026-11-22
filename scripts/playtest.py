@@ -292,6 +292,8 @@ def main():
                         help="Diagnose only the held bottle's translucent surfaces")
     parser.add_argument("--loot-contest", action="store_true",
                         help="Stop after two clients contest one loose item via normal pickup input")
+    parser.add_argument("--loot-contest-peer-drop-every", type=int, choices=range(2, 61), metavar="N",
+                        help="With --loot-contest, have the second client discard every Nth snapshot")
     parser.add_argument("--inventory-grid", action="store_true",
                         help="Run the confirmed grid checkpoint during solo voxel loot")
     parser.add_argument("--inventory-grid-bench", action="store_true",
@@ -335,6 +337,8 @@ def main():
     parser.add_argument("--audio", action="store_true",
                         help="Enable game audio and verify local and spatial playback sinks")
     args = parser.parse_args()
+    if args.loot_contest_peer_drop_every and not args.loot_contest:
+        parser.error("--loot-contest-peer-drop-every requires --loot-contest")
     if args.combat_hud_checkpoint and not (
         args.animation_review and args.clients == 2 and args.viewport == (1280, 720)
         and not (args.video or args.no_capture or args.weapon_debug or args.voxel_loot)
@@ -531,12 +535,16 @@ def main():
         server_path = args.server_path.resolve()
     if args.client_path:
         client_path = args.client_path.resolve()
+    peer_snapshot_drop_every = (
+        (args.loot_contest_peer_drop_every or 0) if args.loot_contest
+        else 3 if args.clients == 2 and not args.pov_peer_lossless else 0
+    )
     (output / "run-settings.json").write_text(json.dumps({
         "server_executable": str(server_path), "client_executable": str(client_path),
         "server_sha256": hashlib.sha256(server_path.read_bytes()).hexdigest(),
         "client_sha256": hashlib.sha256(client_path.read_bytes()).hexdigest(),
         "clients": args.clients, "transport": "real UDP 127.0.0.1:19080",
-        "peer_snapshot_drop_every": 3 if args.clients == 2 and not args.loot_contest else 0,
+        "peer_snapshot_drop_every": peer_snapshot_drop_every,
         "leader_snapshot_drop_every": args.pov_drop_every or 0,
         "resolution": [1280, 800], "world_fov_degrees": 70,
         "requested_viewport": args.viewport,
@@ -579,8 +587,8 @@ def main():
                     client_output.mkdir(exist_ok=True)
                     client_env = env.copy()
                     client_env.update(TK_PLAYTEST_DIR=str(client_output), TK_PLAYTEST_ROLE=str(index))
-                    if index == 1 and not (args.pov_peer_lossless or args.loot_contest):
-                        client_env["TK_DROP_SNAPSHOT_EVERY"] = "3"
+                    if index == 1 and peer_snapshot_drop_every:
+                        client_env["TK_DROP_SNAPSHOT_EVERY"] = str(peer_snapshot_drop_every)
                     elif index == 0 and args.pov_drop_every:
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = str(args.pov_drop_every)
                     log = (client_output / "client.log").open("w", encoding="utf-8")
@@ -665,6 +673,16 @@ def main():
         peer_text = (output / "peer" / "client.log").read_text(encoding="utf-8", errors="replace")
         assert "panicked at" not in peer_text and " ERROR " not in peer_text, f"Peer runtime error: {output}"
         report = loot_contest_evidence((client_text, peer_text), server_text)
+        dropped = re.findall(r"SNAPSHOT LOSS dropped=(\d+) sequence=(\d+)", peer_text)
+        every = args.loot_contest_peer_drop_every
+        if every:
+            assert dropped and all(int(seq) % every == 0 for _, seq in dropped), (
+                "Missing or inconsistent contest snapshot-loss evidence"
+            )
+        else:
+            assert not dropped, "Unexpected contest snapshot discard"
+        report["peer_snapshot_drop_every"] = every or 0
+        report["peer_snapshot_drop_logged_count"] = int(dropped[-1][0]) if dropped else 0
         (contest_dir / "evidence.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         result = f"PASS: native dual loot contest; item={report['item']} owner={report['winner']}\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
