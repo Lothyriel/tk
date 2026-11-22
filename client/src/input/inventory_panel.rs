@@ -153,6 +153,13 @@ pub(super) fn update(
 }
 
 impl Panel {
+    pub(crate) fn grid_idle(&self) -> bool {
+        self.pending.is_none()
+            && self.drag.is_none()
+            && self.context.is_none()
+            && self.inspection.is_none()
+    }
+
     pub(crate) fn grid_feedback(&self) -> Option<&'static str> {
         self.feedback
     }

@@ -26,6 +26,12 @@ use crate::{
     sync::{ClientSession, inventory::State},
 };
 
+use super::inventory_frame_windows as frames;
+
+pub(super) fn benchmark_enabled() -> bool {
+    std::env::var_os("TK_PLAYTEST_GRID_BENCH").is_some()
+}
+
 pub(crate) struct Plugin {
     pub integrated: bool,
 }
@@ -34,6 +40,7 @@ impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Probe {
             integrated: self.integrated,
+            benchmark: self.integrated && benchmark_enabled(),
             ..default()
         })
         .add_systems(Update, drive.after(ClientSystems::Present));
@@ -92,6 +99,18 @@ pub(super) struct Probe {
     release: Vec<KeyCode>,
     check: Option<Check>,
     finished: bool,
+    benchmark: bool,
+    benchmark_run: Option<Benchmark>,
+}
+
+struct Benchmark {
+    sampler: frames::Sampler,
+    session: SessionKey,
+    position: Vec3,
+    rotation: Quat,
+    previous: frames::Panel,
+    cursor: Option<Vec2>,
+    started: f64,
 }
 
 impl Probe {
@@ -173,6 +192,7 @@ fn drive(
     window: Single<(Entity, &Window), With<PrimaryWindow>>,
     mut keyboard: MessageWriter<KeyboardInput>,
     mut exit: MessageWriter<AppExit>,
+    scale: Option<Res<UiScale>>,
 ) {
     if probe.finished || (probe.integrated && !probe.requested) {
         return;
@@ -186,9 +206,90 @@ fn drive(
         text: None,
         logical_key: Key::Unidentified(NativeKey::Unidentified),
     };
-    if !probe.release.is_empty() {
+    let released = !probe.release.is_empty();
+    if released {
         for key in probe.release.drain(..) {
             keyboard.write(emit(key, ButtonState::Released));
+        }
+        if !probe.benchmark {
+            return;
+        }
+    }
+    if probe.benchmark {
+        let now = time.elapsed_secs_f64();
+        let (Some(grid), Some(key), Some(actor)) = (
+            inventory.owned_grid(session.raid.raid_id, player.0),
+            inventory.grid_session(),
+            session.local(player.0),
+        ) else {
+            panic!("grid benchmark lost its confirmed loot checkpoint");
+        };
+        let position = Vec3::from_array(actor.pos);
+        let rotation = Quat::from(&actor.rot);
+        let presented = if panel.open {
+            frames::Panel::Open
+        } else {
+            frames::Panel::Closed
+        };
+        let cursor = window.cursor_position();
+        let run = probe.benchmark_run.get_or_insert_with(|| Benchmark {
+            sampler: frames::Sampler::new(grid.version.revision),
+            session: key,
+            position,
+            rotation,
+            previous: presented,
+            cursor,
+            started: now,
+        });
+        assert!(now - run.started < 175.0, "grid benchmark timed out");
+        // Let the player's final approach settle before establishing the
+        // baseline. Input is already paused at the confirmed pickup.
+        if now - run.started < 1.5 {
+            run.position = position;
+            run.rotation = rotation;
+            run.previous = presented;
+            run.cursor = cursor;
+            return;
+        }
+        let active = session.playing(player.0)
+            && session.raid.seconds_left > 0.0
+            && now - session.last_received < 2.0
+            && run.session == key
+            && actor.pose.mode == common::humanoid::PhysicalMode::Standing
+            && actor.pose.grounded;
+        let drift = position.distance(run.position);
+        let turn = rotation.angle_between(run.rotation).abs();
+        let ui_scale = scale.as_ref().map_or(1.0, |scale| scale.0);
+        let idle = panel.grid_idle() && !input.fire && !input.aim;
+        let cursor_stable = presented != run.previous || cursor == run.cursor;
+        let checkpoint =
+            active && drift < 0.03 && turn < 0.005 && ui_scale == 1.0 && idle && cursor_stable;
+        run.sampler
+            .observe(frames::Observation {
+                panel: run.previous,
+                checkpoint_valid: checkpoint,
+                focused: window.focused,
+                viewport: [window.physical_width(), window.physical_height()],
+                revision: grid.version.revision,
+                frame_ms: time.delta_secs_f64() * 1000.0,
+            })
+            .unwrap_or_else(|error| panic!(
+                "grid benchmark invalidated: {error:?}; active={active} drift={drift:.4} turn={turn:.4} scale={ui_scale} idle={idle} cursor_stable={cursor_stable} panel={presented:?} pose={:?} grounded={}",
+                actor.pose.mode, actor.pose.grounded
+            ));
+        run.previous = presented;
+        run.cursor = cursor;
+        if let Some(requested) = run.sampler.requested_panel() {
+            if requested != presented && !released {
+                keyboard.write(emit(KeyCode::Tab, ButtonState::Pressed));
+                probe.release.push(KeyCode::Tab);
+            }
+        } else {
+            for summary in run.sampler.summaries().expect("complete grid benchmark") {
+                println!("{summary}");
+            }
+            probe.benchmark = false;
+            probe.opening = panel.open;
         }
         return;
     }

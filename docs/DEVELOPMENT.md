@@ -24,6 +24,14 @@ com Tab, confirma rotação/movimento e split/merge, fecha com Tab, descarta os
 dois IDs originais e segue até a segunda raid. Sem a pilha real ou sem
 confirmação da grade, a rota falha.
 
+Para medir o efeito líquido de abrir o painel, rode a mesma rota com
+`--inventory-grid-bench --viewport 1280x800`. Mantenha a janela em foco e
+não interaja durante a medição. O cliente alterna painel aberto e fechado
+no mesmo ponto de coleta e guarda as 12 janelas pareadas em `evidence.json`.
+Não combine com revisão de PNGs nem telemetria. O delta inclui mudanças de
+apresentação, como ocultar o modelo equipado; não é tempo isolado da CPU,
+GPU ou layout. Os limiares do relatório são alertas provisórios.
+
 Para medir a rota solo no Linux, acrescente
 `--inventory-telemetry --viewport 1280x800` ao comando acima.
 Guarde `run-settings.json`, `evidence.json` e os logs. `TK INVENTORY PAYLOAD`

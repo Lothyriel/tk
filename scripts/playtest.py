@@ -18,6 +18,11 @@ import subprocess
 import sys
 import time
 
+if __package__:
+    from . import inventory_frame_windows
+else:
+    import inventory_frame_windows
+
 
 POV_CAPTURES = {
     "ads": ("rest", "ads", "return"),
@@ -217,6 +222,8 @@ def main():
                         help="Diagnose only the held bottle's translucent surfaces")
     parser.add_argument("--inventory-grid", action="store_true",
                         help="Run the confirmed grid checkpoint during solo voxel loot")
+    parser.add_argument("--inventory-grid-bench", action="store_true",
+                        help="Measure paired idle panel states at the confirmed solo loot checkpoint")
     parser.add_argument("--inventory-grid-review-scale", type=float, metavar="SCALE",
                         help="Enable static grid-only captures at UI scale SCALE (0.75–1.5)")
     parser.add_argument("--inventory-telemetry", action="store_true",
@@ -264,6 +271,11 @@ def main():
     if args.bench_draft and (not args.configure_weapons or args.no_capture or args.video):
         parser.error("--bench-draft requires --configure-weapons and static captures only")
     grid_review = args.inventory_grid_review_scale is not None
+    if args.inventory_grid_bench and not (
+        args.inventory_grid and args.viewport == (1280, 800)
+        and not (grid_review or args.inventory_telemetry)
+    ):
+        parser.error("--inventory-grid-bench requires --inventory-grid --viewport 1280x800 without review or telemetry")
     if grid_review and not (args.inventory_grid and args.viewport and not args.inventory_telemetry
                             and 0.75 <= args.inventory_grid_review_scale <= 1.5):
         parser.error("--inventory-grid-review-scale needs scale 0.75–1.5, --inventory-grid, "
@@ -349,11 +361,14 @@ def main():
     if args.pet_probe:
         env["TK_PLAYTEST_PET_PROBE"] = args.pet_probe
     env.pop("TK_PLAYTEST_INVENTORY_GRID", None)
+    env.pop("TK_PLAYTEST_GRID_BENCH", None)
     env.pop("TK_PLAYTEST_INVENTORY_TELEMETRY", None)
     env.pop("TK_GRID_REVIEW_DIR", None)
     env.pop("TK_GRID_REVIEW_UI_SCALE", None)
     if args.inventory_grid:
         env["TK_PLAYTEST_INVENTORY_GRID"] = "1"
+    if args.inventory_grid_bench:
+        env["TK_PLAYTEST_GRID_BENCH"] = "1"
     env.pop("TK_PLAYTEST_WEAPON_KIT", None)
     if args.weapon_kit:
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
@@ -426,6 +441,7 @@ def main():
         "loot_inspect": args.loot_inspect,
         "pet_probe": args.pet_probe,
         "inventory_grid": args.inventory_grid,
+        "inventory_grid_bench": args.inventory_grid_bench,
         "inventory_grid_review_scale": args.inventory_grid_review_scale,
         "inventory_telemetry": args.inventory_telemetry,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
@@ -683,6 +699,8 @@ def main():
             "peer_performance": re.findall(r"TK PERF [^\r\n]+", logs[1]) if len(logs) == 2 else [],
         }
         assert evidence["client_performance"], "Missing frame time evidence"
+        if args.inventory_grid_bench:
+            evidence["inventory_frame_windows"] = inventory_frame_windows.analyze(client_text.splitlines())
         if args.inventory_telemetry:
             assert all(any(row[name] for row in memory_samples) for name in ("client", "server")), (
                 "Missing process memory samples"

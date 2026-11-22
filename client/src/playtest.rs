@@ -8,6 +8,7 @@ mod arena;
 pub(crate) mod arena_menu;
 mod asset_review;
 mod fault;
+mod inventory_frame_windows;
 pub(crate) mod inventory_grid;
 mod lobby;
 mod mechanics;
@@ -1029,7 +1030,9 @@ fn drive(
         Step::Loot => {
             if voxel_loot::enabled() {
                 let inspect = voxel_loot::inspection_enabled();
-                let timeout = if inspect || grid_probe.is_some() {
+                let timeout = if inventory_grid::benchmark_enabled() {
+                    220.0
+                } else if inspect || grid_probe.is_some() {
                     75.0
                 } else {
                     55.0

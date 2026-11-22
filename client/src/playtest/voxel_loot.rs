@@ -42,6 +42,7 @@ pub(super) struct Route {
     inspection_capture: Option<String>,
     held_bandage: Option<ItemInstanceId>,
     bandage_drop_sent: bool,
+    bench_leg: usize,
 }
 
 impl Route {
@@ -160,6 +161,18 @@ impl Route {
                         return false;
                     }
                     2 if self.held_bandage.is_some() => {
+                        if super::inventory_grid::benchmark_enabled() {
+                            // The pickup and first waypoint can be disturbed
+                            // by ordinary raid simulation. Sample at spawn.
+                            const RETURN: [[f32; 3]; 3] =
+                                [[3.2, 0.0, 0.8], [3.2, 0.0, 10.0], common::map::SPAWN_CENTER];
+                            while let Some(&waypoint) = RETURN.get(self.bench_leg) {
+                                if !travel(input, actor, Vec3::from_array(waypoint)) {
+                                    return false;
+                                }
+                                self.bench_leg += 1;
+                            }
+                        }
                         if !probe.ready_to_resume() {
                             return false;
                         }
