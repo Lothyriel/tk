@@ -73,6 +73,11 @@ TK_PREFERENCES_PATH="$review/preferences.json" \
 Confirme as dimensões do PNG e confira os rótulos, o foco e se Aplicar/Voltar
 estão inteiros. As linhas `PREFERENCES REVIEW` registram o layout; o modo não
 altera nem salva preferências e não certifica dispositivos físicos.
+Para diagnosticar o layout em escala maior, use também
+`TK_PREFERENCES_REVIEW_SCALE=2`. Ela substitui temporariamente a escala do
+Bevy, não a configuração no arquivo nem o DPI do sistema. O log informa
+`inside_viewport` para os controles; a captura ainda é salva se houver
+corte. Um PNG salvo não significa aceite de layout.
 
 ## Revisão estática da grade
 

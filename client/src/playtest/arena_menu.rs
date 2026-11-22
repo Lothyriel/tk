@@ -59,6 +59,7 @@ impl Probe {
 impl Plugin for Probe {
     fn build(&self, app: &mut App) {
         let mut route = Route::default();
+        let review_scale = std::env::var("TK_PREFERENCES_REVIEW_SCALE").ok();
         if let Some(path) = std::env::var_os("TK_PREFERENCES_SCREENSHOT") {
             assert_eq!(
                 *self,
@@ -69,6 +70,21 @@ impl Plugin for Probe {
             assert!(!path.exists(), "Preferences review needs a fresh PNG path");
             route.preferences = Some(path);
             route.step = Step::OpenPreferences;
+        } else {
+            assert!(
+                review_scale.is_none(),
+                "review scale requires the Preferences screenshot probe"
+            );
+        }
+        if let Some(value) = review_scale {
+            let scale: f32 = value.parse().expect("numeric Preferences review scale");
+            assert!(
+                (1.0..=2.0).contains(&scale),
+                "Preferences review scale must be 1.0–2.0"
+            );
+            // This opt-in route only opens and observes the screen. Leave
+            // persisted preferences and the draft unchanged.
+            app.insert_resource(UiScale(scale));
         }
         app.insert_resource(*self)
             .insert_resource(route)
@@ -204,6 +220,7 @@ fn key_event(window: Entity, key_code: KeyCode, state: ButtonState) -> KeyboardI
 fn drive(
     mut commands: Commands,
     (probe, mut route, time): (Res<Probe>, ResMut<Route>, Res<Time<Real>>),
+    scale: Res<UiScale>,
     (session, player, input, menu): (
         Res<ClientSession>,
         Res<PlayerId>,
@@ -280,9 +297,10 @@ fn drive(
             return;
         }
         info!(
-            "PREFERENCES REVIEW viewport={}x{} focused={:?}",
+            "PREFERENCES REVIEW viewport={}x{} ui_scale={} focused={:?}",
             window.physical_width(),
             window.physical_height(),
+            scale.0,
             menu.focused_widget()
         );
         for (entity, children, node, style, routed, outline) in &widgets {
@@ -294,8 +312,18 @@ fn drive(
                 .get(entity)
                 .map(|transform| *transform * Vec2::ZERO)
                 .ok();
+            let inside = center.is_some_and(|center| {
+                let half = node.size() * 0.5;
+                (center - half).cmpge(Vec2::ZERO).all()
+                    && (center + half)
+                        .cmple(Vec2::new(
+                            window.physical_width() as f32,
+                            window.physical_height() as f32,
+                        ))
+                        .all()
+            });
             info!(
-                "PREFERENCES REVIEW {entity:?} label={label:?} center={center:?} size={:?} outlined={}",
+                "PREFERENCES REVIEW {entity:?} label={label:?} center={center:?} size={:?} inside_viewport={inside} outlined={}",
                 node.size(),
                 outline.is_some_and(|outline| outline.color != Color::NONE)
             );
