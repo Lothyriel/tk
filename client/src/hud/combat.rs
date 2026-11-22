@@ -55,11 +55,16 @@ fn append_health(text: &mut String, anatomy: &Anatomy) {
         } else {
             "Wounded"
         };
+        // Rounding must not make an injured region look healthy or destroyed.
+        let percent = if fraction == 0.0 {
+            0.0
+        } else {
+            (fraction * 100.0).clamp(1.0, 99.0)
+        };
         let _ = write!(
             text,
-            "\n{}: {severity} ({:.0}%)",
-            region_name(region),
-            fraction * 100.0
+            "\n{}: {severity} ({percent:.0}%)",
+            region_name(region)
         );
     }
 }
@@ -109,6 +114,25 @@ pub(super) fn append_readout(text: &mut String, local: &ClientData) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn combat_hud_reserves_percentage_endpoints_for_true_region_states() {
+        let mut actor = ClientData::default();
+        actor.body.anatomy.regions[Region::Head as usize] = 34.9;
+        actor.body.anatomy.regions[Region::RightLeg as usize] = 0.1;
+        actor.body.anatomy.regions[Region::LeftLeg as usize] = 0.0;
+        let mut text = String::new();
+        append_readout(&mut text, &actor);
+        let wounds: Vec<_> = text.lines().skip(1).take(3).collect();
+        assert_eq!(
+            wounds,
+            [
+                "Left leg: Destroyed (0%)",
+                "Right leg: Critical (1%)",
+                "Head: Wounded (99%)",
+            ]
+        );
+    }
 
     #[test]
     fn combat_hud_orders_top_three_by_fraction_and_uses_anatomical_ties_after_recovery() {
