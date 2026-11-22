@@ -59,6 +59,7 @@ pub(super) fn transition_input(input: &ClientInput) -> ClientInput {
         reload_sequence: input.reload_sequence,
         inspect_sequence: input.inspect_sequence,
         selector_sequence: input.selector_sequence,
+        prone_sequence: input.prone_sequence,
         ..default()
     }
 }
@@ -138,6 +139,10 @@ pub(super) fn tick(
             .restocked(common::catalog::catalog(), participant.loadout)
             .expect("confirmed Arena kits");
         let input = transition_input(input);
+        let movement = super::MovementState {
+            prone_sequence: input.prone_sequence,
+            ..default()
+        };
         arsenal.synchronize_sequences(&input);
         let generation = life.generation.wrapping_add(1);
         let armor = ArmorState::from_loadout(participant.loadout);
@@ -148,6 +153,7 @@ pub(super) fn tick(
             armor,
             arsenal,
             input,
+            movement,
             LastInput {
                 received_at: last.received_at,
             },

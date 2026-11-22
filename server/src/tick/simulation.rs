@@ -4,6 +4,7 @@ use common::humanoid::*;
 use common::{combat::*, raid::*, *};
 
 use super::{Bot, LastInput, Projectile, WorldState, can_stand_up, set_crouched_state};
+use common::stance::{PRONE_CRAWL_SPEED, PRONE_TRANSITION_DELAY, Stance};
 
 pub(super) fn impact_mark_size_mm(weapon: WeaponId) -> u8 {
     weapon.spec().impact_size_mm
@@ -23,9 +24,10 @@ pub(super) fn physx_tick(
     mut query: Query<(
         Entity,
         &ClientInput,
+        &LastInput,
         &Arsenal,
         &BodyHealth,
-        &PoseState,
+        &mut PoseState,
         &Participant,
         &mut MovementState,
         &mut Collider,
@@ -42,9 +44,10 @@ pub(super) fn physx_tick(
     for (
         entity,
         input,
+        last,
         arsenal,
         body,
-        pose,
+        mut pose,
         player,
         mut movement,
         mut collider,
@@ -54,6 +57,15 @@ pub(super) fn physx_tick(
         articulated,
     ) in &mut query
     {
+        let now = time.elapsed_secs();
+        let distance = input.prone_sequence.wrapping_sub(movement.prone_sequence);
+        let toggle = distance != 0 && distance < (1 << 31);
+        if toggle {
+            // Every edge is consumed, including those blocked by headroom,
+            // throttle, injury, landing or inactive/stale input.
+            movement.prone_sequence = input.prone_sequence;
+        }
+        controller.autostep = (!movement.prone).then(super::character_autostep);
         if raid.phase != RaidPhase::Active || player.status != RaidStatus::Active || !body.alive() {
             movement.velocity = Vec3::ZERO;
             controller.translation = None;
@@ -71,9 +83,37 @@ pub(super) fn physx_tick(
             controller.translation = Some(movement.velocity * delta);
             continue;
         }
-        if input.crouch && !movement.crouched {
+        let grounded = output.is_some_and(|o| o.grounded);
+        if toggle
+            && now - last.received_at <= 0.5
+            && now >= movement.prone_transition_time
+            && grounded
+            && pose.mode == PhysicalMode::Standing
+        {
+            let upright = Stance::from_crouched(input.crouch);
+            let (previous, next) = if movement.prone {
+                (Stance::Prone, upright)
+            } else {
+                (Stance::from_crouched(movement.crouched), Stance::Prone)
+            };
+            let center = next.centre_from(previous, transform.translation);
+            if super::can_occupy_stance(entity, &context, center, transform.rotation, next) {
+                transform.translation = center;
+                *collider = next.collider();
+                movement.prone = next == Stance::Prone;
+                movement.crouched = next == Stance::Crouched;
+                movement.prone_transition_time = now + PRONE_TRANSITION_DELAY;
+                movement.velocity.x = 0.0;
+                movement.velocity.z = 0.0;
+                controller.autostep = (!movement.prone).then(super::character_autostep);
+                pose.prone = movement.prone;
+                pose.crouch = f32::from(movement.crouched);
+            }
+        }
+        if !movement.prone && input.crouch && !movement.crouched {
             set_crouched_state(&mut movement, &mut collider, &mut transform, true);
-        } else if !input.crouch
+        } else if !movement.prone
+            && !input.crouch
             && movement.crouched
             && can_stand_up(entity, &context, transform.translation)
         {
@@ -82,16 +122,41 @@ pub(super) fn physx_tick(
         let x = (input.right as i8 - input.left as i8) as f32;
         let z = (input.backward as i8 - input.forward as i8) as f32;
         let local_input = Vec3::new(x, 0.0, z).normalize_or_zero();
-        let wish_dir = Quat::from_rotation_y(input.camera.yaw) * local_input;
+        let yaw = if movement.prone {
+            let old_yaw = transform.rotation.to_euler(EulerRot::YXZ).0;
+            let delta_yaw = input.camera.yaw - old_yaw;
+            let step = delta_yaw
+                .sin()
+                .atan2(delta_yaw.cos())
+                .clamp(-5.0 * delta, 5.0 * delta);
+            let target = old_yaw + step;
+            if step.abs() > 1e-5
+                && super::can_occupy_stance(
+                    entity,
+                    &context,
+                    transform.translation,
+                    Quat::from_rotation_y(target),
+                    Stance::Prone,
+                )
+            {
+                target
+            } else {
+                old_yaw
+            }
+        } else {
+            input.camera.yaw
+        };
+        let wish_dir = Quat::from_rotation_y(yaw) * local_input;
         let horizontal = Vec3::new(movement.velocity.x, 0.0, movement.velocity.z);
-        let speed = if movement.crouched {
+        let speed = if movement.prone {
+            PRONE_CRAWL_SPEED
+        } else if movement.crouched {
             PLAYER_CROUCH_SPEED
         } else if input.run && body.anatomy.vigor > 10.0 && body.anatomy.speed() > 0.6 {
             PLAYER_RUN_SPEED
         } else {
             PLAYER_WALK_SPEED
         };
-        let grounded = output.is_some_and(|o| o.grounded);
         movement.grounded = grounded;
         let accel = if grounded {
             if local_input == Vec3::ZERO {
@@ -118,7 +183,8 @@ pub(super) fn physx_tick(
         }
         if grounded {
             movement.velocity.y = movement.velocity.y.max(0.0);
-            if input.jump
+            if !movement.prone
+                && input.jump
                 && !movement.jump_queued
                 && body.anatomy.speed() > 0.4
                 && body.anatomy.vigor > 10.0
@@ -132,19 +198,24 @@ pub(super) fn physx_tick(
         }
         if !input.jump {
             movement.jump_queued = false;
+        } else if movement.prone {
+            movement.jump_queued = true;
         }
         controller.translation = Some(movement.velocity * delta);
-        transform.rotation = Quat::from_rotation_y(arsenal.recoil.camera(input.camera).yaw);
+        transform.rotation = Quat::from_rotation_y(if movement.prone {
+            yaw
+        } else {
+            arsenal.recoil.camera(input.camera).yaw
+        });
     }
 }
 
 pub(super) fn neutral_eye(transform: &Transform, movement: &MovementState) -> Vec3 {
-    let stance = if movement.crouched {
-        PLAYER_CROUCH_VIEW_OFFSET
+    if movement.prone {
+        transform.transform_point(Stance::Prone.eye_offset())
     } else {
-        0.0
-    };
-    transform.translation + Vec3::Y * (PLAYER_VIEW_HEIGHT + stance)
+        transform.translation + Vec3::Y * Stance::from_crouched(movement.crouched).eye_above_root()
+    }
 }
 
 pub(super) fn resolve_eye_lean(
@@ -173,7 +244,11 @@ pub(super) fn resolve_eye_lean(
         {
             continue;
         }
-        let requested = input.camera.roll;
+        let requested = if movement.prone {
+            0.0
+        } else {
+            input.camera.roll
+        };
         let fraction = if requested == 0.0 {
             1.0
         } else {
@@ -268,11 +343,20 @@ pub(super) fn weapons_tick(
             error!("Projectile identity exhausted; refusing fire before consuming ammunition");
             continue;
         }
-        let Some(weapon) = arsenal.step(input, time.delta_secs() * handling, time.elapsed_secs())
-        else {
+        let Some(weapon) = arsenal.step_with_sprint(
+            input,
+            time.delta_secs() * handling,
+            time.elapsed_secs(),
+            input.run && !movement.prone,
+        ) else {
             continue;
         };
         let camera = arsenal.recoil.camera(CameraInput {
+            yaw: if movement.prone {
+                transform.rotation.to_euler(EulerRot::YXZ).0
+            } else {
+                input.camera.yaw
+            },
             roll: pose.aim_roll,
             ..input.camera
         });
@@ -465,6 +549,7 @@ pub(super) fn projectiles_tick(
                     }
                     let fallback = PoseState {
                         crouch: if movement.crouched { 1.0 } else { 0.0 },
+                        prone: movement.prone,
                         ..default()
                     };
                     let pose = motion.and_then(|m| m.local_rig(t)).unwrap_or_else(|| {

@@ -21,7 +21,8 @@ impl Carry {
 /// a handguard hold) needs less lowering and cant to keep the hands in close.
 /// The socket determines the pose gains, not the cadence or the contact.
 pub fn sample(state: &PoseState, support: Transform, action: WeaponAction) -> Carry {
-    if state.physical.is_some()
+    if state.prone
+        || state.physical.is_some()
         || !matches!(state.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
     {
         return Carry::default();

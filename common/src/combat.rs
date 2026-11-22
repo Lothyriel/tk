@@ -430,6 +430,16 @@ impl Arsenal {
 
     /// Returns an authorized shot, never a client-authoritative projectile.
     pub fn step(&mut self, input: &ClientInput, delta: f32, now: f32) -> Option<WeaponId> {
+        self.step_with_sprint(input, delta, now, input.run)
+    }
+
+    pub fn step_with_sprint(
+        &mut self,
+        input: &ClientInput,
+        delta: f32,
+        now: f32,
+        sprint: bool,
+    ) -> Option<WeaponId> {
         let pressed = fresh_sequence(&mut self.last_trigger, input.fire_pressed_sequence);
         let reload = fresh_sequence(&mut self.last_reload, input.reload_sequence);
         let inspect = fresh_sequence(&mut self.last_inspect, input.inspect_sequence);
@@ -437,12 +447,8 @@ impl Arsenal {
         // Intent cancels inspect even when the requested shot/reload cannot
         // complete (safe, cooldown, full magazine). Consume blocked inspect
         // sequences so releasing ADS/sprint never starts a delayed inspection.
-        let interrupts_inspect = input.aim
-            || input.run
-            || input.fire
-            || pressed
-            || reload
-            || input.weapon != self.active;
+        let interrupts_inspect =
+            input.aim || sprint || input.fire || pressed || reload || input.weapon != self.active;
         if interrupts_inspect
             && self
                 .current()

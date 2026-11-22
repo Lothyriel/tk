@@ -6,6 +6,7 @@ pub mod map;
 pub mod raid;
 pub mod recoil;
 pub mod replication;
+pub mod stance;
 pub mod weapon_animation;
 
 use bevy::{platform::collections::HashMap, prelude::*};
@@ -15,7 +16,7 @@ pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 25;
+pub const PROTOCOL_ID: u64 = 26;
 pub const SNAPSHOT_INTERVAL: f32 = 1.0 / 60.0;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
@@ -130,6 +131,7 @@ pub struct ClientInput {
     pub reload_sequence: u32,
     pub inspect_sequence: u32,
     pub selector_sequence: u32,
+    pub prone_sequence: u32,
     pub weapon: EquipmentSlot,
     pub camera: CameraInput,
 }
@@ -209,6 +211,9 @@ pub struct MovementState {
     pub grounded: bool,
     pub jump_queued: bool,
     pub crouched: bool,
+    pub prone: bool,
+    pub prone_sequence: u32,
+    pub prone_transition_time: f32,
 }
 
 #[derive(Debug, Default, Component)]

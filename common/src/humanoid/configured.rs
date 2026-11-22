@@ -61,6 +61,28 @@ fn posture(
     carry: armed_stride::Carry,
 ) -> Result<Posture, HandlingError> {
     let chest = Vec3::from(segments[Segment::Thorax.index()].position);
+    if state.prone {
+        let aim = Quat::from_rotation_x(state.aim_pitch);
+        let eye = crate::stance::Stance::Prone.eye_offset();
+        let rotation = aim * action.root.rotation;
+        let trigger = chest + Vec3::new(0.15, 0.06, -0.27);
+        let aim_trigger = eye + aim * Vec3::new(0.06, -0.09, -0.04);
+        let preferred_root = Transform::from_translation(
+            trigger.lerp(aim_trigger, state.ads) + aim * action.root.translation
+                - rotation * contacts.trigger.translation,
+        )
+        .with_rotation(rotation);
+        return Ok(Posture {
+            preferred_root,
+            shoulders: [
+                chest + Vec3::new(-0.23, 0.03, -0.12),
+                chest + Vec3::new(0.23, 0.03, -0.12),
+            ],
+            poles: [Vec3::new(-0.8, -0.4, 0.0), Vec3::new(0.8, -0.4, 0.0)],
+            stock_target: None,
+            max_adjustment: 0.4,
+        });
+    }
     let mut preferred_root = preferred_root(state, chest, contacts.trigger, action);
     let ads = if contacts.stock.is_some() && cover.is_some() {
         state.ads.clamp(0.0, 1.0)

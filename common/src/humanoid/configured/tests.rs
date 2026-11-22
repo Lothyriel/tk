@@ -5,6 +5,40 @@ use crate::{
 };
 
 #[test]
+fn voluntary_prone_configured_rig_keeps_low_body_and_rigid_grips() {
+    for weapon in [WeaponKind::Rifle, WeaponKind::Smg, WeaponKind::Pistol] {
+        let spec = weapon.spec();
+        for (ads, kind) in [
+            (0.0, None),
+            (1.0, None),
+            (0.0, Some(ManipulationKind::TacticalReload)),
+        ] {
+            let state = PoseState {
+                weapon,
+                ads,
+                prone: true,
+                grounded: true,
+                ..default()
+            };
+            let mechanics = MechanicalSnapshot {
+                kind,
+                fraction: 0.42,
+                ..default()
+            };
+            let rig = evaluate(&state, [1.0; 2], spec, &mechanics, None, Some(0.058))
+                .unwrap_or_else(|e| panic!("{weapon:?} {ads} {kind:?}: {e:?}"));
+            let centre = |segment: Segment| Vec3::from(rig.segments[segment.index()].position);
+            assert!(centre(Segment::Head).z < centre(Segment::Thorax).z);
+            assert!(centre(Segment::Thorax).z < centre(Segment::Pelvis).z);
+            assert!(centre(Segment::Thorax).y.abs() < 0.1);
+            let weapon = rig.weapon.unwrap();
+            assert!(centre(Segment::LeftHand).distance(weapon.support.wrist.translation) < 2e-6);
+            assert!(centre(Segment::RightHand).distance(weapon.trigger.wrist.translation) < 2e-6);
+        }
+    }
+}
+
+#[test]
 fn configured_handling_tracks_preserve_anatomy_and_grips_at_authoritative_fractions() {
     for weapon in [WeaponKind::Rifle, WeaponKind::Smg, WeaponKind::Pistol] {
         for kind in [

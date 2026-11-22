@@ -660,7 +660,9 @@ pub(super) fn advance(
                 .anatomy
                 .capacity(common::combat::Region::RightArm)
                 > 0.0
-            && !(local_input.as_ref().is_some_and(|i| local && i.run) && speed > 0.5);
+            && !(local_input.as_ref().is_some_and(|i| local && i.run)
+                && !player.pose.prone
+                && speed > 0.5);
         // Complete the external action's return before closing the stock onto
         // the sight line. Blending full ADS over a still-canted inspection pulls
         // the hands across the camera even when each individual layer is smooth.
@@ -753,6 +755,7 @@ pub(super) fn animate_local(
         acceleration: p.pose.acceleration,
         turn_rate: p.pose.turn_rate,
         mode: p.pose.mode,
+        prone: p.pose.prone,
         ads: response.ads,
         ..default()
     };

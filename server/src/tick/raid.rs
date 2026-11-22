@@ -187,6 +187,7 @@ pub(super) fn lobby_tick(
             set_crouched_state(&mut movement, &mut collider, &mut transform, false);
             *collider = Collider::capsule_y(PLAYER_COLLIDER_HALF_HEIGHT, PLAYER_COLLIDER_RADIUS);
             *movement = MovementState::default();
+            movement.prone_sequence = input.prone_sequence;
             *life = arena::Life::new(index == 1, world_state.next_projectile_id);
             transform.translation = if raid.mode.is_arena() {
                 *input = arena::transition_input(&input);

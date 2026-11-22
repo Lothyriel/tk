@@ -878,6 +878,7 @@ fn animate(
         state.phase += delta.sin().atan2(delta.cos()) * alpha;
         state.grounded = p.pose.grounded;
         state.mode = p.pose.mode;
+        state.prone = p.pose.prone;
         state.mode_time = p.pose.mode_time + age;
         state.aim_pitch += (p.pose.aim_pitch - state.aim_pitch) * alpha;
         state.aim_roll += (p.pose.aim_roll - state.aim_roll) * alpha;

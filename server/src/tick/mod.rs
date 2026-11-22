@@ -232,11 +232,7 @@ fn character_bundle(id: u64, position: Vec3) -> impl Bundle {
                 Group::GROUP_3,
                 Group::GROUP_1 | Group::GROUP_3,
             )),
-            autostep: Some(CharacterAutostep {
-                max_height: CharacterLength::Absolute(PLAYER_STEP_HEIGHT),
-                min_width: CharacterLength::Absolute(PLAYER_COLLIDER_RADIUS * 2.0),
-                include_dynamic_bodies: false,
-            }),
+            autostep: Some(character_autostep()),
             snap_to_ground: Some(CharacterLength::Absolute(0.2)),
             ..default()
         },
@@ -247,6 +243,14 @@ fn character_bundle(id: u64, position: Vec3) -> impl Bundle {
         ragdoll::Impact::default(),
         Transform::from_translation(position),
     )
+}
+
+fn character_autostep() -> CharacterAutostep {
+    CharacterAutostep {
+        max_height: CharacterLength::Absolute(PLAYER_STEP_HEIGHT),
+        min_width: CharacterLength::Absolute(PLAYER_COLLIDER_RADIUS * 2.0),
+        include_dynamic_bodies: false,
+    }
 }
 
 fn validated_input(bytes: &[u8]) -> Option<ClientInput> {
@@ -588,14 +592,7 @@ fn set_crouched_state(
         return;
     }
     movement.crouched = crouched;
-    *collider = Collider::capsule_y(
-        if crouched {
-            PLAYER_CROUCH_COLLIDER_HALF_HEIGHT
-        } else {
-            PLAYER_COLLIDER_HALF_HEIGHT
-        },
-        PLAYER_COLLIDER_RADIUS,
-    );
+    *collider = common::stance::Stance::from_crouched(crouched).collider();
     let delta = PLAYER_COLLIDER_HALF_HEIGHT - PLAYER_CROUCH_COLLIDER_HALF_HEIGHT;
     transform.translation.y += if crouched { -delta } else { delta };
 }
@@ -615,20 +612,28 @@ fn can_occupy_character(
     center: Vec3,
     crouched: bool,
 ) -> bool {
-    // The controller's contact skin must not turn a touching floor into blocked headroom.
+    can_occupy_stance(
+        entity,
+        context,
+        center,
+        Quat::IDENTITY,
+        common::stance::Stance::from_crouched(crouched),
+    )
+}
+
+fn can_occupy_stance(
+    entity: Entity,
+    context: &RapierContext<'_>,
+    center: Vec3,
+    yaw: Quat,
+    stance: common::stance::Stance,
+) -> bool {
     // Use overlap, not a zero-length sweep (which can miss initial intersections).
-    let shape = Collider::capsule_y(
-        if crouched {
-            PLAYER_CROUCH_COLLIDER_HALF_HEIGHT
-        } else {
-            PLAYER_COLLIDER_HALF_HEIGHT
-        },
-        PLAYER_COLLIDER_RADIUS - 0.015,
-    );
+    let shape = stance.clearance_shape();
     let mut clear = true;
     context.intersect_shape(
         center,
-        Quat::IDENTITY,
+        yaw,
         &shape,
         QueryFilter::new()
             .groups(CollisionGroups::new(

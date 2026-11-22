@@ -244,7 +244,9 @@ pub(super) fn physical_tick(
             && arsenal.current().mechanics().equipped()
             && arsenal.active == input.weapon
             && body.anatomy.capacity(Region::RightArm) > 0.0
-            && !(input.run && Vec2::new(pose.velocity[0], pose.velocity[2]).length() > 0.5);
+            && !(input.run
+                && !movement.prone
+                && Vec2::new(pose.velocity[0], pose.velocity[2]).length() > 0.5);
         pose.ads += ((if aiming { 1.0 } else { 0.0 }) - pose.ads) * (1.0 - (-dt * 14.0).exp());
         // Objectives may enter debrief in the same tick as the last fatal hit.
         // Dead actors must still transfer their captured pose, even after active control ends.
@@ -259,8 +261,10 @@ pub(super) fn physical_tick(
             pose.mode_time += dt;
             continue;
         }
-        body.anatomy
-            .tick(dt, input.run && Vec3::from(pose.velocity).length() > 1.0);
+        body.anatomy.tick(
+            dt,
+            input.run && !movement.prone && Vec3::from(pose.velocity).length() > 1.0,
+        );
         if articulated {
             pose.mode_time += dt;
             pose.aim_pitch = arsenal.recoil.camera(input.camera).pitch;
@@ -298,6 +302,7 @@ pub(super) fn physical_tick(
         pose.velocity = local.into();
         pose.grounded = movement.grounded;
         pose.crouch = if movement.crouched { 1.0 } else { 0.0 };
+        pose.prone = movement.prone;
         let speed = Vec2::new(local.x, local.z).length();
         if movement.grounded {
             pose.phase =
@@ -313,7 +318,17 @@ pub(super) fn physical_tick(
             .predicate(&predicate);
         let mut supports = [0.0; 2];
         for (i, x) in [-0.13, 0.13].into_iter().enumerate() {
-            let origin = t.translation + t.rotation * Vec3::new(x, -0.45 + pose.crouch * 0.3, 0.0);
+            let origin = t.translation
+                + t.rotation
+                    * Vec3::new(
+                        x,
+                        if pose.prone {
+                            0.0
+                        } else {
+                            -0.45 + pose.crouch * 0.3
+                        },
+                        0.0,
+                    );
             if let Some((_, hit)) =
                 context.cast_ray_and_get_normal(origin, -Vec3::Y, 0.60, true, filter)
             {
@@ -361,7 +376,16 @@ pub(super) fn physical_tick(
                 movement.velocity.x += impulse.x * 0.35;
                 movement.velocity.z += impulse.z * 0.35;
                 pose.root_drop = 0.60 - pose.crouch * 0.3;
-                t.translation.y -= pose.root_drop;
+                if movement.prone {
+                    use common::stance::Stance;
+                    // Preserve the floor plane while handing the voluntary
+                    // envelope over to the standard injury fallback.
+                    t.translation.y += 0.30 - Stance::Prone.half_height();
+                    movement.prone = false;
+                    pose.prone = false;
+                } else {
+                    t.translation.y -= pose.root_drop;
+                }
                 *collider = Collider::compound(vec![(
                     Vec3::ZERO,
                     Quat::from_rotation_arc(-Vec3::Z, direction),
@@ -504,6 +528,7 @@ pub(super) fn spawn_dead(
         commands.entity(entity).insert(Corpsed);
         let already_down = matches!(pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering);
         pose.mode = PhysicalMode::Dead;
+        pose.prone = false;
         pose.mode_time = if already_down { 1.0 } else { 0.0 };
         info!(
             "RAGDOLL HANDOFF owner={} root={:?} inherited_pelvis={:?} angular_thigh={:?} impulse={:?} contact={:?}",

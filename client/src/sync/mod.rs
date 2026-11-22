@@ -231,8 +231,10 @@ fn recv_players_pos(
                 motion::LocalMotionPose {
                     position: player.pos.into(),
                     crouch: f32::from(u8::from(player.crouched)),
+                    prone: f32::from(player.pose.prone),
                     stride_phase: player.pose.phase,
                     stride_speed: if player.pose.grounded
+                        && !player.pose.prone
                         && player.pose.mode == common::humanoid::PhysicalMode::Standing
                     {
                         player.pose.velocity[0].hypot(player.pose.velocity[2])
@@ -318,6 +320,7 @@ fn recv_players_pos(
 fn discontinuous(previous: &ClientData, next: &ClientData) -> bool {
     previous.life != next.life
         || previous.pose.mode != next.pose.mode
+        || previous.pose.prone != next.pose.prone
         || previous.alive != next.alive
         || previous.participant.status != next.participant.status
 }

@@ -17,6 +17,7 @@ struct Sample {
 pub(crate) struct LocalMotionPose {
     pub position: Vec3,
     pub crouch: f32,
+    pub prone: f32,
     pub stride_phase: f32,
     pub stride_speed: f32,
     pub ads: f32,
@@ -70,6 +71,7 @@ impl LocalMotion {
                 return Some(LocalMotionPose {
                     position: previous.pose.position.lerp(next.pose.position, alpha),
                     crouch: previous.pose.crouch.lerp(next.pose.crouch, alpha),
+                    prone: previous.pose.prone.lerp(next.pose.prone, alpha),
                     stride_phase: previous.pose.stride_phase + phase_delta * alpha,
                     stride_speed: previous
                         .pose
@@ -362,6 +364,7 @@ mod tests {
         let standing = LocalMotionPose {
             position: Vec3::new(0.0, 1.0, 0.0),
             crouch: 0.0,
+            prone: 0.0,
             stride_phase: std::f32::consts::TAU - 0.2,
             stride_speed: 3.0,
             ads: 0.0,
@@ -373,6 +376,7 @@ mod tests {
         let crouched = LocalMotionPose {
             position: Vec3::new(2.0, 0.7, -1.0),
             crouch: 1.0,
+            prone: 0.0,
             stride_phase: 0.2,
             stride_speed: 0.0,
             ads: 1.0,

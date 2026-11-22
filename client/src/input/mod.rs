@@ -55,6 +55,7 @@ fn cursor_control(
 
 #[derive(SystemParam)]
 struct InputOverlays<'w> {
+    prone_binding: Option<Res<'w, ProneBinding>>,
     inventory: Option<Res<'w, crate::sync::inventory::State>>,
     panel: Option<Res<'w, inventory_panel::Panel>>,
     menu: Option<Res<'w, crate::menu::Menu>>,
@@ -81,6 +82,50 @@ fn gameplay_allowed(
         && now - session.last_received < 2.0
 }
 
+#[derive(Resource)]
+struct ProneBinding(KeyCode);
+
+impl Default for ProneBinding {
+    fn default() -> Self {
+        let key = std::env::var("TK_PRONE_KEY").unwrap_or_default();
+        let letters = [
+            KeyCode::KeyA,
+            KeyCode::KeyB,
+            KeyCode::KeyC,
+            KeyCode::KeyD,
+            KeyCode::KeyE,
+            KeyCode::KeyF,
+            KeyCode::KeyG,
+            KeyCode::KeyH,
+            KeyCode::KeyI,
+            KeyCode::KeyJ,
+            KeyCode::KeyK,
+            KeyCode::KeyL,
+            KeyCode::KeyM,
+            KeyCode::KeyN,
+            KeyCode::KeyO,
+            KeyCode::KeyP,
+            KeyCode::KeyQ,
+            KeyCode::KeyR,
+            KeyCode::KeyS,
+            KeyCode::KeyT,
+            KeyCode::KeyU,
+            KeyCode::KeyV,
+            KeyCode::KeyW,
+            KeyCode::KeyX,
+            KeyCode::KeyY,
+            KeyCode::KeyZ,
+        ];
+        let value = match key.as_bytes() {
+            [letter] if letter.is_ascii_alphabetic() => {
+                letters[usize::from(letter.to_ascii_lowercase() - b'a')]
+            }
+            _ => KeyCode::KeyZ,
+        };
+        Self(value)
+    }
+}
+
 fn keyboard(
     (keys, buttons): (Res<ButtonInput<KeyCode>>, Res<ButtonInput<MouseButton>>),
     (session, id, time): (Res<ClientSession>, Res<PlayerId>, Res<Time<Real>>),
@@ -88,6 +133,7 @@ fn keyboard(
     mut input: ResMut<LocalInput>,
     mut presses: Local<GameplayPress>,
     InputOverlays {
+        prone_binding,
         inventory,
         panel,
         menu,
@@ -102,6 +148,15 @@ fn keyboard(
     input.right = active && keys.pressed(KeyCode::KeyD);
     input.run = active && keys.pressed(KeyCode::ShiftLeft);
     input.crouch = active && keys.pressed(KeyCode::ControlLeft);
+    if active
+        && keys.just_pressed(
+            prone_binding
+                .as_ref()
+                .map_or(KeyCode::KeyZ, |binding| binding.0),
+        )
+    {
+        input.prone_sequence = input.prone_sequence.wrapping_add(1);
+    }
     input.jump = active && keys.pressed(KeyCode::Space);
     input.interact = active && keys.pressed(KeyCode::KeyF);
     if !input.interact {
@@ -187,6 +242,7 @@ mod tests {
             .insert_resource(PlayerId(7))
             .init_resource::<LocalInput>()
             .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ProneBinding>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<Time<Real>>()
             .add_systems(Update, keyboard);

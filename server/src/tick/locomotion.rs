@@ -59,7 +59,9 @@ pub(super) fn advance(
         gait.velocity = velocity;
         gait.position = root.translation;
         gait.yaw = yaw;
-        if !matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling) || !pose.grounded
+        if pose.prone
+            || !matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
+            || !pose.grounded
         {
             pose.foot_weight = [0.0; 2];
             gait.feet = [Plant::default(); 2];

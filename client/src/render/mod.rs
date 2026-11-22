@@ -687,6 +687,7 @@ fn sync_local_view(
         )
     });
     let vertical_offset = crouch * PLAYER_CROUCH_VIEW_OFFSET;
+    let prone = motion.map_or(0.0, |pose| pose.prone);
     let lean = motion.map_or(player_input.camera.roll, |pose| pose.roll);
     let recoil_roll = camera.roll - player_input.camera.roll;
     let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, lean + recoil_roll);
@@ -695,7 +696,8 @@ fn sync_local_view(
         common::humanoid::aim_lean_offset(lean)
             + Vec3::Y * (PLAYER_VIEW_HEIGHT + 0.10 + vertical_offset + bob),
         head_rotation,
-    );
+    )
+    .lerp(common::stance::Stance::Prone.eye_offset(), prone);
 
     for (base_offset, mut transform) in query.iter_mut() {
         transform.rotation = rotation;
@@ -712,11 +714,18 @@ fn sync_local_player_rotation(
     player_input: Res<LocalInput>,
     feedback: Option<Res<feedback::Feedback>>,
     id: Option<Res<PlayerId>>,
+    session: Option<Res<ClientSession>>,
     mut player_transform: Single<&mut Transform, With<LocalPlayer>>,
 ) {
+    let mut voluntary = player_input.camera;
+    if let (Some(session), Some(id)) = (session, id.as_ref())
+        && let Some(player) = session.local(id.0).filter(|player| player.pose.prone)
+    {
+        voluntary.yaw = player.rot.yaw;
+    }
     let camera = match (feedback, id) {
-        (Some(feedback), Some(id)) => feedback.camera(id.0, player_input.camera),
-        _ => player_input.camera,
+        (Some(feedback), Some(id)) => feedback.camera(id.0, voluntary),
+        _ => voluntary,
     };
     player_transform.rotation = Quat::from_rotation_y(camera.yaw);
 }

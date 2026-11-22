@@ -67,7 +67,7 @@ cargo run --bin client
 
 The client defaults to `127.0.0.1`, UDP port `9080`. No `.env` file is needed, and assets are resolved from the client manifest directory rather than the shell's working directory. For LAN play, set `$env:SERVER_ADDR = "192.168.1.10"` to your server's IP before starting the client (POSIX: `SERVER_ADDR=192.168.1.10 cargo run --bin client`). Allow the server's UDP port through the firewall. Optional `TK_PORT` changes the port on both binaries.
 
-Rebuild both binaries for protocol 25 (adds Arena PvP and life-scoped inputs). The client waits for referenced configurations before presenting a snapshot; delayed configuration retains the last accepted world until the normal stale timeout. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
+Rebuild both binaries for protocol 26 (adds replicated voluntary prone to the Arena PvP and life-scoped input protocol). The client waits for referenced configurations before presenting a snapshot; delayed configuration retains the last accepted world until the normal stale timeout. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
 
 Start additional clients in separate terminals to test multiplayer. All connected players must ready up; solo play also starts normally. The server supports up to 32 clients and assigns distinct spawn positions. A client arriving during an active raid waits for the next lobby.
 
@@ -112,6 +112,7 @@ the other combatant to the lobby, where a new pair can prepare another duel.
 | W, A, S, D | Move |
 | Mouse | Look |
 | Left Shift / Left Ctrl | Run / crouch |
+| Z | Toggle prone; remap to an unused letter with `TK_PRONE_KEY` |
 | Space | Jump while active; never respawn during the current raid |
 | Hold Q / E | Gradually lean left / right; release both keys (or hold both) to return to neutral |
 | 1 / 2 | Equip your selected primary / pistol |

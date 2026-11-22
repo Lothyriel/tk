@@ -112,6 +112,7 @@ pub enum PhysicalMode {
 pub struct PoseState {
     pub velocity: [f32; 3],
     pub grounded: bool,
+    pub prone: bool,
     pub crouch: f32,
     pub phase: f32,
     pub lean: [f32; 2],
@@ -395,6 +396,21 @@ pub fn evaluate_pose_with_action(
                 weight,
             )
             .to_array();
+    }
+    if state.prone && !falling {
+        // Fold the ordinary anatomical rig into a separate controlled crawl,
+        // keeping its centres near the horizontal controller envelope.
+        let rotation = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+        for part in &mut result {
+            part.position = (rotation * Vec3::from(part.position) * Vec3::new(1.0, 0.25, 1.0)
+                + Vec3::new(0.0, -0.02, 0.10))
+            .into();
+            part.rotation = (rotation * Quat::from_array(part.rotation)).to_array();
+        }
+        let eye = crate::stance::Stance::Prone.eye_offset();
+        result[Head.index()].position = (eye + Vec3::Z * 0.10).into();
+        result[Head.index()].rotation = aim.to_array();
+        result[Neck.index()].position = (eye + Vec3::new(0.0, -0.07, 0.23)).into();
     }
     if matches!(
         state.mode,
