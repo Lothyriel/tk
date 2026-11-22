@@ -133,7 +133,7 @@ pub(in crate::input) struct Board;
 pub(in crate::input) struct GridRoot;
 
 #[derive(Component)]
-pub(in crate::input) struct Feedback;
+pub(crate) struct Feedback;
 
 #[derive(Component)]
 pub(in crate::input) struct Tile;

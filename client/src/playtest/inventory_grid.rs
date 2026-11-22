@@ -32,6 +32,10 @@ pub(super) fn benchmark_enabled() -> bool {
     std::env::var_os("TK_PLAYTEST_GRID_BENCH").is_some()
 }
 
+pub(crate) fn partial_merge_enabled() -> bool {
+    std::env::var_os("TK_PLAYTEST_PARTIAL_MERGE").is_some()
+}
+
 pub(crate) struct Plugin {
     pub integrated: bool,
 }
@@ -75,6 +79,11 @@ enum Step {
         new_stack: ProjectedItem,
     },
     Merge,
+    PartialMerge {
+        source: ItemInstanceId,
+        target: ItemInstanceId,
+        prior_op: u64,
+    },
 }
 
 impl Step {
@@ -83,6 +92,7 @@ impl Step {
             Self::Move => "Move confirmed",
             Self::Split { .. } => "Split confirmed",
             Self::Merge => "Merge confirmed",
+            Self::PartialMerge { .. } => "Merge confirmed: remainder in source stack",
         }
     }
 }
@@ -208,6 +218,7 @@ fn drive(
     window: Single<(Entity, &Window), With<PrimaryWindow>>,
     mut keyboard: MessageWriter<KeyboardInput>,
     (mut exit, pointer, scale, close_ack): ReviewControls,
+    feedback: Query<&Text, With<crate::input::inventory_panel::Feedback>>,
 ) {
     if probe.finished || (probe.integrated && !probe.requested) {
         return;
@@ -329,6 +340,9 @@ fn drive(
             "GRID PROBE closing Tab did not close the panel"
         );
         probe.finished = true;
+        if partial_merge_enabled() {
+            exit.write(AppExit::Success);
+        }
         return;
     }
     if probe.integrated && !probe.opening && window.focused && session.playing(player.0) {
@@ -375,6 +389,31 @@ fn drive(
             probe.check.as_ref().unwrap().revision,
             "grid changed while preparing the operation"
         );
+        if probe.keys.is_empty()
+            && let Step::PartialMerge {
+                source,
+                target,
+                prior_op,
+            } = probe.check.as_ref().unwrap().step
+        {
+            assert_eq!(
+                feedback.single().unwrap().as_str(),
+                "Merge: target ×3 · source remainder ×1"
+            );
+            assert_eq!(inventory.last_operation_id(), prior_op);
+            assert_eq!(inventory.pending_operation_id(), None);
+            assert_eq!(
+                grid.items
+                    .iter()
+                    .map(|(id, item)| (*id, item.quantity))
+                    .collect::<Vec<_>>(),
+                [(source, 2), (target, 2)]
+            );
+            info!(
+                "GRID PARTIAL MERGE preview source={} target={} revision={} source_quantity=2 target_quantity=2 remainder=1 total=3",
+                source.0, target.0, grid.version.revision
+            );
+        }
         for &key in &keys {
             keyboard.write(emit(key, ButtonState::Pressed));
         }
@@ -461,6 +500,25 @@ fn drive(
                 assert_eq!(actual, check.expected);
                 info!("GRID PROBE PASS move/rotate and split/merge");
             }
+            Step::PartialMerge {
+                source,
+                target,
+                prior_op,
+            } => {
+                let op = prior_op + 1;
+                assert_eq!(inventory.last_operation_id(), op);
+                assert_eq!(inventory.pending_operation_id(), None);
+                assert_eq!(
+                    inventory.outcome(op),
+                    Some(common::catalog::item_inventory::OperationResult::Committed)
+                );
+                assert_eq!(actual, check.expected);
+                assert_eq!(feedback.single().unwrap().as_str(), check.step.feedback());
+                info!(
+                    "GRID PARTIAL MERGE confirmed source={} target={} revision={} source_quantity=1 target_quantity=3 op={op}",
+                    source.0, target.0, check.revision
+                );
+            }
         }
         if probe.integrated {
             keyboard.write(emit(KeyCode::Tab, ButtonState::Pressed));
@@ -470,6 +528,39 @@ fn drive(
             probe.finished = true;
             exit.write(AppExit::Success);
         }
+        return;
+    }
+    if partial_merge_enabled() {
+        let [(source, first), (target, second)] = grid.items.as_slice() else {
+            panic!("partial merge requires exactly two confirmed stacks");
+        };
+        assert_eq!(
+            grid.version.revision, 2,
+            "exactly two pickups before the merge"
+        );
+        for item in [first, second] {
+            assert_eq!(item.definition, "med.bandage");
+            assert_eq!(item.quantity, 2);
+        }
+        assert_eq!(first.condition, second.condition);
+        assert_eq!(first.contents, second.contents);
+        let prior_op = inventory.last_operation_id();
+        assert_eq!(prior_op, 0);
+        probe.run = Some((key, time.elapsed_secs_f64(), sequences));
+        actual.get_mut(source).unwrap().quantity = 1;
+        actual.get_mut(target).unwrap().quantity = 3;
+        probe.route(
+            grid,
+            selected,
+            *source,
+            second.placement,
+            Step::PartialMerge {
+                source: *source,
+                target: *target,
+                prior_op,
+            },
+            actual,
+        );
         return;
     }
     let Some((id, target)) = grid.items.iter().find_map(|(id, item)| {

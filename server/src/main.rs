@@ -48,7 +48,12 @@ fn renet_init() -> (RenetServer, NetcodeServerTransport) {
     let port = std::env::var("TK_PORT")
         .map(|value| value.parse::<u16>().expect("Valid TK_PORT"))
         .unwrap_or(DEFAULT_PORT);
-    let public_addr = (Ipv4Addr::UNSPECIFIED, port).into();
+    let bind = if std::env::var_os("TK_PLAYTEST_PARTIAL_MERGE").is_some() {
+        Ipv4Addr::LOCALHOST
+    } else {
+        Ipv4Addr::UNSPECIFIED
+    };
+    let public_addr = (bind, port).into();
 
     info!("Starting server on: {:?}", public_addr);
 

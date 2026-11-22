@@ -5,6 +5,7 @@ use common::{PlayerId, catalog::ItemInstanceId, replication::inventory::CHANNEL}
 
 use crate::sync::{ClientSession, inventory::State};
 pub(super) mod grid;
+pub(crate) use grid::Feedback;
 pub(crate) use grid::close_ack::{CloseAck, CloseAckPlugin};
 pub(crate) use grid::{GridFont, GridReview, PointerRoute};
 

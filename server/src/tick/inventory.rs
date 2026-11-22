@@ -150,6 +150,33 @@ fn seed_world(inventory: &mut Inventory, items: &mut Vec<WorldItem>, bandages: u
     }
 }
 
+fn seed_partial_merge(inventory: &mut Inventory, items: &mut Vec<WorldItem>) {
+    let bandage = &items[0];
+    let id = inventory
+        .insert_seed(
+            "med.bandage",
+            Condition::Intact,
+            2,
+            GridLocation {
+                compartment: BANDAGE_SPARE_SLOT,
+                placement: Placement {
+                    x: 0,
+                    y: 0,
+                    rotation: Rotation::Upright,
+                },
+            },
+        )
+        .expect("second QA bandage stack fits spare slot");
+    items.push(WorldItem {
+        id,
+        source: BANDAGE_SPARE_SLOT,
+        seed: bandage.seed,
+        center: bandage.center - Vec3::X * 1.5,
+        half_extents: bandage.half_extents,
+        fall_speed: None,
+    });
+}
+
 #[cfg(test)]
 #[derive(Resource)]
 pub(super) struct UdpInventoryFixture(
@@ -455,14 +482,19 @@ impl Endpoint {
         }
         if raid.loot_active() && self.raid != Some(raid.raid_id) {
             let mut inventory = self.empty_inventory();
-            let bandages = if std::env::var("TK_PLAYTEST_GRID_SPLIT")
-                .is_ok_and(|v| matches!(v.as_str(), "1" | "2"))
+            let partial = std::env::var_os("TK_PLAYTEST_PARTIAL_MERGE").is_some();
+            let bandages = if !partial
+                && std::env::var("TK_PLAYTEST_GRID_SPLIT")
+                    .is_ok_and(|v| matches!(v.as_str(), "1" | "2"))
             {
                 3
             } else {
                 2
             };
             seed_world(&mut inventory, &mut self.world_items, bandages);
+            if partial {
+                seed_partial_merge(&mut inventory, &mut self.world_items);
+            }
             self.loot_ids = self
                 .world_items
                 .iter()
@@ -920,6 +952,34 @@ mod tests {
         item_inventory::{InventoryAction, InventoryOperation, OperationResult},
     };
     use common::raid::RaidPhase;
+
+    #[test]
+    fn inventory_partial_merge_fixture_adds_a_distinct_same_seed_stack_only_when_requested() {
+        let mut inventory = Inventory::default();
+        let mut ground = Vec::new();
+        seed_world(&mut inventory, &mut ground, 2);
+        assert_eq!(ground.len(), S1_SEEDS.len());
+        assert_eq!(ground.iter().filter(|item| item.seed == 0).count(), 1);
+        let original = *inventory.get(ground[0].id).unwrap();
+        assert_eq!(original.quantity, 2);
+
+        seed_partial_merge(&mut inventory, &mut ground);
+        assert_eq!(
+            ground.len(),
+            common::catalog::item_manifest::S1_GROUND_LIMIT
+        );
+        let extra = ground.last().unwrap();
+        assert_eq!(extra.seed, ground[0].seed);
+        assert_ne!(extra.id, ground[0].id);
+        assert_ne!(extra.center, ground[0].center);
+        let stack = inventory.get(extra.id).unwrap();
+        assert_eq!(stack.location.compartment, BANDAGE_SPARE_SLOT);
+        assert_eq!(stack.quantity, 2);
+        assert_eq!(stack.contents, original.contents);
+        assert_eq!(stack.condition, original.condition);
+        assert_eq!(stack.definition.stack_max, 3);
+        assert_eq!(inventory.get(ground[0].id), Some(&original));
+    }
 
     #[test]
     fn inventory_payload_telemetry_counts_encoded_enqueues_only() {

@@ -22,6 +22,23 @@ fn main() {
     let voxel_grid = playtest && std::env::var_os("TK_PLAYTEST_INVENTORY_GRID").is_some();
     let close_ack = std::env::args().any(|arg| arg == "--inventory-grid-close-ack");
     assert!(
+        !playtest::inventory_grid::partial_merge_enabled()
+            || (voxel_grid
+                && !grid_review
+                && !close_ack
+                && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("1")
+                && [
+                    "TK_PLAYTEST_GRID_SPLIT",
+                    "TK_PLAYTEST_GRID_BENCH",
+                    "TK_PLAYTEST_LOOT_INSPECT",
+                    "TK_PLAYTEST_INVENTORY_TELEMETRY",
+                    "TK_PLAYTEST_LOOT_CONTEST"
+                ]
+                .iter()
+                .all(|flag| std::env::var_os(flag).is_none())),
+        "partial merge requires the plain solo grid route"
+    );
+    assert!(
         !close_ack
             || (voxel_grid
                 && !grid_review

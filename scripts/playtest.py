@@ -215,6 +215,22 @@ def loot_contest_evidence(client_logs, server_log):
             "winner": winner, "owned_quantities": views, "ground_removed_in_both_views": True}
 
 
+def partial_merge_evidence(log):
+    pattern = r"GRID PARTIAL MERGE {} source=(\d+) target=(\d+) revision=(\d+) {}$"
+    preview = list(re.finditer(pattern.format("preview", "source_quantity=2 target_quantity=2 remainder=1 total=3"),
+                               log, re.MULTILINE))
+    confirmed = list(re.finditer(pattern.format("confirmed", "source_quantity=1 target_quantity=3 op=1"),
+                                 log, re.MULTILINE))
+    if len(preview) != 1 or len(confirmed) != 1 or preview[0].start() >= confirmed[0].start():
+        raise ValueError("Expected one preview followed by one confirmed partial merge")
+    source, target, revision = map(int, preview[0].groups())
+    if source == target or revision != 2 or tuple(map(int, confirmed[0].groups())) != (source, target, revision + 1):
+        raise ValueError("Partial merge did not confirm the same stacks at the next revision")
+    return {"source": source, "target": target, "preview_revision": revision,
+            "confirmed_revision": revision + 1, "before": [2, 2], "after": [1, 3],
+            "operation": 1, "input": "synthetic Bevy keyboard", "pending": "not measured"}
+
+
 def grid_close_ack_evidence(log):
     rows = re.findall(
         r"GRID CLOSE ACK (\w+) raid=(\d+) session=(\d+) op=(\d+) item=(\d+) revision=(\d+) frame=(\d+)$",
@@ -355,6 +371,8 @@ def main():
                         help="Diagnose Tab close versus the original server reply during one solo grid move")
     parser.add_argument("--inventory-grid-split", type=int, choices=(1, 2),
                         help="Verify this split quantity against an opt-in three-bandage seed")
+    parser.add_argument("--inventory-grid-partial-merge", action="store_true",
+                        help="Verify a partial merge of two same-lineage stacks against a private QA server")
     parser.add_argument("--inventory-telemetry", action="store_true",
                         help="Measure application payloads and Linux process RSS during the solo grid route")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
@@ -409,6 +427,12 @@ def main():
     if args.bench_draft and (not args.configure_weapons or args.no_capture or args.video):
         parser.error("--bench-draft requires --configure-weapons and static captures only")
     grid_review = args.inventory_grid_review_scale is not None
+    if args.inventory_grid_partial_merge and not (args.inventory_grid and not (
+        grid_review or args.inventory_grid_bench or args.inventory_grid_close_ack
+        or args.inventory_grid_split or args.inventory_telemetry or args.loot_inspect
+        or args.configure_weapons or args.weapon_kit or args.animation_review
+    )):
+        parser.error("--inventory-grid-partial-merge requires the plain solo --inventory-grid route")
     if args.inventory_grid_bench and not (
         args.inventory_grid and args.viewport == (1280, 800)
         and not (grid_review or args.inventory_telemetry)
@@ -532,6 +556,9 @@ def main():
         env["TK_PLAYTEST_PET_PROBE"] = args.pet_probe
     env.pop("TK_PLAYTEST_INVENTORY_GRID", None)
     env.pop("TK_PLAYTEST_GRID_SPLIT", None)
+    env.pop("TK_PLAYTEST_PARTIAL_MERGE", None)
+    if args.inventory_grid_partial_merge:
+        env["TK_PLAYTEST_PARTIAL_MERGE"] = "1"
     if args.inventory_grid_split:
         env["TK_PLAYTEST_GRID_SPLIT"] = str(args.inventory_grid_split)
     env.pop("TK_PLAYTEST_GRID_BENCH", None)
@@ -641,7 +668,8 @@ def main():
         "shot_diagnostics": env.get("TK_SHOT_DIAGNOSTICS") is not None,
         "loadouts": ("leader compact M4A1 / peer suppressed M4A1" if args.configure_weapons
                      else "leader Rifle / peer SMG") + "; AP; heavy vest; helmet; both carry pistol",
-        "route": ("arena-solo" if args.arena_solo else "arena-pvp" if args.arena_pvp
+        "route": ("deploy -> two pickups -> partial merge -> stop" if args.inventory_grid_partial_merge
+                  else "arena-solo" if args.arena_solo else "arena-pvp" if args.arena_pvp
                   else "deploy -> dual loose item pickup -> stop" if args.loot_contest else args.pov
                   or "optional reciprocal continuous weapon actions -> full-body route -> weapon exercise -> loot -> sentry combat -> extraction -> debrief -> lobby -> deploy -> limb injury/fall/recovery/death"),
         "timestamps": "client.log PLAYTEST stage clocks and ANIMATION CONTACT local clocks; frame-times.csv real frame timestamps",
@@ -739,6 +767,13 @@ def main():
                 if args.viewport:
                     assert struct.unpack(">II", data[16:24]) == args.viewport
         result = "PASS: native Arena Solo, real UDP, both combatants returned and second session began\n"
+        (output / "result.txt").write_text(result, encoding="utf-8")
+        print(result, end="")
+        return
+    if args.inventory_grid_partial_merge:
+        report = partial_merge_evidence(client_text)
+        (output / "evidence.json").write_text(json.dumps({"partial_merge": report}, indent=2), encoding="utf-8")
+        result = "PASS: native UDP partial merge, 2+2 → 1+3 (see evidence.json)\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
         return

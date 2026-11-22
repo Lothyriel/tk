@@ -123,6 +123,35 @@ impl Route {
         let Some(grid) = inventory.owned_grid(raid, actor.id) else {
             return false;
         };
+        if super::inventory_grid::partial_merge_enabled() {
+            assert!(!dual && inspection.is_none());
+            if grid.items.len() == 2 {
+                grid_probe
+                    .expect("partial merge uses the grid probe")
+                    .ready_to_resume();
+                return false;
+            }
+            if let Some(item) = inventory
+                .ground()
+                .0
+                .iter()
+                .find(|item| item.seed == 0 && !grid.items.iter().any(|(id, _)| *id == item.id))
+            {
+                let center = Vec3::from_array(item.root)
+                    + Vec3::from_array(item_visuals()[S1_SEEDS[0]].collider_center());
+                if travel(input, actor, center + Vec3::Z * 0.9) {
+                    aim_at(input, actor, center);
+                    if inventory
+                        .focused_ground(raid)
+                        .is_some_and(|focus| focus.id == item.id)
+                    {
+                        input.interact = true;
+                        input.pickup_focus = Some((raid, item.id));
+                    }
+                }
+            }
+            return false;
+        }
         if self.index == order.len() {
             let lane: f32 = if peer { 2.8 } else { -2.8 };
             while let Some(target) = [
@@ -159,7 +188,10 @@ impl Route {
                             "grid checkpoint needs the integrated two-bandage seed"
                         );
                         self.held_bandage = Some(*id);
-                        info!("VOXEL LOOT collected seed={seed} id={}", id.0);
+                        info!(
+                            "VOXEL LOOT collected seed={seed} id={} quantity={}",
+                            id.0, owned.quantity
+                        );
                         self.advance_seed();
                         return false;
                     }
