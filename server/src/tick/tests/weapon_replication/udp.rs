@@ -1044,6 +1044,199 @@ fn inventory_udp_private_resync_under_loss() {
 
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn inventory_udp_ground_handoff_preserves_identity_and_extraction_credit() {
+    use common::{
+        catalog::{
+            CompartmentId,
+            item_inventory::{Condition, ItemContents},
+            item_manifest::{S1_SEEDS, item_visuals},
+        },
+        replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+    };
+
+    let drain = |peer: &mut UdpPeer| {
+        std::iter::from_fn(|| peer.peer.network.receive_message(CHANNEL))
+            .map(|bytes| InventoryUpdate::decode(&bytes).unwrap().body)
+            .collect::<Vec<_>>()
+    };
+    let mut harness = Harness::new();
+    let mut a = UdpPeer::new(7, harness.address, harness.now, false);
+    let mut b = UdpPeer::new(8, harness.address, harness.now, false);
+    harness.pump(&mut [&mut a, &mut b], 192);
+    for peer in [&mut a, &mut b] {
+        drain(peer);
+        peer.input.lobby_sequence = 1;
+    }
+    harness.pump(&mut [&mut a, &mut b], 512);
+    let world = harness.app.world();
+    let raid = world.resource::<RaidState>();
+    assert_eq!(raid.phase, RaidPhase::Active);
+    let epoch = raid.raid_id;
+    let [actor_a, actor_b] = [7, 8].map(|id| world.resource::<Lobby>().players[&id]);
+    let initial: Vec<_> = std::iter::from_fn(|| a.peer.network.receive_message(CHANNEL))
+        .map(|bytes| InventoryUpdate::decode(&bytes).unwrap())
+        .collect();
+    let ground = initial.last().unwrap();
+    let UpdateBody::Ground(items) = &ground.body else {
+        panic!("expected stock ground items");
+    };
+    assert!(drain(&mut b).contains(&ground.body));
+    let stock = items.iter().find(|item| item.seed == 0).unwrap();
+    let id = stock.id;
+    let no_item = UpdateBody::Ground(items.iter().filter(|item| item.id != id).cloned().collect());
+    let visual = &item_visuals()[S1_SEEDS[0]];
+    let set_position = |harness: &mut Harness, actor, position| {
+        harness
+            .app
+            .world_mut()
+            .get_mut::<Transform>(actor)
+            .unwrap()
+            .translation = position;
+    };
+    // Stage only actor positions. Pickup still depends on production sight,
+    // reach, settled ground state and the normal input/transaction handlers.
+    let approach = |harness: &mut Harness, actor, peer: &mut UdpPeer, root| {
+        let center = Vec3::from_array(root) + Vec3::from_array(visual.collider_center());
+        let start = Vec3::new(center.x, 1.02, center.z + 1.0);
+        set_position(harness, actor, start);
+        let ray = center - (start + Vec3::Y * PLAYER_VIEW_HEIGHT);
+        peer.input.camera.pitch = ray.y.atan2(-ray.z);
+    };
+    let check_delta = |updates: &[UpdateBody], owner, revision| {
+        let mut deltas = updates.iter().filter_map(|update| match update {
+            UpdateBody::Delta(delta) => Some(delta.as_slice()),
+            _ => None,
+        });
+        let [delta] = deltas.next().expect("expected one private delta") else {
+            panic!("expected one changed compartment");
+        };
+        assert!(deltas.next().is_none());
+        assert_eq!(delta.version.id, CompartmentId(owner));
+        assert_eq!(delta.version.revision, revision);
+        assert_eq!(delta.items.len(), 1);
+        assert_eq!(delta.items[0].id, id);
+        delta.items[0].item.clone()
+    };
+    let no_delta = |updates: &[UpdateBody]| {
+        assert!(
+            !updates
+                .iter()
+                .any(|update| matches!(update, UpdateBody::Delta(_)))
+        );
+    };
+    let counts = |peer: &UdpPeer| {
+        [7, 8].map(|id| {
+            let actor = peer
+                .peer
+                .latest
+                .as_ref()
+                .unwrap()
+                .players
+                .iter()
+                .find(|p| p.id == id)
+                .unwrap();
+            (actor.participant.carried, actor.participant.secured)
+        })
+    };
+
+    approach(&mut harness, actor_a, &mut a, stock.root);
+    harness.pump(&mut [&mut a, &mut b], 48);
+    assert!(drain(&mut a).contains(&UpdateBody::GroundFocus(Some(id))));
+    drain(&mut b);
+    a.input.interact = true;
+    a.input.pickup_focus = Some((epoch, id));
+    harness.pump(&mut [&mut a, &mut b], 96);
+    let a_updates = drain(&mut a);
+    let b_updates = drain(&mut b);
+    let original = check_delta(&a_updates, 7, 1).expect("A receives the stock item");
+    assert_eq!(original.definition, S1_SEEDS[0]);
+    assert_eq!(original.quantity, 2);
+    assert_eq!(original.condition, Condition::Intact);
+    assert_eq!(original.contents, ItemContents::Dressing { sealed: true });
+    no_delta(&b_updates);
+    for (peer, updates) in [(&a, a_updates), (&b, b_updates)] {
+        assert!(updates.contains(&no_item));
+        assert_eq!(counts(peer), [(2, 0), (0, 0)]);
+    }
+
+    a.input.interact = false;
+    a.input.pickup_focus = None;
+    a.peer.network.send_message(
+        CHANNEL,
+        InventoryRequest::Drop {
+            session: ground.session,
+            item: id,
+            revision: 1,
+        }
+        .encode()
+        .unwrap(),
+    );
+    harness.pump(&mut [&mut a, &mut b], 96);
+    let last_ground = |updates: &[UpdateBody]| {
+        updates
+            .iter()
+            .rev()
+            .find_map(|body| match body {
+                UpdateBody::Ground(items) => Some(items.clone()),
+                _ => None,
+            })
+            .expect("expected a published drop")
+    };
+    let a_updates = drain(&mut a);
+    let b_updates = drain(&mut b);
+    assert!(check_delta(&a_updates, 7, 2).is_none());
+    no_delta(&b_updates);
+    let dropped = last_ground(&a_updates);
+    assert_eq!(dropped, last_ground(&b_updates));
+    let loose = dropped.iter().find(|item| item.id == id).unwrap();
+    assert_eq!(loose.seed, stock.seed);
+    assert_eq!(counts(&a), [(0, 0), (0, 0)]);
+    assert_eq!(counts(&b), counts(&a));
+
+    let [x, _, z] = common::map::EXTRACTION_CENTER;
+    set_position(&mut harness, actor_a, Vec3::new(x, 1.02, z));
+    approach(&mut harness, actor_b, &mut b, loose.root);
+    harness.pump(&mut [&mut a, &mut b], 48);
+    assert!(drain(&mut b).contains(&UpdateBody::GroundFocus(Some(id))));
+    no_delta(&drain(&mut a));
+    b.input.interact = true;
+    b.input.pickup_focus = Some((epoch, id));
+    harness.pump(&mut [&mut a, &mut b], 96);
+    let a_updates = drain(&mut a);
+    let b_updates = drain(&mut b);
+    no_delta(&a_updates);
+    let mut received = check_delta(&b_updates, 8, 1).expect("B receives A's item");
+    received.placement = original.placement; // The destination may pack it differently.
+    assert_eq!(received, original);
+    for (peer, updates) in [(&a, a_updates), (&b, b_updates)] {
+        assert!(updates.contains(&no_item));
+        assert_eq!(counts(peer), [(0, 0), (2, 0)]);
+    }
+
+    b.input.interact = false;
+    b.input.pickup_focus = None;
+    set_position(&mut harness, actor_b, Vec3::new(x + 0.8, 1.02, z));
+    harness.pump(&mut [&mut a, &mut b], 32);
+    b.input.interact = true;
+    harness.pump(&mut [&mut a, &mut b], 768);
+    assert_eq!(
+        harness
+            .app
+            .world()
+            .get::<Participant>(actor_b)
+            .unwrap()
+            .status,
+        RaidStatus::Extracted
+    );
+    for _ in 0..2 {
+        assert_eq!(counts(&a), [(0, 0), (0, 2)]);
+        assert_eq!(counts(&b), counts(&a));
+        harness.pump(&mut [&mut a, &mut b], 128);
+    }
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn inventory_udp_contested_ground_pickup_with_snapshot_loss_and_disconnect() {
     use common::{
         catalog::{
