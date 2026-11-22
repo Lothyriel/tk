@@ -69,7 +69,8 @@ pub fn pov_fixture() -> bool {
             | "handling-route"
             | "armed-stride"
             | "prone"
-            | "stumble")
+            | "stumble"
+            | "action-fault")
     )
 }
 

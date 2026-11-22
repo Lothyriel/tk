@@ -25,6 +25,7 @@ POV_CAPTURES = {
     "armed-stride": ("rest", "walk", "run", "turn", "moving-ads", "return"),
     "prone": ("rest", "prone", "refused", "clear", "return"),
     "stumble": ("rest", "stumble", "contact", "return"),
+    "action-fault": ("rest", "fault", "recovering", "interrupted", "persisted", "return"),
     "side-cover": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "handling-route": ("rest", "walk", "run", "stop", "crouch", "left", "right",
                        "neutral", "ads", "moving-ads", "hip", "inspect", "cancel", "return"),
@@ -34,6 +35,7 @@ DUAL_POV = {
     "armed-stride": ("turn", "moving-ads", "return"),
     "prone": ("prone", "refused", "return"),
     "stumble": ("stumble", "contact", "return"),
+    "action-fault": POV_CAPTURES["action-fault"],
 }
 
 
@@ -192,8 +194,8 @@ def main():
                      or (args.video and (args.pov != "stop-lean" or args.clients != 1 or args.pov_hz))
                      or (args.clients == 2 and args.pov not in DUAL_POV)):
         parser.error("--pov is standalone; the selected preset does not support those options")
-    if args.pov == "stumble" and args.clients != 2:
-        parser.error("stumble requires an observer (--clients 2)")
+    if args.pov in {"stumble", "action-fault"} and args.clients != 2:
+        parser.error(f"{args.pov} requires an observer (--clients 2)")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
     assert not args.clean_art or args.weapon_debug, "--clean-art requires --weapon-debug"
     assert not args.neutral_art or args.clean_art, "--neutral-art requires --clean-art"
@@ -239,6 +241,7 @@ def main():
                             "--", "-o", str(output / f"{binary}{suffix}")], cwd=root, check=True)
     suffix = ".exe" if os.name == "nt" else ""
     env = os.environ.copy()
+    env.pop("TK_FIXTURE_ACTION_FAULT", None)
     env.pop("TK_PLAYTEST_VOXEL_LOOT", None)
     if args.voxel_loot:
         env["TK_PLAYTEST_VOXEL_LOOT"] = "1"
@@ -272,6 +275,8 @@ def main():
         env["TK_PLAYTEST_AUDIO"] = "1"
     if args.pov:
         env["TK_PLAYTEST_POV"] = args.pov
+    if args.pov == "action-fault":
+        env["TK_FIXTURE_ACTION_FAULT"] = "1"
     if args.viewport:
         env["TK_PLAYTEST_VIEWPORT"] = f"{args.viewport[0]}x{args.viewport[1]}"
     if args.pov_hz:
@@ -454,6 +459,10 @@ def main():
                     if role == "LEADER":
                         expected.insert(0, ("rest", "Standing"))
                     assert cues == expected, f"Unexpected stumble checkpoints on {role}: {cues}"
+            if args.pov == "action-fault":
+                for remote, text in (("false", client_text), ("true", peer_text)):
+                    cues = re.findall(r"POV FAULT CUE remote=(true|false) scheduled=(true|false)", text)
+                    assert cues == [(remote, "false")], f"Expected one muted fault cue, got {cues}"
             for name in DUAL_POV[args.pov]:
                 assert f"POV OBSERVER {name} " in peer_text, f"Missing observer cue {name}: {peer}"
                 data = (peer / f"pov-{name}.png").read_bytes()

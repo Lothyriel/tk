@@ -145,6 +145,14 @@ a retomada sem rearmar o contato e recua em pé. O observador descarta cada
 terceiro snapshot e confirma tropeço, retorno em contato e recuo na ordem.
 O preset não substitui a matriz física de caminhada, degrau e parede.
 
+Para a falha fictícia, após coordenação, use `python scripts/playtest.py
+--no-build --pov action-fault --clients 2 --output target/pov-action-fault`
+com ambos os binários da mesma revisão. O preset habilita a fixture privada
+e compara bloqueio, interrupção, persistência e recuperação entre os clientes.
+O peer descarta cada terceiro snapshot. Os logs devem mostrar um único cue
+em cada vista, com saída de áudio desativada. Isso não verifica reprodução
+audível, reconexão ou entrada tardia.
+
 No relatório `observer_gait` em `run-settings.json`, compare os picos por
 quadro com `peak_support_excursion`: o maior deslocamento desde o primeiro
 quadro de um trecho continuamente carregado (peso > 0,95, pelo menos dois

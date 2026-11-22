@@ -7,6 +7,7 @@ mod animation;
 mod arena;
 pub(crate) mod arena_menu;
 mod asset_review;
+mod fault;
 pub(crate) mod inventory_grid;
 mod lobby;
 mod mechanics;
@@ -151,6 +152,7 @@ struct Driver {
     pov_stop_lean: pov::StopLean,
     pov_prone: pov::Prone,
     pov_stumble: pov::Stumble,
+    pov_fault: fault::Route,
     pov_stride: pov::ArmedStride,
     pov_turn: f32,
     pov_stop_lean_roll: f32,
@@ -476,8 +478,9 @@ fn drive(
             let armed = preset == "armed-stride";
             let prone = preset == "prone";
             let stumble = preset == "stumble";
+            let fault = preset == "action-fault";
             let stop_lean = preset == "stop-lean";
-            let observe = (prone || stumble || armed || stop_lean)
+            let observe = (fault || prone || stumble || armed || stop_lean)
                 && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("2");
             if peer && observe {
                 view_camera.is_active = false;
@@ -519,7 +522,13 @@ fn drive(
                     pitch: (delta.y - 0.65).atan2(delta.x.hypot(delta.z)),
                     ..default()
                 };
-                let observed = if stumble {
+                let observed = if fault {
+                    let elapsed = now - driver.since;
+                    driver
+                        .pov_fault
+                        .advance(elapsed, actor.alive, actor)
+                        .expect("fictional fault observer")
+                } else if stumble {
                     pov::Stumble::observe(driver.pov_observed, actor).expect("stumble observer")
                 } else if prone {
                     pov::Prone::observe(driver.pov_observed, actor).filter(|name| {
@@ -569,10 +578,13 @@ fn drive(
                     capture(&mut commands, &format!("pov-{name}"));
                     driver.pov_observed += 1;
                 }
-                if driver.pov_observed == 3
-                    && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
-                        .join("pov-return.png")
-                        .is_file()
+                if (if fault {
+                    driver.pov_fault.finished()
+                } else {
+                    driver.pov_observed == 3
+                }) && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
+                    .join("pov-return.png")
+                    .is_file()
                 {
                     if stop_lean {
                         assert_ne!(
@@ -605,6 +617,16 @@ fn drive(
             let ready = local.pose.grounded && visual_settled;
             let before_prone = driver.pov_prone;
             let name = match preset.as_str() {
+                "action-fault" => driver.pov_fault.advance(elapsed, ready, local)
+                    .map(|name| name.map(|name| match name {
+                        "rest" => "pov-rest",
+                        "fault" => "pov-fault",
+                        "recovering" => "pov-recovering",
+                        "interrupted" => "pov-interrupted",
+                        "persisted" => "pov-persisted",
+                        "return" => "pov-return",
+                        _ => unreachable!(),
+                    })),
                 "stumble" => driver.pov_stumble.advance(elapsed, ready, local),
                 "prone" => driver.pov_prone.advance(elapsed, ready, local),
                 "armed-stride" => driver.pov_stride.advance(elapsed, ready, local),
@@ -680,7 +702,13 @@ fn drive(
             {
                 input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
             }
-            if stumble {
+            if fault {
+                driver.pov_fault.input(
+                    &mut input,
+                    name.and_then(|name| name.strip_prefix("pov-")),
+                    elapsed,
+                );
+            } else if stumble {
                 driver.pov_stumble.input(&mut input);
             } else if prone {
                 let previous = input.prone_sequence;
@@ -709,6 +737,7 @@ fn drive(
                 driver.pov_stop_lean_roll = input.camera.roll;
             }
             if (driver.pov_ads == pov::Ads::Finish
+                || driver.pov_fault.finished()
                 || driver.pov_stumble.finished()
                 || driver.pov_prone.finished()
                 || driver.pov_stride == pov::ArmedStride::Finish

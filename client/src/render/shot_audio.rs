@@ -277,7 +277,7 @@ fn present(
     }
     let mut play = |cue: &Handle<SynthShot>, position: Vec3, remote: bool, volume: f32, limit| {
         if muted.0 || active >= limit || !position.is_finite() {
-            return;
+            return false;
         }
         commands.spawn((
             AudioPlayer(cue.clone()),
@@ -288,6 +288,7 @@ fn present(
             Voice(now + 0.4),
         ));
         active += 1;
+        true
     };
     // UI cues use the same muted, bounded playback path, never shot events.
     // Consume even while muted so a later unmute cannot replay an operation.
@@ -334,13 +335,18 @@ fn present(
             && let Some(cue) = handling_cue(before, actor.mechanics)
         {
             let remote = actor.id != local.0;
-            play(
+            let scheduled = play(
                 &cues.0[cue as usize],
                 Vec3::from(actor.pos),
                 remote,
                 if remote { 0.24 } else { 0.17 },
                 MAX_VOICES,
             );
+            if cue == HandlingCue::ActionFault
+                && std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("action-fault")
+            {
+                info!("POV FAULT CUE remote={remote} scheduled={scheduled}");
+            }
         }
     }
 }
