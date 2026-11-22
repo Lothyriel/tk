@@ -228,7 +228,10 @@ fn prepare(mut commands: Commands, mut assets: ResMut<Assets<SynthShot>>) {
 }
 
 #[derive(Component)]
-struct Voice(f32);
+struct Voice {
+    until: f32,
+    inventory: bool,
+}
 
 fn report_playback(
     local: Query<(&AudioSink, &PlaybackSettings), With<Voice>>,
@@ -315,38 +318,56 @@ fn present(
         *history = History { raid, ..default() };
     }
     let mut active = 0;
+    let mut replace = None;
     for (entity, voice) in &voices {
-        if changed || muted.0 || voice.0 <= now {
+        if changed || muted.0 || voice.until <= now {
             commands.entity(entity).try_despawn();
         } else {
             active += 1;
+            let priority = (voice.inventory, voice.until);
+            if replace.is_none_or(|(_, current)| priority < current) {
+                replace = Some((entity, priority));
+            }
         }
     }
-    let mut play = |cue: &Handle<SynthShot>, position: Vec3, remote: bool, volume: f32, limit| {
-        if muted.0 || active >= limit || !position.is_finite() {
-            return false;
-        }
-        commands.spawn((
-            AudioPlayer(cue.clone()),
-            PlaybackSettings::DESPAWN
-                .with_volume(Volume::Linear(volume))
-                .with_spatial(remote),
-            Transform::from_translation(position),
-            Voice(now + 0.4),
-        ));
-        active += 1;
-        true
-    };
-    // UI cues use the same muted, bounded playback path, never shot events.
     // Consume even while muted so a later unmute cannot replay an operation.
-    if let (Some(mut panel), Some(ui)) = inventory
-        && let Some(cue) = panel.take_cue()
-    {
+    let inventory = inventory
+        .0
+        .zip(inventory.1)
+        .and_then(|(mut panel, ui)| panel.take_cue().map(|cue| (cue, ui)));
+    if inventory.is_some() && !muted.0 && active >= MAX_VOICES {
+        // Keep the cap, but prioritize the result over the oldest non-UI
+        // effect. If all voices are inventory cues, replace the oldest cue.
+        commands
+            .entity(replace.expect("full mix has a live voice").0)
+            .try_despawn();
+        active -= 1;
+    }
+    let mut play =
+        |cue: &Handle<SynthShot>, position: Vec3, remote: bool, volume: f32, limit, inventory| {
+            if muted.0 || active >= limit || !position.is_finite() {
+                return false;
+            }
+            commands.spawn((
+                AudioPlayer(cue.clone()),
+                PlaybackSettings::DESPAWN
+                    .with_volume(Volume::Linear(volume))
+                    .with_spatial(remote),
+                Transform::from_translation(position),
+                Voice {
+                    until: now + 0.4,
+                    inventory,
+                },
+            ));
+            active += 1;
+            true
+        };
+    if let Some((cue, ui)) = inventory {
         let index = match cue {
             InventoryCue::Confirmed => 0,
             InventoryCue::Rejected => 1,
         };
-        play(&ui.0[index], Vec3::ZERO, false, 0.13, SHOT_VOICE_LIMIT);
+        play(&ui.0[index], Vec3::ZERO, false, 0.13, MAX_VOICES, true);
     }
     for shot in &session.shots {
         if !history.shots.observe(shot.id) {
@@ -366,6 +387,7 @@ fn present(
             remote,
             gain * if remote { 0.45 } else { 0.25 },
             SHOT_VOICE_LIMIT,
+            false,
         );
     }
     history
@@ -388,6 +410,7 @@ fn present(
                 remote,
                 if remote { 0.24 } else { 0.17 },
                 MAX_VOICES,
+                false,
             );
             if cue == HandlingCue::ActionFault
                 && std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("action-fault")
@@ -688,6 +711,61 @@ mod tests {
         assert_eq!(count(&mut app), 1);
         app.update();
         assert_eq!(count(&mut app), 1);
+    }
+
+    #[test]
+    fn inventory_audio_schedules_each_cue_at_the_voice_cap_without_replay() {
+        let mut assets = Assets::<SynthShot>::default();
+        let confirmed = assets.add(synth_contact(1_350.0, 155.0));
+        let rejected = assets.add(synth_contact(215.0, 105.0));
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<ClientSession>()
+            .init_resource::<Panel>()
+            .insert_resource(PlayerId(7))
+            .insert_resource(Muted(false))
+            .insert_resource(Cues(std::array::from_fn(|_| Handle::default())))
+            .insert_resource(InventoryCues([confirmed.clone(), rejected.clone()]))
+            .add_systems(Update, present);
+        app.update(); // Initialize the raid history before seeding live voices.
+        for _ in 0..MAX_VOICES {
+            app.world_mut().spawn((
+                AudioPlayer(Handle::<SynthShot>::default()),
+                Voice {
+                    until: 0.4,
+                    inventory: false,
+                },
+            ));
+        }
+        let counts = |app: &mut App| {
+            let world = app.world_mut();
+            let mut players = world.query::<&AudioPlayer<SynthShot>>();
+            let handles = players
+                .iter(world)
+                .map(|player| &player.0)
+                .collect::<Vec<_>>();
+            [
+                handles.len(),
+                handles
+                    .iter()
+                    .filter(|handle| ***handle == confirmed)
+                    .count(),
+                handles
+                    .iter()
+                    .filter(|handle| ***handle == rejected)
+                    .count(),
+            ]
+        };
+        for (cue, expected) in [
+            (InventoryCue::Confirmed, [MAX_VOICES, 1, 0]),
+            (InventoryCue::Rejected, [MAX_VOICES, 1, 1]),
+        ] {
+            app.world_mut().resource_mut::<Panel>().record_cue(cue);
+            app.update();
+            assert_eq!(counts(&mut app), expected);
+            app.update();
+            assert_eq!(counts(&mut app), expected, "no new cue to replay");
+        }
     }
 
     #[test]
