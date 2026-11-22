@@ -74,6 +74,25 @@ class VoxelBakeTests(unittest.TestCase):
                 self.assertTrue(any(n == normal and abs(p[axis]) >= 0.029
                                     for p, n in zip(meshes["pet"]["positions"], meshes["pet"]["normals"])))
 
+    def test_beacon_authoring_reports_duplicate_id_and_stale_bake(self):
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+            root = Path(directory)
+            output = root / "out"
+            fixture = bake.SOURCES / "beacon_authoring.json"
+            path = root / fixture.name
+            path.write_bytes(fixture.read_bytes())
+            bake.build(root, output)
+            bake.build(root, output, check=True)
+            artifact = output / fixture.name
+            artifact.write_bytes(b"{}")
+            with self.assertRaisesRegex(bake.InvalidAsset, r"beacon_authoring\.json: missing/stale bake"):
+                bake.build(root, output, check=True)
+            asset = json.loads(path.read_bytes())
+            asset["sockets"][1]["id"] = asset["sockets"][0]["id"]
+            path.write_text(json.dumps(asset))
+            with self.assertRaisesRegex(bake.InvalidAsset, r"beacon_authoring\.json: sockets\[1\]: duplicate socket ID"):
+                bake.build(root, output)
+
     def test_translucency_requires_explicit_blend_and_survives_bake(self):
         asset = cube_source()
         material = asset["materials"][0]

@@ -92,6 +92,37 @@ impl TryFrom<GeometrySource> for Geometry {
 mod tests {
     use super::*;
 
+    const BEACON: &str = r#"(
+        authored: Some((
+            asset: "beacon_authoring",
+            anchors: [(SupportGrip, "palm.support"), (Sight, "view.guide")],
+            sockets: [],
+        )),
+    )"#;
+
+    #[test]
+    fn beacon_authoring_binds_generated_pose_and_reports_missing_socket() {
+        let geometry: Geometry = ron::from_str(BEACON).unwrap();
+        let sight = geometry
+            .anchors
+            .iter()
+            .find(|a| a.kind == AnchorKind::Sight)
+            .unwrap()
+            .pose
+            .transform();
+        assert!(sight
+            .translation
+            .abs_diff_eq(Vec3::new(0.0, 0.055, -0.052), 1e-6));
+        assert_eq!(sight.rotation * Vec3::NEG_Z, Vec3::NEG_Z);
+        let error = ron::from_str::<Geometry>(&BEACON.replace("view.guide", "view.typo"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("authored rig beacon_authoring has no socket view.typo"),
+            "{error}"
+        );
+    }
+
     const SOURCE: &str = r#"(
         sockets: [(key: "magazine", interface: (kind: Magwell, standard: "stanag", size: 556),
             accepts: [Magazine], positions: 1, pitch_m: 0.0, required: true)],

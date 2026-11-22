@@ -1,5 +1,7 @@
 # Declarative voxel asset pipeline
 
+New authors: start with the [voxel authoring walkthrough and checklist](VOXEL_AUTHORING.md).
+
 ## Format decision and limited proof
 
 Use versioned JSON cuboids with per-part pivot-local coordinates and named

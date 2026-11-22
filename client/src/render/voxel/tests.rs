@@ -1,6 +1,57 @@
 use super::*;
 
 #[test]
+fn beacon_authoring_shares_the_production_assembler_across_perspectives() {
+    let mut app = app();
+    let roots = [false, true].map(|view_model| {
+        app.world_mut()
+            .spawn((
+                VoxelModel {
+                    asset: "beacon_authoring".into(),
+                    view_model,
+                },
+                Transform::default(),
+                Visibility::Inherited,
+            ))
+            .id()
+    });
+    app.update();
+    let surfaces = |world: &World, root| {
+        descendants(world, root)
+            .into_iter()
+            .filter_map(|entity| {
+                let mesh = world.get::<Mesh3d>(entity)?;
+                let material = world.get::<MeshMaterial3d<StandardMaterial>>(entity)?;
+                Some((mesh.0.id(), material.0.id()))
+            })
+            .collect::<Vec<_>>()
+    };
+    let world = app.world();
+    let shared = surfaces(world, roots[0]);
+    assert_eq!(shared.len(), 2);
+    assert_eq!(shared, surfaces(world, roots[1]));
+    for root in roots {
+        let nodes = descendants(world, root);
+        assert_eq!(nodes.len(), 7);
+        let guide = nodes
+            .into_iter()
+            .find(|e| {
+                world
+                    .get::<Name>(*e)
+                    .is_some_and(|n| n.as_str() == "view.guide")
+                    && world.get::<VoxelSocket>(*e).is_some()
+            })
+            .unwrap();
+        let global = world.get::<GlobalTransform>(guide).unwrap();
+        assert!(
+            global
+                .translation()
+                .abs_diff_eq(Vec3::new(0.0, 0.055, -0.052), 1e-6)
+        );
+    }
+}
+
+#[test]
 fn inventory_visuals_bottle_caches_blended_pet_and_opaque_trim() {
     let mut cache = VoxelCache::default();
     let mut meshes = Assets::default();

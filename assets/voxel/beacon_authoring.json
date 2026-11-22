@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "id": "beacon_authoring",
+  "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK fictional light beacon, authored for this repository; no external model or reference files.",
+  "materials": [
+    {"id": "shell", "surface": "polymer", "color": [0.17, 0.29, 0.44, 1], "roughness": 0.7, "metallic": 0},
+    {"id": "tile", "surface": "polymer", "color": [0.95, 0.74, 0.25, 1], "roughness": 0.38, "metallic": 0}
+  ],
+  "parts": [
+    {
+      "id": "body", "parent": null, "movable": false,
+      "pivot": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+      "boxes": [{"min": [-0.07, -0.06, -0.04], "max": [0.07, 0.06, 0.04], "material": "shell"}]
+    },
+    {
+      "id": "tile", "parent": "body", "movable": true,
+      "pivot": {"translation": [0, 0.03, -0.04], "rotation": [0, 0, 0, 1]},
+      "boxes": [{"min": [-0.04, -0.025, -0.012], "max": [0.04, 0.025, 0], "material": "tile"}]
+    }
+  ],
+  "sockets": [
+    {"id": "palm.support", "part": "body", "pose": {"translation": [0, -0.06, 0], "rotation": [0, 0, 0, 1]}},
+    {"id": "view.guide", "part": "tile", "pose": {"translation": [0, 0.025, -0.012], "rotation": [0, 0, 0, 1]}}
+  ]
+}
