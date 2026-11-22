@@ -3,7 +3,9 @@ use bevy::{
     prelude::*,
 };
 use bevy_renet2::prelude::RenetClient;
+use common::catalog::item_inventory::{Condition, ItemContents, ProjectedItem};
 use common::{combat::*, map::*, raid::*, *};
+use std::fmt::Write;
 
 use crate::{ClientSystems, input::inventory_panel::GridFont, sync::ClientSession};
 
@@ -105,6 +107,25 @@ fn metrics_text(fps: Option<f64>, frame_time_ms: Option<f64>) -> String {
 type CatalogText<'w, 's> =
     Single<'w, 's, (&'static mut TextSpan, &'static mut TextFont), With<CatalogRows>>;
 
+fn append_inspection_details(text: &mut String, item: &ProjectedItem) {
+    let condition = match item.condition {
+        Condition::Intact => "Intact",
+        Condition::Damaged => "Damaged",
+    };
+    let _ = write!(text, "\nCondition: {condition}");
+    match item.contents {
+        ItemContents::None => {}
+        ItemContents::Dressing { sealed } => {
+            let seal = if sealed { "Sealed" } else { "Unsealed" };
+            let _ = write!(text, "\nDressing: {seal}");
+        }
+        ItemContents::Water { millilitres } => {
+            let _ = write!(text, "\nWater: {millilitres} ml");
+        }
+        ItemContents::EmptyMagazine => text.push_str("\nMagazine: empty (0 rounds)"),
+    }
+}
+
 fn update(
     time: Res<Time<Real>>,
     session: Res<ClientSession>,
@@ -168,6 +189,9 @@ fn update(
                         .get(item.definition.as_str())
                         .map_or(item.definition.as_str(), |entry| entry.name);
                     catalog_rows.push_str(&format!("\n{marker} {name} ×{}", item.quantity));
+                    if panel.inspection.is_some() {
+                        append_inspection_details(&mut catalog_rows, item);
+                    }
                 }
             }
             None => text.push_str("\nWaiting for inventory"),
@@ -323,6 +347,39 @@ fn append_exit(text: &mut String, distance: f32, participant: &Participant) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspection_details_reflect_confirmed_contents_without_unrelated_fields() {
+        use common::catalog::item_grid::{Placement, Rotation};
+        for (contents, expected) in [
+            (ItemContents::None, ""),
+            (
+                ItemContents::Dressing { sealed: true },
+                "\nDressing: Sealed",
+            ),
+            (
+                ItemContents::Dressing { sealed: false },
+                "\nDressing: Unsealed",
+            ),
+            (ItemContents::Water { millilitres: 250 }, "\nWater: 250 ml"),
+            (ItemContents::EmptyMagazine, "\nMagazine: empty (0 rounds)"),
+        ] {
+            let item = ProjectedItem {
+                definition: String::new(),
+                condition: Condition::Damaged,
+                quantity: 1,
+                placement: Placement {
+                    x: 0,
+                    y: 0,
+                    rotation: Rotation::Upright,
+                },
+                contents,
+            };
+            let mut details = String::new();
+            append_inspection_details(&mut details, &item);
+            assert_eq!(details, format!("\nCondition: Damaged{expected}"));
+        }
+    }
 
     #[test]
     fn hud_backdrop_meets_text_contrast_over_white() {
