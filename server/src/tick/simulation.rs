@@ -343,11 +343,12 @@ pub(super) fn weapons_tick(
             error!("Projectile identity exhausted; refusing fire before consuming ammunition");
             continue;
         }
-        let Some(weapon) = arsenal.step_with_sprint(
+        let Some(weapon) = arsenal.step_with_fixture(
             input,
             time.delta_secs() * handling,
             time.elapsed_secs(),
             input.run && !movement.prone,
+            world_state.action_fault_fixture && !bot,
         ) else {
             continue;
         };

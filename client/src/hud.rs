@@ -220,6 +220,16 @@ fn describe(
             text.push_str(&format!("\n\nSecured this session: {}\nCollect orange crates. Return to the green exit.\nHold F inside the exit for 5s with loot.\nGear locks when ready. Esc: cursor.", p.secured));
         }
         RaidPhase::Active if p.status == RaidStatus::Active => {
+            if local.mechanics.action_unavailable() {
+                if local.mechanics.recovery_ms() == 0 {
+                    text.push_str("ACTION UNAVAILABLE | Recover using reload\n");
+                } else {
+                    text.push_str(&format!(
+                        "RECOVERING | {:.1}s\n",
+                        f32::from(local.mechanics.recovery_ms()) / 1000.0,
+                    ));
+                }
+            }
             combat::append_readout(&mut text, local);
             if arena {
                 if !aiming && local.pose.ads <= 0.02 {

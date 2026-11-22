@@ -121,7 +121,7 @@ fn synth(weapon: WeaponKind, softened: bool) -> SynthShot {
 }
 
 #[derive(Resource)]
-struct Cues([Handle<SynthShot>; 14]);
+struct Cues([Handle<SynthShot>; 15]);
 
 #[derive(Resource)]
 struct InventoryCues([Handle<SynthShot>; 2]);
@@ -136,11 +136,15 @@ enum HandlingCue {
     Lowering = 11,
     Inspect = 12,
     EmptyPress = 13,
+    ActionFault = 14,
 }
 
 fn handling_cue(before: MechanicalSnapshot, after: MechanicalSnapshot) -> Option<HandlingCue> {
     use ManipulationKind::{EmptyReload, Inspect, Unequip};
     use ManipulationPhase::{Equip, Feed, Finish, Insert, Remove};
+    if !before.action_unavailable() && after.action_unavailable() {
+        return Some(HandlingCue::ActionFault);
+    }
     if before.dry_cue_sequence != after.dry_cue_sequence {
         return Some(HandlingCue::EmptyPress);
     }
@@ -210,6 +214,7 @@ fn prepare(mut commands: Commands, mut assets: ResMut<Assets<SynthShot>>) {
         assets.add(synth_contact(255.0, 150.0)),
         assets.add(synth_contact(610.0, 210.0)),
         assets.add(synth_contact(1100.0, 240.0)),
+        assets.add(synth_contact(180.0, 60.0)),
     ]));
     commands.insert_resource(InventoryCues([
         assets.add(synth_contact(1_350.0, 155.0)),
@@ -243,7 +248,7 @@ fn report_playback(
 struct History {
     raid: Option<u32>,
     shots: ShotWindow,
-    reloads: HashMap<u64, (WeaponInstanceId, MechanicalSnapshot)>,
+    reloads: HashMap<u64, (WeaponInstanceId, u8, MechanicalSnapshot)>,
 }
 
 fn present(
@@ -319,11 +324,13 @@ fn present(
         .reloads
         .retain(|id, _| session.local(*id).is_some_and(|actor| actor.alive));
     for actor in session.players.iter().filter(|actor| actor.alive) {
-        let previous = history
-            .reloads
-            .insert(actor.id, (actor.weapon_instance, actor.mechanics));
-        if let Some((instance, before)) = previous
+        let previous = history.reloads.insert(
+            actor.id,
+            (actor.weapon_instance, actor.life, actor.mechanics),
+        );
+        if let Some((instance, life, before)) = previous
             && instance == actor.weapon_instance
+            && life == actor.life
             && let Some(cue) = handling_cue(before, actor.mechanics)
         {
             let remote = actor.id != local.0;
@@ -341,6 +348,24 @@ fn present(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_fault_cue_is_a_transition_not_a_snapshot_or_recovery_loop() {
+        let normal = MechanicalSnapshot::default();
+        let fault = MechanicalSnapshot {
+            action_fault: 1,
+            ..normal
+        };
+        let recovering = MechanicalSnapshot {
+            action_fault: 801,
+            ..fault
+        };
+        assert_eq!(handling_cue(normal, fault), Some(HandlingCue::ActionFault));
+        assert_eq!(handling_cue(fault, fault), None);
+        assert_eq!(handling_cue(fault, recovering), None);
+        assert_eq!(handling_cue(recovering, fault), None);
+        assert_eq!(handling_cue(recovering, normal), None);
+    }
 
     #[test]
     #[ignore = "opt-in CPU timing experiment; run without other workloads"]

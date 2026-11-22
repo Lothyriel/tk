@@ -121,6 +121,9 @@ pub struct MechanicalState {
     action: Option<Manipulation>,
     action_sequence: u64,
     dry_cue_sequence: u8,
+    fixture_consumed: bool,
+    action_fault: bool,
+    recovery_remaining: f32,
 }
 
 /// Index into the configuration's immutable physical pool, plus current rounds.
@@ -170,6 +173,9 @@ pub struct MechanicalSnapshot {
     pub equipped: bool,
     /// Cosmetic acknowledgment; never used to authorize a shot.
     pub dry_cue_sequence: u8,
+    /// 0: available; 1: unavailable; 2+: remaining authority milliseconds + 1.
+    /// Keep the fixed-size snapshot within its existing actor budget.
+    pub action_fault: u16,
 }
 
 impl Default for MechanicalSnapshot {
@@ -188,11 +194,20 @@ impl Default for MechanicalSnapshot {
             mode: FireMode::Auto,
             equipped: true,
             dry_cue_sequence: 0,
+            action_fault: 0,
         }
     }
 }
 
 impl MechanicalSnapshot {
+    pub fn action_unavailable(self) -> bool {
+        self.action_fault != 0
+    }
+
+    pub fn recovery_ms(self) -> u16 {
+        self.action_fault.saturating_sub(1)
+    }
+
     pub fn inserted_magazine(self) -> Option<MagazineSnapshot> {
         if !self.magazine_inserted {
             return None;
@@ -248,6 +263,11 @@ impl MechanicalState {
             mode: self.mode,
             equipped: self.equipped,
             dry_cue_sequence: self.dry_cue_sequence,
+            action_fault: if self.action_fault {
+                1 + (self.recovery_remaining * 1000.0).ceil() as u16
+            } else {
+                0
+            },
         }
     }
 
@@ -311,6 +331,9 @@ impl MechanicalState {
             action: None,
             action_sequence: 0,
             dry_cue_sequence: 0,
+            fixture_consumed: false,
+            action_fault: false,
+            recovery_remaining: 0.0,
         };
         state.validate(catalog, spec)?;
         Ok(state)
@@ -595,7 +618,8 @@ impl MechanicalState {
     }
 
     pub fn start_reload(&mut self, duration: f32) -> bool {
-        if !self.equipped
+        if self.action_fault
+            || !self.equipped
             || self
                 .action
                 .as_ref()
@@ -649,7 +673,7 @@ impl MechanicalState {
     }
 
     pub fn start_inspect(&mut self, duration: f32) -> bool {
-        if !self.equipped || self.action.is_some() {
+        if !self.equipped || self.action.is_some() || self.recovery_remaining > 0.0 {
             return false;
         }
         self.begin(
@@ -666,6 +690,7 @@ impl MechanicalState {
         }
         // Higher priority than inspect/reload. Already committed magazine/chamber
         // state is retained when the action is replaced.
+        self.interrupt_recovery();
         self.begin(
             ManipulationKind::Unequip,
             ManipulationPhase::Unequip,
@@ -689,11 +714,32 @@ impl MechanicalState {
     /// Cancel only uncommitted work. Magazine removal/insertion/feed remain real.
     pub fn cancel(&mut self) {
         self.action = None;
+        self.interrupt_recovery();
+    }
+
+    pub(crate) fn interrupt_recovery(&mut self) {
+        self.recovery_remaining = 0.0;
+    }
+
+    pub(crate) fn start_recovery(&mut self) {
+        if self.action_fault
+            && self.equipped
+            && self.action.is_none()
+            && self.recovery_remaining == 0.0
+        {
+            self.recovery_remaining = 1.0;
+        }
     }
 
     pub fn advance(&mut self, delta: f32) {
         if !delta.is_finite() || delta <= 0.0 {
             return;
+        }
+        if self.recovery_remaining > 0.0 {
+            self.recovery_remaining = (self.recovery_remaining - delta).max(0.0);
+            if self.recovery_remaining == 0.0 {
+                self.action_fault = false;
+            }
         }
         let mut remaining = delta;
         while let Some(mut action) = self.action.take() {
@@ -757,6 +803,7 @@ impl MechanicalState {
     /// Called only for a fresh press that passed Arsenal's cadence and slot gates.
     pub(crate) fn acknowledge_empty_press(&mut self) {
         if self.equipped
+            && !self.action_fault
             && self.mode != FireMode::Safe
             && self.action.is_none()
             && self.chamber.is_none()
@@ -767,12 +814,16 @@ impl MechanicalState {
 
     /// Outer Arsenal owns cadence and input sequence deduplication.
     pub fn fire(&mut self, held: bool, pressed: bool) -> bool {
+        self.fire_with_fixture(held, pressed, false)
+    }
+
+    pub(crate) fn fire_with_fixture(&mut self, held: bool, pressed: bool, fixture: bool) -> bool {
         let trigger = match self.mode {
             FireMode::Safe => false,
             FireMode::Semi => pressed,
             FireMode::Auto => held,
         };
-        if !trigger || !self.equipped {
+        if !trigger || !self.equipped || self.action_fault {
             return false;
         }
         if self
@@ -783,6 +834,11 @@ impl MechanicalState {
             self.cancel();
         }
         if self.action.is_some() || self.bolt_open || self.chamber.is_none() {
+            return false;
+        }
+        if fixture && !self.fixture_consumed {
+            self.fixture_consumed = true;
+            self.action_fault = true;
             return false;
         }
         self.chamber = None;

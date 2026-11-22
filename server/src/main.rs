@@ -40,6 +40,7 @@ impl bevy::prelude::Plugin for ServerPlugin {
             .add_plugins(tick::Plugin)
             .insert_resource(server)
             .insert_resource(transport);
+        tick::configure_private_fixtures(app);
     }
 }
 

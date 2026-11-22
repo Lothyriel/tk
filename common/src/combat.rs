@@ -430,20 +430,29 @@ impl Arsenal {
 
     /// Returns an authorized shot, never a client-authoritative projectile.
     pub fn step(&mut self, input: &ClientInput, delta: f32, now: f32) -> Option<WeaponId> {
-        self.step_with_sprint(input, delta, now, input.run)
+        self.step_with_fixture(input, delta, now, input.run, false)
     }
 
-    pub fn step_with_sprint(
+    pub fn step_with_fixture(
         &mut self,
         input: &ClientInput,
         delta: f32,
         now: f32,
         sprint: bool,
+        fixture: bool,
     ) -> Option<WeaponId> {
         let pressed = fresh_sequence(&mut self.last_trigger, input.fire_pressed_sequence);
         let reload = fresh_sequence(&mut self.last_reload, input.reload_sequence);
         let inspect = fresh_sequence(&mut self.last_inspect, input.inspect_sequence);
         let selector = fresh_sequence(&mut self.last_selector, input.selector_sequence);
+        let interrupts_recovery =
+            sprint || input.aim || input.fire || pressed || input.weapon != self.active;
+        if interrupts_recovery {
+            self.equipped_mut(self.active)
+                .unwrap()
+                .mechanics_mut()
+                .interrupt_recovery();
+        }
         // Intent cancels inspect even when the requested shot/reload cannot
         // complete (safe, cooldown, full magazine). Consume blocked inspect
         // sequences so releasing ADS/sprint never starts a delayed inspection.
@@ -489,7 +498,13 @@ impl Arsenal {
                 weapon.mechanics_mut().cycle_selector();
             }
             if reload {
-                weapon.mechanics_mut().start_reload(duration);
+                if weapon.mechanics().snapshot().action_unavailable() {
+                    if !interrupts_recovery {
+                        weapon.mechanics_mut().start_recovery();
+                    }
+                } else {
+                    weapon.mechanics_mut().start_reload(duration);
+                }
             }
             if inspect && !interrupts_inspect {
                 weapon
@@ -509,8 +524,9 @@ impl Arsenal {
         {
             return None;
         }
+        let fixture = fixture && self.active == EquipmentSlot::Primary;
         let mechanics = self.equipped_mut(self.active).unwrap().mechanics_mut();
-        if !mechanics.fire(input.fire, pressed) {
+        if !mechanics.fire_with_fixture(input.fire, pressed, fixture) {
             if pressed {
                 mechanics.acknowledge_empty_press();
             }

@@ -22,6 +22,12 @@ use bots::{Bot, bot_tick};
 use raid::{lobby_tick, objectives_tick};
 use simulation::{physx_tick, projectiles_tick, sync_ground_state, weapons_tick};
 
+pub(super) fn configure_private_fixtures(app: &mut App) {
+    app.world_mut()
+        .resource_mut::<WorldState>()
+        .action_fault_fixture = std::env::var("TK_FIXTURE_ACTION_FAULT").as_deref() == Ok("1");
+}
+
 pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
@@ -86,6 +92,7 @@ impl bevy::prelude::Plugin for Plugin {
 
 #[derive(Debug, Default, Resource)]
 struct WorldState {
+    action_fault_fixture: bool,
     inventory: inventory::Endpoint,
     destroyed_cells: Vec<u16>,
     impact_cells: std::collections::BTreeMap<u32, u16>,

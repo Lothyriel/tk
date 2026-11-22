@@ -28,6 +28,89 @@ fn catalog_input_rejects_unknown_definition_without_substituting_a_weapon() {
     assert_eq!(decoded.loadout.primary, WeaponId::MP5);
     assert_eq!(decoded.weapon, EquipmentSlot::Sidearm);
 }
+
+#[test]
+fn action_fault_fixture_is_authoritative_and_interruptible_without_spending_ammo() {
+    for enabled in [false, true] {
+        let (mut app, player, _) = physical_fixture();
+        app.world_mut()
+            .resource_mut::<WorldState>()
+            .action_fault_fixture = enabled;
+        let state = |app: &App| {
+            let arsenal = app.world().get::<Arsenal>(player).unwrap();
+            let weapon = arsenal.equipped(EquipmentSlot::Primary).unwrap();
+            (
+                weapon.mechanics().snapshot(),
+                weapon.rounds(),
+                weapon.reserve(),
+            )
+        };
+        let before = state(&app);
+        let shots = |app: &App| app.world().resource::<WorldState>().next_projectile_id;
+        let start = shots(&app);
+        {
+            let mut input = app.world_mut().get_mut::<ClientInput>(player).unwrap();
+            input.fire = true;
+            input.fire_pressed_sequence = 1;
+        }
+        held_steps(&mut app, player, 2);
+        if !enabled {
+            assert!(!state(&app).0.action_unavailable());
+            assert_eq!(shots(&app), start + 1);
+            continue;
+        }
+        assert!(state(&app).0.action_unavailable());
+        assert_eq!((state(&app).1, state(&app).2), (before.1, before.2));
+        held_steps(&mut app, player, 30);
+        assert_eq!(shots(&app), start);
+        {
+            let mut input = app.world_mut().get_mut::<ClientInput>(player).unwrap();
+            input.fire = false;
+            input.reload_sequence = 1;
+        }
+        held_steps(&mut app, player, 40);
+        let remaining = state(&app).0.recovery_ms();
+        assert!((500..900).contains(&remaining));
+        held_steps(&mut app, player, 8);
+        assert!(state(&app).0.recovery_ms() < remaining);
+        app.world_mut()
+            .get_mut::<ClientInput>(player)
+            .unwrap()
+            .weapon = EquipmentSlot::Sidearm;
+        held_steps(&mut app, player, 95);
+        assert!(state(&app).0.action_unavailable());
+        assert_eq!(state(&app).0.recovery_ms(), 0);
+        assert_eq!(
+            app.world().get::<Arsenal>(player).unwrap().active,
+            EquipmentSlot::Sidearm
+        );
+        app.world_mut()
+            .get_mut::<ClientInput>(player)
+            .unwrap()
+            .weapon = EquipmentSlot::Primary;
+        held_steps(&mut app, player, 95);
+        assert!(state(&app).0.action_unavailable());
+        assert_eq!(state(&app).0.recovery_ms(), 0);
+
+        app.world_mut()
+            .get_mut::<ClientInput>(player)
+            .unwrap()
+            .reload_sequence = 2;
+        held_steps(&mut app, player, 100);
+        assert!(state(&app).0.action_unavailable());
+        held_steps(&mut app, player, 36);
+        assert!(!state(&app).0.action_unavailable());
+        assert_eq!((state(&app).1, state(&app).2), (before.1, before.2));
+        {
+            let mut input = app.world_mut().get_mut::<ClientInput>(player).unwrap();
+            input.fire = true;
+            input.fire_pressed_sequence = 2;
+        }
+        held_steps(&mut app, player, 2);
+        assert_eq!(shots(&app), start + 1);
+        assert!(!state(&app).0.action_unavailable());
+    }
+}
 use bevy::{time::TimeUpdateStrategy, transform::TransformPlugin};
 use std::time::Duration;
 
@@ -3402,5 +3485,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
     assert_eq!(cover.cuts.len(), 1);
     assert_eq!(cover.cuts[0].cell, cell.id);
     assert_eq!(cover.raid_id, snapshot.raid.raid_id);
-    assert_eq!(PROTOCOL_ID, 27);
+    assert_eq!(PROTOCOL_ID, 28);
 }
