@@ -1,4 +1,5 @@
 use bevy::{
+    ecs::system::SystemParam,
     input::mouse::AccumulatedMouseMotion,
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
@@ -6,6 +7,7 @@ use bevy::{
 use common::{combat::*, raid::*, *};
 
 use crate::{ClientSystems, sync::ClientSession};
+pub(crate) mod inventory_panel;
 
 pub struct Plugin;
 
@@ -14,13 +16,15 @@ pub(crate) struct InputCapture;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LocalInput>().add_systems(
-            Update,
-            (cursor_control, keyboard, mouse)
-                .chain()
-                .in_set(InputCapture)
-                .in_set(ClientSystems::Input),
-        );
+        app.init_resource::<LocalInput>()
+            .init_resource::<inventory_panel::Panel>()
+            .add_systems(
+                Update,
+                (inventory_panel::update, cursor_control, keyboard, mouse)
+                    .chain()
+                    .in_set(InputCapture)
+                    .in_set(ClientSystems::Input),
+            );
     }
 }
 
@@ -30,6 +34,7 @@ fn cursor_control(
     id: Res<PlayerId>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
     mut was_active: Local<bool>,
+    panel: Option<Res<inventory_panel::Panel>>,
 ) {
     let active = session.playing(id.0);
     if active && !*was_active {
@@ -38,7 +43,10 @@ fn cursor_control(
     if !active {
         cursor.grab_mode = CursorGrabMode::None;
     }
-    if active && keyboard.just_pressed(KeyCode::Escape) {
+    if active
+        && keyboard.just_pressed(KeyCode::Escape)
+        && !panel.is_some_and(|panel| panel.consumed_escape)
+    {
         cursor.grab_mode = if cursor.grab_mode == CursorGrabMode::None {
             CursorGrabMode::Locked
         } else {
@@ -49,6 +57,13 @@ fn cursor_control(
     *was_active = active;
 }
 
+#[derive(SystemParam)]
+struct InputOverlays<'w> {
+    editor: Option<Res<'w, crate::loadout::Editor>>,
+    inventory: Option<Res<'w, crate::sync::inventory::State>>,
+    panel: Option<Res<'w, inventory_panel::Panel>>,
+}
+
 fn keyboard(
     (keys, buttons): (Res<ButtonInput<KeyCode>>, Res<ButtonInput<MouseButton>>),
     session: Res<ClientSession>,
@@ -56,12 +71,14 @@ fn keyboard(
     time: Res<Time<Real>>,
     window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
-    (editor, inventory): (
-        Option<Res<crate::loadout::Editor>>,
-        Option<Res<crate::sync::inventory::State>>,
-    ),
+    InputOverlays {
+        editor,
+        inventory,
+        panel,
+    }: InputOverlays,
 ) {
-    let active = session.playing(id.0)
+    let active = !panel.is_some_and(|panel| panel.open)
+        && session.playing(id.0)
         && window.0.focused
         && window.1.grab_mode != CursorGrabMode::None
         && time.elapsed_secs_f64() - session.last_received < 2.0;
@@ -165,8 +182,9 @@ fn mouse(
     motion: Res<AccumulatedMouseMotion>,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
+    panel: Option<Res<inventory_panel::Panel>>,
 ) {
-    if cursor.grab_mode == CursorGrabMode::None {
+    if cursor.grab_mode == CursorGrabMode::None || panel.is_some_and(|panel| panel.open) {
         return;
     }
     let scale = if input.aim { 0.65 } else { 1.0 };
@@ -201,6 +219,119 @@ mod tests {
             },
         ));
         app
+    }
+
+    #[test]
+    fn raid_inventory_delete_targets_the_displayed_confirmed_item() {
+        use bevy_renet2::prelude::{RenetClient, RenetServer};
+        use common::{
+            catalog::{
+                CompartmentId, ItemInstanceId,
+                item_grid::{Placement, Rotation},
+                item_inventory::{
+                    Condition, InventorySnapshot, ItemContents, ProjectedItem, SessionKey,
+                    VersionedCompartment,
+                },
+            },
+            replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+        };
+        let mut app = input_app();
+        let mut server = RenetServer::new(common::data::renet_config());
+        server.add_connection(7, false);
+        let mut client = RenetClient::new(common::data::renet_config(), false);
+        client.set_connected();
+        app.insert_resource(client)
+            .init_resource::<inventory_panel::Panel>()
+            .init_resource::<crate::sync::inventory::State>()
+            .add_systems(Update, inventory_panel::update.before(keyboard));
+        let session = SessionKey {
+            raid_epoch: 1,
+            session_epoch: 1,
+        };
+        {
+            let mut raid = app.world_mut().resource_mut::<ClientSession>();
+            raid.raid.raid_id = 1;
+            raid.raid.phase = RaidPhase::Active;
+            raid.players[0].participant.status = RaidStatus::Active;
+            raid.players[0].alive = true;
+        }
+        let compartment = CompartmentId(7);
+        let item = ProjectedItem {
+            definition: "med.bandage".into(),
+            condition: Condition::Intact,
+            quantity: 1,
+            contents: ItemContents::Dressing { sealed: true },
+            placement: Placement {
+                x: 0,
+                y: 0,
+                rotation: Rotation::Upright,
+            },
+        };
+        let id = ItemInstanceId(1);
+        for body in [
+            UpdateBody::Begin,
+            UpdateBody::Snapshot(InventorySnapshot {
+                version: VersionedCompartment {
+                    id: compartment,
+                    revision: 4,
+                },
+                size: [4, 4],
+                items: vec![(id, item)],
+            }),
+        ] {
+            app.world_mut()
+                .resource_mut::<crate::sync::inventory::State>()
+                .apply(InventoryUpdate { session, body });
+        }
+        let press = |app: &mut App, key| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+        };
+        let transfer = |app: &mut App, server: &mut RenetServer| {
+            for packet in app
+                .world_mut()
+                .resource_mut::<RenetClient>()
+                .get_packets_to_send()
+            {
+                server.process_packet_from(packet, 7).unwrap();
+            }
+        };
+        press(&mut app, KeyCode::Delete);
+        app.update();
+        transfer(&mut app, &mut server);
+        assert!(server.receive_message(7, CHANNEL).is_none());
+        press(&mut app, KeyCode::Tab);
+        app.update();
+        assert_eq!(
+            app.world().resource::<inventory_panel::Panel>().selected,
+            Some(id)
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        press(&mut app, KeyCode::Delete);
+        app.update();
+        assert!(!app.world().resource::<LocalInput>().fire);
+        transfer(&mut app, &mut server);
+        let bytes = server.receive_message(7, CHANNEL).unwrap();
+        assert_eq!(
+            InventoryRequest::decode(&bytes),
+            Ok(InventoryRequest::Drop {
+                session,
+                item: id,
+                revision: 4
+            })
+        );
+        assert_eq!(
+            app.world()
+                .resource::<crate::sync::inventory::State>()
+                .owned_grid(1, 7)
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
     }
 
     #[test]
