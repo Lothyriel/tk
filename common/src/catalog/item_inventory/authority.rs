@@ -26,7 +26,7 @@ pub struct InventoryOperation {
     pub action: InventoryAction,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum OperationResult {
     Committed,
     Rejected(TransactionError),

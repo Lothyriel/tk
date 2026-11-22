@@ -117,7 +117,7 @@ impl ItemInstance {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum InventoryError {
     UnknownDefinition,
     UnknownItem,

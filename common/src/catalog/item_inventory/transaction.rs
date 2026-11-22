@@ -18,7 +18,7 @@ pub enum InventoryAction {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum TransactionError {
     /// Absent and inaccessible instances are deliberately indistinguishable.
     Unavailable,
