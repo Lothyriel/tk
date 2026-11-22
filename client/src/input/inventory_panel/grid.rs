@@ -815,6 +815,17 @@ type QuantityNode<'w, 's> = Single<
 >;
 type ContextNode<'w, 's> =
     Single<'w, 's, &'static mut Node, (With<ContextControls>, Without<GridRoot>, Without<Board>)>;
+type Viewport<'w, 's> = (
+    Option<Single<'w, 's, &'static Window, With<PrimaryWindow>>>,
+    Option<Res<'w, UiScale>>,
+);
+
+fn board_side(view_height: f32) -> f32 {
+    // In UI units, reserve room for the top offset, both paddings, the
+    // wrapped header/feedback and one action row. Keep the size independent
+    // of the current action so opening a chooser never moves the cells.
+    (view_height - 250.0).clamp(1.0, 276.0)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::input) fn present(
@@ -822,6 +833,7 @@ pub(in crate::input) fn present(
     font: Res<GridFont>,
     (panel, inventory): (Res<Panel>, Res<State>),
     (session, player): (Res<crate::sync::ClientSession>, Res<common::PlayerId>),
+    (window, scale): Viewport,
     mut root: Single<&mut Node, With<GridRoot>>,
     mut board: BoardNode,
     mut quantity: QuantityNode,
@@ -880,6 +892,13 @@ pub(in crate::input) fn present(
         return;
     };
     board.1.display = Display::Flex;
+    if let Some(window) = window {
+        let scale = scale.as_ref().map_or(1.0, |scale| scale.0);
+        let width = Val::Px(board_side(window.height() / scale));
+        if board.1.width != width {
+            board.1.width = width;
+        }
+    }
     let merging = panel.drag.filter(|d| d.split.is_none()).and_then(|d| {
         let (id, item) = item_at(grid, d.hover?)?;
         if *id == d.item {
@@ -1680,6 +1699,14 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .reset_all();
         app.update();
+    }
+
+    #[test]
+    fn inventory_grid_reserves_action_height_without_changing_standard_layout() {
+        assert_eq!(board_side(720.0), 276.0);
+        assert_eq!(board_side(720.0 / 1.25), 276.0);
+        assert_eq!(board_side(720.0 / 1.5), 230.0);
+        assert_eq!(board_side(800.0 / 1.5), 276.0);
     }
 
     #[test]
