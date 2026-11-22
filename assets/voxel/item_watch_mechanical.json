@@ -1,0 +1,38 @@
+{
+  "version":1,"id":"item_watch_mechanical","units":"metres","axes":"right_handed_y_up_negative_z_forward",
+  "provenance":"Original TK art, analog mechanical watch with a stepped case and segmented bracelet.",
+  "materials":[
+    {"id":"steel","surface":"metal","color":[0.50,0.52,0.55,1],"roughness":0.39,"metallic":0.82},
+    {"id":"link","surface":"metal","color":[0.32,0.35,0.38,1],"roughness":0.57,"metallic":0.78},
+    {"id":"dial","surface":"polymer","color":[0.046,0.073,0.067,1],"roughness":0.53,"metallic":0},
+    {"id":"index","surface":"polymer","color":[0.78,0.79,0.63,1],"roughness":0.57,"metallic":0}
+  ],
+  "parts":[{
+    "id":"watch","parent":null,"movable":false,"pivot":{"translation":[0,0,0],"rotation":[0,0,0,1]},
+    "boxes":[
+      {"min":[-0.022,0.003,-0.015],"max":[0.022,0.013,0.015],"material":"steel"},
+      {"min":[-0.015,0.003,-0.022],"max":[0.015,0.013,-0.015],"material":"steel"},
+      {"min":[-0.015,0.003,0.015],"max":[0.015,0.013,0.022],"material":"steel"},
+      {"min":[-0.016,0.013,-0.014],"max":[0.016,0.0137,0.014],"material":"dial"},
+      {"min":[-0.013,0.013,-0.018],"max":[0.013,0.0137,-0.014],"material":"dial"},
+      {"min":[-0.013,0.013,0.014],"max":[0.013,0.0137,0.018],"material":"dial"},
+      {"min":[0.022,0.006,-0.003],"max":[0.026,0.011,0.003],"material":"steel"},
+      {"min":[-0.001,0.0137,-0.015],"max":[0.001,0.014, -0.012],"material":"index"},
+      {"min":[-0.001,0.0137,0.012],"max":[0.001,0.014,0.015],"material":"index"},
+      {"min":[-0.014,0.0137,-0.001],"max":[-0.011,0.014,0.001],"material":"index"},
+      {"min":[0.011,0.0137,-0.001],"max":[0.014,0.014,0.001],"material":"index"},
+      {"min":[-0.005,0.014,-0.00075],"max":[0.001,0.0144,0.00075],"material":"index"},
+      {"min":[-0.00065,0.0144,-0.01],"max":[0.00065,0.0148,0.001],"material":"index"},
+      {"min":[-0.011,0.002,-0.045],"max":[0.011,0.005,-0.022],"material":"steel"},
+      {"min":[-0.011,0.002,0.022],"max":[0.011,0.005,0.045],"material":"steel"},
+      {"min":[-0.012,0,-0.044],"max":[0.012,0.007,-0.037],"material":"steel"},
+      {"min":[-0.012,0.001,-0.035],"max":[0.012,0.007,-0.028],"material":"steel"},
+      {"min":[-0.012,0.001,-0.026],"max":[0.012,0.007,-0.019],"material":"steel"},
+      {"min":[-0.012,0.001,0.019],"max":[0.012,0.007,0.026],"material":"steel"},
+      {"min":[-0.012,0.001,0.028],"max":[0.012,0.007,0.035],"material":"steel"},
+      {"min":[-0.012,0,0.037],"max":[0.012,0.007,0.044],"material":"steel"},
+      {"min":[-0.008,0.007,-0.034],"max":[0.008,0.0077,-0.029],"material":"link"},
+      {"min":[-0.008,0.007,0.029],"max":[0.008,0.0077,0.034],"material":"link"}
+    ]
+  }],"sockets":[]
+}

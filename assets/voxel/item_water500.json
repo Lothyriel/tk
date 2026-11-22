@@ -1,0 +1,32 @@
+{
+  "version":1,"id":"item_water500","units":"metres","axes":"right_handed_y_up_negative_z_forward",
+  "provenance":"Original TK art from the ribbed 500 ml bottle brief. Opaque blue tint is a base pass for the voxel renderer.",
+  "materials":[
+    {"id":"pet","surface":"polymer","color":[0.37,0.66,0.72,1],"roughness":0.17,"metallic":0},
+    {"id":"ribs","surface":"polymer","color":[0.54,0.78,0.80,1],"roughness":0.22,"metallic":0},
+    {"id":"cap","surface":"polymer","color":[0.08,0.26,0.58,1],"roughness":0.68,"metallic":0},
+    {"id":"label","surface":"polymer","color":[0.87,0.89,0.82,1],"roughness":0.74,"metallic":0}
+  ],
+  "parts":[{
+    "id":"bottle","parent":null,"movable":false,"pivot":{"translation":[0,0,0],"rotation":[0,0,0,1]},
+    "boxes":[
+      {"min":[-0.030,0.005,-0.021],"max":[0.030,0.164,0.021],"material":"pet"},
+      {"min":[-0.021,0.005,-0.030],"max":[0.021,0.164,-0.021],"material":"pet"},
+      {"min":[-0.021,0.005,0.021],"max":[0.021,0.164,0.030],"material":"pet"},
+      {"min":[-0.025,0,-0.025],"max":[0.025,0.005,0.025],"material":"ribs"},
+      {"min":[-0.026,0.164,-0.025],"max":[0.026,0.174,0.025],"material":"pet"},
+      {"min":[-0.021,0.174,-0.020],"max":[0.021,0.182,0.020],"material":"pet"},
+      {"min":[-0.015,0.182,-0.015],"max":[0.015,0.196,0.015],"material":"pet"},
+      {"min":[-0.017,0.196,-0.017],"max":[0.017,0.210,0.017],"material":"cap"},
+      {"min":[-0.021,0.039,-0.0315],"max":[0.021,0.044,-0.030],"material":"ribs"},
+      {"min":[-0.021,0.053,-0.0315],"max":[0.021,0.058,-0.030],"material":"ribs"},
+      {"min":[-0.021,0.137,-0.0315],"max":[0.021,0.142,-0.030],"material":"ribs"},
+      {"min":[-0.021,0.151,-0.0315],"max":[0.021,0.156,-0.030],"material":"ribs"},
+      {"min":[-0.021,0.084,-0.031],"max":[0.021,0.126,-0.030],"material":"label"},
+      {"min":[-0.0308,0.084,-0.021],"max":[-0.030,0.126,0.021],"material":"label"},
+      {"min":[0.030,0.084,-0.021],"max":[0.0308,0.126,0.021],"material":"label"},
+      {"min":[-0.021,0.084,0.030],"max":[0.021,0.126,0.031],"material":"label"},
+      {"min":[-0.016,0.099,-0.0316],"max":[0.016,0.109,-0.031],"material":"cap"}
+    ]
+  }],"sockets":[]
+}

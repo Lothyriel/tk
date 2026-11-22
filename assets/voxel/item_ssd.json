@@ -1,0 +1,26 @@
+{
+  "version":1,"id":"item_ssd","units":"metres","axes":"right_handed_y_up_negative_z_forward",
+  "provenance":"Original TK art, generic 2.5-inch SSD silhouette from items-v01.tsv.",
+  "materials":[
+    {"id":"shell","surface":"metal","color":[0.15,0.17,0.19,1],"roughness":0.72,"metallic":0.72},
+    {"id":"lid","surface":"metal","color":[0.28,0.30,0.33,1],"roughness":0.62,"metallic":0.64},
+    {"id":"socket","surface":"polymer","color":[0.033,0.036,0.041,1],"roughness":0.85,"metallic":0},
+    {"id":"contacts","surface":"metal","color":[0.64,0.45,0.17,1],"roughness":0.43,"metallic":0.75},
+    {"id":"label","surface":"polymer","color":[0.38,0.48,0.54,1],"roughness":0.82,"metallic":0}
+  ],
+  "parts":[{
+    "id":"drive","parent":null,"movable":false,"pivot":{"translation":[0,0,0],"rotation":[0,0,0,1]},
+    "boxes":[
+      {"min":[-0.035,0,-0.046],"max":[0.035,0.006,0.05],"material":"shell"},
+      {"min":[-0.034,0.006,-0.046],"max":[0.034,0.008,0.048],"material":"lid"},
+      {"min":[-0.031,0.001,-0.05],"max":[0.023,0.005,-0.046],"material":"socket"},
+      {"min":[-0.028,0.005,-0.049],"max":[0.004,0.0056,-0.046],"material":"contacts"},
+      {"min":[0.009,0.005,-0.049],"max":[0.021,0.0056,-0.046],"material":"contacts"},
+      {"min":[-0.021,0.008,-0.027],"max":[0.021,0.0084,0.009],"material":"label"},
+      {"min":[-0.031,0.008,-0.039],"max":[-0.028,0.0085,-0.036],"material":"socket"},
+      {"min":[0.028,0.008,-0.039],"max":[0.031,0.0085,-0.036],"material":"socket"},
+      {"min":[-0.031,0.008,0.036],"max":[-0.028,0.0085,0.039],"material":"socket"},
+      {"min":[0.028,0.008,0.036],"max":[0.031,0.0085,0.039],"material":"socket"}
+    ]
+  }],"sockets":[]
+}
