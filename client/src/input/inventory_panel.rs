@@ -10,6 +10,15 @@ pub(crate) struct Panel {
     pub open: bool,
     pub consumed_escape: bool,
     pub selected: Option<ItemInstanceId>,
+    pub inspection: Option<Inspection>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Inspection {
+    pub item: ItemInstanceId,
+    pub yaw_steps: i8,
+    pub pitch_steps: i8,
+    pub zoom_steps: i8,
 }
 
 pub(super) fn update(
@@ -32,6 +41,10 @@ pub(super) fn update(
         return;
     }
     if panel.open && keys.just_pressed(KeyCode::Escape) {
+        if panel.inspection.take().is_some() {
+            panel.consumed_escape = true;
+            return;
+        }
         *panel = Panel {
             consumed_escape: true,
             ..default()
@@ -41,6 +54,7 @@ pub(super) fn update(
     if keys.just_pressed(KeyCode::Tab) {
         panel.open = !panel.open;
         panel.selected = None;
+        panel.inspection = None;
         if !panel.open {
             return;
         }
@@ -54,8 +68,35 @@ pub(super) fn update(
         .filter(|grid| !grid.items.is_empty())
     else {
         panel.selected = None;
+        panel.inspection = None;
         return;
     };
+    if let Some(mut inspect) = panel.inspection {
+        if !grid.items.iter().any(|(id, _)| *id == inspect.item) || keys.just_pressed(KeyCode::KeyI)
+        {
+            panel.inspection = None;
+            return;
+        }
+        let axis = |positive, negative| {
+            i8::from(keys.just_pressed(positive)) - i8::from(keys.just_pressed(negative))
+        };
+        inspect.yaw_steps =
+            (inspect.yaw_steps + axis(KeyCode::ArrowRight, KeyCode::ArrowLeft)).rem_euclid(12);
+        inspect.pitch_steps =
+            (inspect.pitch_steps + axis(KeyCode::ArrowUp, KeyCode::ArrowDown)).clamp(-2, 2);
+        inspect.zoom_steps =
+            (inspect.zoom_steps + axis(KeyCode::Equal, KeyCode::Minus)).clamp(-2, 2);
+        if keys.just_pressed(KeyCode::KeyR) {
+            inspect = Inspection {
+                item: inspect.item,
+                yaw_steps: 0,
+                pitch_steps: 0,
+                zoom_steps: 0,
+            };
+        }
+        panel.inspection = Some(inspect);
+        return;
+    }
     let previous = panel
         .selected
         .and_then(|id| grid.items.iter().position(|(other, _)| id == *other));
@@ -68,6 +109,15 @@ pub(super) fn update(
         None => 0,
     };
     panel.selected = Some(grid.items[index].0);
+    if keys.just_pressed(KeyCode::KeyI) && previous == Some(index) {
+        panel.inspection = Some(Inspection {
+            item: grid.items[index].0,
+            yaw_steps: 0,
+            pitch_steps: 0,
+            zoom_steps: 0,
+        });
+        return;
+    }
     // An item disappearing in this frame must not redirect Delete to another
     // item. Only discard the selection that was already presented.
     if keys.just_pressed(KeyCode::Delete)
