@@ -99,6 +99,22 @@ evidência pendente; não congele o estado, simule confirmação ou atrase o
 servidor para obter a imagem. `inside` não substitui revisão de legibilidade,
 foco, sobreposição ou áudio. Não há injeção de input nem vídeo neste modo.
 
+#### Disputa de coleta (dois clientes)
+
+Em execução coordenada, com diretório novo:
+
+```sh
+python scripts/playtest.py --voxel-loot --clients 2 --no-capture \
+  --loot-contest --viewport 1280x800 --output "$HOME/tmp/tar77-loot-contest"
+```
+
+Os dois clientes normais miram na mesma bandagem no chão e usam a ação de
+coleta de F quando ambos têm foco confirmado. A rota para após a convergência;
+não executa a extração nem descarta snapshots. Confira `loot-contest/evidence.json`
+e os três logs: dois inputs registrados no servidor, um commit, item e modelo
+removidos nos dois clientes, e quantidade positiva só no inventário do vencedor.
+Não exige que os inputs cheguem no mesmo tick e não cobre entrada física.
+
 #### Checkpoint de ponteiro (hover e contexto)
 
 Na rota solo de revisão descrita acima, adicione

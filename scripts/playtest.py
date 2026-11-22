@@ -173,6 +173,41 @@ def png_dimensions(path):
     return None
 
 
+def loot_contest_evidence(client_logs, server_log):
+    key = r"raid=(\d+) item=(\d+) player=(\d+)"
+
+    def rows(text, action, suffix=""):
+        return [(match.start(), tuple(map(int, match.groups()))) for match in re.finditer(
+            rf"LOOT CONTEST {action} {key}{suffix}\r?$", text, re.MULTILINE)]
+
+    attempts = []
+    views = {}
+    for text in client_logs:
+        press = rows(text, "pressed")
+        view = rows(text, "converged", r" owned=(\d+) ground=0 model=0")
+        if (len(press) != 1 or len(view) != 1 or view[0][1][:3] != press[0][1]
+                or press[0][0] >= view[0][0]):
+            raise ValueError("Each client must press once and then observe the same item gone")
+        attempts.append(press[0][1])
+        _, (_, _, player, owned) = view[0]
+        views[player] = owned
+    if len(attempts) != 2 or len(views) != 2 or attempts[0][:2] != attempts[1][:2]:
+        raise ValueError("Two distinct players must attempt the same raid and item")
+    received = rows(server_log, "received")
+    if sorted(row for _, row in received) != sorted(attempts):
+        raise ValueError("Server must observe both ordinary pickup inputs exactly once")
+    commits = rows(server_log, "committed")
+    if (len(commits) != 1 or not any(
+            row == commits[0][1] and offset < commits[0][0] for offset, row in received)):
+        raise ValueError("Expected exactly one server pickup commit after the winner's input")
+    _, (raid, item, winner) = commits[0]
+    loser = next(player for player in views if player != winner)
+    if views[winner] <= 0 or views[loser] != 0:
+        raise ValueError("Private inventories must agree with the single committed owner")
+    return {"raid": raid, "item": item, "attempts": [row[2] for row in attempts],
+            "winner": winner, "owned_quantities": views, "ground_removed_in_both_views": True}
+
+
 def grid_review_evidence(directory, client_log, viewport, scale, pointer_checkpoint=False, inspect=False):
     states = ("idle", "drag-valid", "drag-invalid", "pending", "hover", "context")
     observed = {}
@@ -255,6 +290,8 @@ def main():
     parser.add_argument("--loot-inspect", action="store_true", help="With --voxel-loot, capture three static in-hand views of each confirmed item")
     parser.add_argument("--pet-probe", choices=("unlit-blend", "lit-opaque"),
                         help="Diagnose only the held bottle's translucent surfaces")
+    parser.add_argument("--loot-contest", action="store_true",
+                        help="Stop after two clients contest one loose item via normal pickup input")
     parser.add_argument("--inventory-grid", action="store_true",
                         help="Run the confirmed grid checkpoint during solo voxel loot")
     parser.add_argument("--inventory-grid-bench", action="store_true",
@@ -322,6 +359,11 @@ def main():
         and not (grid_review or args.inventory_telemetry)
     ):
         parser.error("--inventory-grid-bench requires --inventory-grid --viewport 1280x800 without review or telemetry")
+    if args.loot_contest and not (
+        args.voxel_loot and args.clients == 2 and args.no_capture and not args.video
+        and not args.animation_review and not args.audio and not args.configure_weapons and not args.weapon_kit
+    ):
+        parser.error("--loot-contest requires plain --voxel-loot --clients 2 --no-capture")
     if args.inventory_grid_inspect and not args.inventory_grid_pointer_checkpoint:
         parser.error("--inventory-grid-inspect requires --inventory-grid-pointer-checkpoint")
     if args.inventory_grid_pointer_checkpoint and not grid_review:
@@ -371,6 +413,11 @@ def main():
         for directory in (output, output / "peer"):
             for name in pvp_captures:
                 (directory / f"{name}.png").unlink(missing_ok=True)
+    contest_dir = output / "loot-contest"
+    if args.loot_contest:
+        if contest_dir.exists():
+            parser.error("use a fresh output directory for loot contest")
+        contest_dir.mkdir()
     grid_review_dir = output / "grid-review"
     if grid_review and grid_review_dir.exists():
         parser.error("use a fresh output directory for grid review")
@@ -404,6 +451,9 @@ def main():
     env = os.environ.copy()
     env.pop("TK_FIXTURE_ACTION_FAULT", None)
     env.pop("TK_PLAYTEST_VOXEL_LOOT", None)
+    env.pop("TK_PLAYTEST_LOOT_CONTEST", None)
+    if args.loot_contest:
+        env["TK_PLAYTEST_LOOT_CONTEST"] = str(contest_dir)
     if args.voxel_loot:
         env["TK_PLAYTEST_VOXEL_LOOT"] = "1"
     env.pop("TK_PLAYTEST_LOOT_INSPECT", None)
@@ -486,7 +536,7 @@ def main():
         "server_sha256": hashlib.sha256(server_path.read_bytes()).hexdigest(),
         "client_sha256": hashlib.sha256(client_path.read_bytes()).hexdigest(),
         "clients": args.clients, "transport": "real UDP 127.0.0.1:19080",
-        "peer_snapshot_drop_every": 3 if args.clients == 2 else 0,
+        "peer_snapshot_drop_every": 3 if args.clients == 2 and not args.loot_contest else 0,
         "leader_snapshot_drop_every": args.pov_drop_every or 0,
         "resolution": [1280, 800], "world_fov_degrees": 70,
         "requested_viewport": args.viewport,
@@ -512,7 +562,8 @@ def main():
         "shot_diagnostics": env.get("TK_SHOT_DIAGNOSTICS") is not None,
         "loadouts": ("leader compact M4A1 / peer suppressed M4A1" if args.configure_weapons
                      else "leader Rifle / peer SMG") + "; AP; heavy vest; helmet; both carry pistol",
-        "route": ("arena-solo" if args.arena_solo else "arena-pvp" if args.arena_pvp else args.pov
+        "route": ("arena-solo" if args.arena_solo else "arena-pvp" if args.arena_pvp
+                  else "deploy -> dual loose item pickup -> stop" if args.loot_contest else args.pov
                   or "optional reciprocal continuous weapon actions -> full-body route -> weapon exercise -> loot -> sentry combat -> extraction -> debrief -> lobby -> deploy -> limb injury/fall/recovery/death"),
         "timestamps": "client.log PLAYTEST stage clocks and ANIMATION CONTACT local clocks; frame-times.csv real frame timestamps",
     }, indent=2), encoding="utf-8")
@@ -528,7 +579,7 @@ def main():
                     client_output.mkdir(exist_ok=True)
                     client_env = env.copy()
                     client_env.update(TK_PLAYTEST_DIR=str(client_output), TK_PLAYTEST_ROLE=str(index))
-                    if index == 1 and not args.pov_peer_lossless:
+                    if index == 1 and not (args.pov_peer_lossless or args.loot_contest):
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = "3"
                     elif index == 0 and args.pov_drop_every:
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = str(args.pov_drop_every)
@@ -607,6 +658,15 @@ def main():
                 if args.viewport:
                     assert struct.unpack(">II", data[16:24]) == args.viewport
         result = "PASS: native Arena Solo, real UDP, both combatants returned and second session began\n"
+        (output / "result.txt").write_text(result, encoding="utf-8")
+        print(result, end="")
+        return
+    if args.loot_contest:
+        peer_text = (output / "peer" / "client.log").read_text(encoding="utf-8", errors="replace")
+        assert "panicked at" not in peer_text and " ERROR " not in peer_text, f"Peer runtime error: {output}"
+        report = loot_contest_evidence((client_text, peer_text), server_text)
+        (contest_dir / "evidence.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        result = f"PASS: native dual loot contest; item={report['item']} owner={report['winner']}\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
         return

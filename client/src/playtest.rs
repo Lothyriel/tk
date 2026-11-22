@@ -224,6 +224,7 @@ struct Driver {
     asset_captures: u8,
     panel_configured: bool,
     voxel_loot: voxel_loot::Route,
+    loot_contest: voxel_loot::Contest,
 }
 
 impl Driver {
@@ -346,7 +347,7 @@ fn drive(
     audio: Query<(), PlaytestAudio>,
     mut view_camera: Single<&mut Camera, With<crate::render::ViewModelCamera>>,
     flashes: Query<&Visibility, With<crate::render::feedback::Flash>>,
-    projections: PlaytestLenses,
+    (projections, ground_models): (PlaytestLenses, voxel_loot::ContestModels),
 ) {
     let PlaytestState {
         time,
@@ -519,6 +520,8 @@ fn drive(
                     Step::Pov
                 } else if physical::scenario().is_some() {
                     Step::PhysicalSetup
+                } else if std::env::var_os("TK_PLAYTEST_LOOT_CONTEST").is_some() {
+                    Step::Loot
                 } else if std::env::var("TK_PLAYTEST_CLIENTS").is_ok_and(|v| v == "2") {
                     if std::env::var_os("TK_ANIMATION_REVIEW").is_some() {
                         Step::AnimationSetup
@@ -1085,7 +1088,26 @@ fn drive(
             }
         }
         Step::Loot => {
-            if voxel_loot::enabled() {
+            if std::env::var_os("TK_PLAYTEST_LOOT_CONTEST").is_some() {
+                assert!(
+                    voxel_loot::enabled()
+                        && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("2")
+                        && grid_probe.is_none()
+                        && p.status == RaidStatus::Active
+                        && now - driver.since < 35.0,
+                    "loot contest did not converge: {:?}",
+                    driver.loot_contest
+                );
+                if driver.loot_contest.tick(
+                    &mut input,
+                    local,
+                    &inventory,
+                    &ground_models,
+                    (session.raid.raid_id, peer, now),
+                ) {
+                    driver.advance(Step::Done, now);
+                }
+            } else if voxel_loot::enabled() {
                 let inspect = voxel_loot::inspection_enabled();
                 let timeout = if inventory_grid::benchmark_enabled() {
                     220.0

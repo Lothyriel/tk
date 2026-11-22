@@ -13,6 +13,7 @@ mod destruction;
 mod dot_sight;
 pub(crate) mod feedback;
 mod ground_items;
+pub(crate) use ground_items::GroundModel;
 pub(crate) mod item_icons;
 pub(crate) mod item_inspection;
 pub(crate) mod shot_audio;

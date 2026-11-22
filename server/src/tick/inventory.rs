@@ -633,6 +633,15 @@ fn process(
         };
         let request = sight.pickup_input(peer.entity);
         let already_held = std::mem::replace(&mut peer.pickup_held, request.is_some());
+        let contest_evidence = request.is_some()
+            && !already_held
+            && std::env::var_os("TK_PLAYTEST_LOOT_CONTEST").is_some();
+        if contest_evidence && let Some(((epoch, item), _)) = request {
+            info!(
+                "LOOT CONTEST received raid={epoch} item={} player={client}",
+                item.0
+            );
+        }
         if let Some(((epoch, item), false)) = request
             && !already_held
             && raid.loot_active()
@@ -646,6 +655,12 @@ fn process(
                 CompartmentId(client),
             )
         {
+            if contest_evidence {
+                info!(
+                    "LOOT CONTEST committed raid={epoch} item={} player={client}",
+                    item.0
+                );
+            }
             let deltas = commit.project(peer.key, |id| id == CompartmentId(client));
             send(
                 server,

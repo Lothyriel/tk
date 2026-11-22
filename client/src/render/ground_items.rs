@@ -23,6 +23,9 @@ impl bevy::prelude::Plugin for Plugin {
 
 type Key = (u64, ItemInstanceId);
 
+#[derive(Component)]
+pub(crate) struct GroundModel(pub(crate) u64, pub(crate) ItemInstanceId);
+
 fn reconcile(
     mut commands: Commands,
     state: Res<State>,
@@ -56,6 +59,7 @@ fn reconcile(
                 let seed = S1_SEEDS[usize::from(item.seed)];
                 let entity = commands
                     .spawn((
+                        GroundModel(raid, item.id),
                         VoxelModel {
                             asset: item_visuals()[seed].asset_key.clone(),
                             view_model: false,

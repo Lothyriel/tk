@@ -17,6 +17,9 @@ use crate::{
 
 use super::inventory_grid::Probe;
 
+mod contest;
+pub(super) use contest::{Contest, ContestModels};
+
 pub(super) fn enabled() -> bool {
     std::env::var_os("TK_PLAYTEST_VOXEL_LOOT").is_some()
 }
@@ -261,11 +264,7 @@ impl Route {
         if !travel(input, actor, center + Vec3::Z * 0.9) {
             return false;
         }
-        let eye = Vec3::from_array(actor.pos) + Vec3::Y * PLAYER_VIEW_HEIGHT;
-        let delta = center - eye;
-        let recoil = actor.recoil.unpack();
-        input.camera.yaw = (-delta.x).atan2(-delta.z) - recoil.angles[0];
-        input.camera.pitch = delta.y.atan2(delta.xz().length()) - recoil.angles[1];
+        aim_at(input, actor, center);
         if inventory
             .focused_ground(raid)
             .is_some_and(|focus| focus.id == item.id)
@@ -294,6 +293,14 @@ impl Route {
         self.pickup_id = None;
         self.inspection_view = 0;
     }
+}
+
+fn aim_at(input: &mut ClientInput, actor: &ClientData, center: Vec3) {
+    let eye = Vec3::from_array(actor.pos) + Vec3::Y * PLAYER_VIEW_HEIGHT;
+    let delta = center - eye;
+    let recoil = actor.recoil.unpack();
+    input.camera.yaw = (-delta.x).atan2(-delta.z) - recoil.angles[0];
+    input.camera.pitch = delta.y.atan2(delta.xz().length()) - recoil.angles[1];
 }
 
 fn travel(input: &mut ClientInput, actor: &ClientData, target: Vec3) -> bool {

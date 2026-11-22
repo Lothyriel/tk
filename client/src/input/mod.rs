@@ -170,14 +170,13 @@ fn keyboard(
         input.prone_sequence = input.prone_sequence.wrapping_add(1);
     }
     input.jump = active && keys.pressed(KeyCode::Space);
-    input.interact = active && keys.pressed(KeyCode::KeyF);
-    if !input.interact {
-        input.pickup_focus = None;
-    } else if keys.just_pressed(KeyCode::KeyF) {
-        let raid = session.raid.raid_id;
-        input.pickup_focus =
-            inventory.and_then(|state| state.focused_ground(raid).map(|item| (raid, item.id)));
-    }
+    capture_pickup(
+        &mut input,
+        inventory.as_deref(),
+        session.raid.raid_id,
+        active && keys.pressed(KeyCode::KeyF),
+        keys.just_pressed(KeyCode::KeyF),
+    );
     let fire = buttons.pressed(MouseButton::Left);
     let aim = buttons.pressed(MouseButton::Right);
     presses.fire_blocked = fire && (!active || presses.fire_blocked);
@@ -208,6 +207,23 @@ fn keyboard(
     }
     if active && keys.just_pressed(KeyCode::Digit2) {
         input.weapon = EquipmentSlot::Sidearm;
+    }
+}
+
+/// Apply F to ordinary client input, latching only replicated focus on the press.
+pub(crate) fn capture_pickup(
+    input: &mut ClientInput,
+    inventory: Option<&crate::sync::inventory::State>,
+    raid: u32,
+    held: bool,
+    pressed: bool,
+) {
+    input.interact = held;
+    if !held {
+        input.pickup_focus = None;
+    } else if pressed {
+        input.pickup_focus =
+            inventory.and_then(|state| state.focused_ground(raid).map(|item| (raid, item.id)));
     }
 }
 
