@@ -320,7 +320,7 @@ fn presented_button<'a>(
         })
 }
 
-fn key_event(window: Entity, key_code: KeyCode, state: ButtonState) -> KeyboardInput {
+pub(super) fn key_event(window: Entity, key_code: KeyCode, state: ButtonState) -> KeyboardInput {
     KeyboardInput {
         key_code,
         logical_key: Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),

@@ -133,6 +133,14 @@ com outro arquivo novo. A sonda faz um único deploy, abre a pausa com Esc
 e verifica que o fluxo não envia novos comandos de lobby nem ativa mira ou
 disparo. Use `reload` em outro processo para verificar o arquivo salvo.
 
+## Verificação de debrief compacto
+
+Para verificar o debrief compacto, rode
+`TK_DEBRIEF_REVIEW=1 python scripts/playtest.py --clients 1 --viewport 1280x720 --no-capture`.
+A rota solo chega à extração real, mede o painel de debrief a 200% e ativa
+o botão de retorno com Enter sintético do Bevy. Procure `DEBRIEF REVIEW PASS`
+no log do cliente; sem mídia ou alegação de teclado físico.
+
 ## Revisão estática da grade
 
 Para automatizar o subconjunto de teclado após integração e coordenação:

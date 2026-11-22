@@ -7,6 +7,7 @@ mod animation;
 mod arena;
 pub(crate) mod arena_menu;
 mod asset_review;
+mod debrief_review;
 mod fault;
 mod inventory_frame_windows;
 pub(crate) mod inventory_grid;
@@ -76,6 +77,9 @@ impl bevy::prelude::Plugin for Plugin {
                 asset_review::camera.after(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(PostUpdate, video::record);
+        if debrief_review::enabled() {
+            debrief_review::install(app);
+        }
         if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("recovery-steps") {
             app.add_systems(PostUpdate, recovery_steps::observe);
         }
@@ -1394,6 +1398,12 @@ fn drive(
                 assert!(local.body.alive());
                 capture(&mut commands, "debrief");
                 driver.advance(Step::Result, now);
+            }
+        }
+        Step::Result if debrief_review::enabled() => {
+            // The review drives the actual Return widget, not LocalInput.
+            if session.raid.phase == RaidPhase::Lobby {
+                driver.advance(Step::Return, now);
             }
         }
         Step::Result if now - driver.since > 2.0 => {
