@@ -57,6 +57,19 @@ Procure `ARENA MENU PROBE PASS` no log. Os eventos sintéticos de janela do
 Bevy percorrem o picking por coordenadas no layout real. Não certificam
 dispositivos do SO, legibilidade nem perda UDP. A sonda não registra mídia.
 
+Para verificar os limites e o foco inicial do lobby conectado, inicie um
+servidor local novo e execute, com `TK_PREFERENCES_PATH` isolado:
+
+```sh
+TK_PLAYTEST_VIEWPORT=1280x720 TK_LOBBY_REVIEW_SCALE=2 \
+  cargo run --locked -p client -- --arena-menu-probe=keyboard
+```
+
+Procure `LOBBY REVIEW PASS`. Essa sonda estática não envia input nem
+captura mídia; verifica o status, os dez botões e rótulos, e o contorno de
+foco em Ready. Use `TK_LOBBY_REVIEW_SCALE=1.25` para comparar. A escala
+transitória não altera o arquivo de preferências.
+
 Para revisar apenas a tela de Preferências, a variante abaixo abre o menu
 com Tab/Enter sintéticos em um lobby UDP ainda não pronto. Com o servidor
 local em execução, use um diretório novo e um arquivo de preferências isolado:

@@ -19,6 +19,8 @@ use common::{
 
 use crate::{ClientSystems, menu::Menu, sync::ClientSession};
 
+mod lobby_review;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Resource)]
 pub(crate) enum Probe {
     Mouse,
@@ -58,6 +60,18 @@ impl Probe {
 
 impl Plugin for Probe {
     fn build(&self, app: &mut App) {
+        if let Ok(value) = std::env::var("TK_LOBBY_REVIEW_SCALE") {
+            assert_eq!(*self, Self::Keyboard);
+            for flag in [
+                "TK_PREFERENCES_FLOW",
+                "TK_PREFERENCES_SCREENSHOT",
+                "TK_PREFERENCES_REVIEW_SCALE",
+            ] {
+                assert!(std::env::var_os(flag).is_none());
+            }
+            lobby_review::install(app, &value);
+            return;
+        }
         let mut route = Route::default();
         let review_scale = std::env::var("TK_PREFERENCES_REVIEW_SCALE").ok();
         if let Ok(mode) = std::env::var("TK_PREFERENCES_FLOW") {

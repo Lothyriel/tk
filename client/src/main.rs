@@ -74,7 +74,9 @@ fn main() {
     );
     let viewport = (playtest
         || grid_review
-        || (arena_menu_probe.is_some() && std::env::var_os("TK_PREFERENCES_SCREENSHOT").is_some()))
+        || (arena_menu_probe.is_some()
+            && (std::env::var_os("TK_PREFERENCES_SCREENSHOT").is_some()
+                || std::env::var_os("TK_LOBBY_REVIEW_SCALE").is_some())))
     .then(playtest::requested_viewport)
     .flatten();
     let mut app = App::new();

@@ -767,9 +767,9 @@ fn present(
     viewport: Single<&Window, With<PrimaryWindow>>,
     scale: Res<UiScale>,
 ) {
-    // Reflow only Preferences when a tall one-column panel would exceed the
-    // available logical height. Grid auto-placement retains the widget order.
-    let reflow = menu.surface == Surface::Settings && viewport.height() / scale.0 < 570.0;
+    // Reflow tall menus on short viewports. Grid auto-placement retains the
+    // widget order, and the status spans both columns.
+    let reflow = reflows(menu.surface, viewport.height() / scale.0);
     let was_reflow = root.display == Display::Grid;
     root.display = if matches!(
         menu.surface,
@@ -1004,6 +1004,10 @@ fn present(
     *last_focus = menu.selected;
 }
 
+fn reflows(surface: Surface, logical_height: f32) -> bool {
+    matches!(surface, Surface::Lobby | Surface::Settings) && logical_height < 570.0
+}
+
 fn mode_name(mode: MatchMode) -> &'static str {
     match mode {
         MatchMode::Raid => "Raid",
@@ -1106,6 +1110,18 @@ mod tests {
         keys.reset_all();
         keys.press(key);
         app.update();
+    }
+
+    #[test]
+    fn compact_lobby_reflows_without_changing_pause_or_debrief() {
+        let height_200 = 720.0 / 2.0;
+        let height_125 = 720.0 / 1.25;
+        assert!(reflows(Surface::Lobby, height_200));
+        assert!(!reflows(Surface::Lobby, height_125));
+        assert!(reflows(Surface::Settings, height_200));
+        for surface in [Surface::Pause, Surface::ArenaPause, Surface::Debrief] {
+            assert!(!reflows(surface, height_200));
+        }
     }
 
     #[test]
