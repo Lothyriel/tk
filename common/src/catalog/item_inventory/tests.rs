@@ -48,6 +48,135 @@ fn fixture() -> Inventory {
 }
 
 #[test]
+fn item_inventory_operation_replays_result_without_repeating_commit() {
+    let mut inventory = fixture();
+    let own = at(1, 0, 0);
+    let other = at(2, 0, 0);
+    let item = inventory
+        .insert_seed("med.bandage", Condition::Intact, 3, own)
+        .unwrap();
+    let key = SessionKey {
+        raid_epoch: 4,
+        session_epoch: 8,
+    };
+    let mut session = OperationSession::new(key);
+    let mut rival = OperationSession::new(SessionKey {
+        session_epoch: 9,
+        ..key
+    });
+    let mut authority = InventoryAuthority::new(key.raid_epoch, inventory);
+    let request = InventoryOperation {
+        session: key,
+        id: 1,
+        expected: [
+            VersionedCompartment {
+                id: own.compartment,
+                revision: 0,
+            },
+            VersionedCompartment {
+                id: other.compartment,
+                revision: 0,
+            },
+        ],
+        action: InventoryAction::Split {
+            item,
+            quantity: 1,
+            destination: other,
+        },
+    };
+    assert_eq!(
+        authority
+            .apply(
+                &mut session,
+                InventoryOperation { id: 2, ..request },
+                |_| true
+            )
+            .result,
+        OperationResult::OutOfOrder
+    );
+    let committed = authority.apply(&mut session, request, |_| true);
+    assert_eq!(committed.result, OperationResult::Committed);
+    assert!(committed.commit.is_some());
+    let replay = authority.apply(&mut session, request, |_| false);
+    assert_eq!(
+        replay,
+        OperationReply {
+            result: OperationResult::Committed,
+            commit: None
+        }
+    );
+    assert_eq!(
+        authority.apply(&mut rival, request, |_| true).result,
+        OperationResult::WrongSession
+    );
+    let stale = InventoryOperation {
+        session: SessionKey {
+            session_epoch: 9,
+            ..key
+        },
+        ..request
+    };
+    assert_eq!(
+        authority.apply(&mut rival, stale, |_| true).result,
+        OperationResult::Conflict
+    );
+    assert_eq!(
+        authority.apply(&mut rival, stale, |_| true).result,
+        OperationResult::Conflict
+    );
+    let result = authority.apply(
+        &mut session,
+        InventoryOperation {
+            id: 2,
+            expected: [
+                VersionedCompartment {
+                    id: other.compartment,
+                    revision: 1,
+                },
+                VersionedCompartment {
+                    id: other.compartment,
+                    revision: 1,
+                },
+            ],
+            ..request
+        },
+        |_| true,
+    );
+    assert_eq!(result.result, OperationResult::Conflict);
+    assert_eq!(authority.revision(own.compartment), Some(1));
+    assert_eq!(authority.revision(other.compartment), Some(1));
+    assert_eq!(authority.inventory().items.len(), 2);
+    assert_eq!(
+        authority
+            .inventory()
+            .items
+            .values()
+            .map(|item| item.mass_g())
+            .sum::<u64>(),
+        105
+    );
+    for id in 3..=66 {
+        assert_eq!(
+            authority
+                .apply(&mut session, InventoryOperation { id, ..request }, |_| {
+                    false
+                })
+                .result,
+            OperationResult::Rejected(TransactionError::Unavailable)
+        );
+    }
+    assert_eq!(
+        authority.apply(&mut session, request, |_| true).result,
+        OperationResult::Expired
+    );
+    let mut next_raid = InventoryAuthority::new(5, fixture());
+    assert_eq!(
+        next_raid.apply(&mut session, request, |_| true).result,
+        OperationResult::WrongSession
+    );
+}
+
+#[test]
 fn item_inventory_transaction_checks_both_compartments_before_mutating() {
     let mut inventory = fixture();
     let own = at(1, 0, 0);
