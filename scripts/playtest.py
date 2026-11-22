@@ -353,6 +353,8 @@ def main():
                         help="Inspect from the context menu before keyboard grid operations")
     parser.add_argument("--inventory-grid-close-ack", action="store_true",
                         help="Diagnose Tab close versus the original server reply during one solo grid move")
+    parser.add_argument("--inventory-grid-split", type=int, choices=(1, 2),
+                        help="Verify this split quantity against an opt-in three-bandage seed")
     parser.add_argument("--inventory-telemetry", action="store_true",
                         help="Measure application payloads and Linux process RSS during the solo grid route")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
@@ -416,6 +418,10 @@ def main():
                                                and not args.inventory_telemetry
                                                and not args.inventory_grid_bench):
         parser.error("--inventory-grid-close-ack requires the plain solo --inventory-grid route")
+    if args.inventory_grid_split and not (args.inventory_grid and not (
+        grid_review or args.inventory_grid_bench or args.inventory_grid_close_ack or args.inventory_telemetry
+    )):
+        parser.error("--inventory-grid-split requires the plain solo --inventory-grid route")
     if args.loot_contest and not (
         args.voxel_loot and args.clients == 2 and args.no_capture and not args.video
         and not args.animation_review and not args.audio and not args.configure_weapons and not args.weapon_kit
@@ -525,6 +531,9 @@ def main():
     if args.pet_probe:
         env["TK_PLAYTEST_PET_PROBE"] = args.pet_probe
     env.pop("TK_PLAYTEST_INVENTORY_GRID", None)
+    env.pop("TK_PLAYTEST_GRID_SPLIT", None)
+    if args.inventory_grid_split:
+        env["TK_PLAYTEST_GRID_SPLIT"] = str(args.inventory_grid_split)
     env.pop("TK_PLAYTEST_GRID_BENCH", None)
     env.pop("TK_PLAYTEST_INVENTORY_TELEMETRY", None)
     env.pop("TK_GRID_REVIEW_DIR", None)
@@ -900,6 +909,14 @@ def main():
         loot_logs = [client_text] + ([peer_text] if args.clients == 2 else [])
         if args.inventory_grid:
             assert "GRID PROBE PASS move/rotate and split/merge" in client_text, "Missing confirmed grid checkpoint"
+        if args.inventory_grid_split:
+            splits = re.findall(
+                r"GRID VARIABLE SPLIT confirmed quantity=(\d+) child=(\d+) source=(\d+) revision=(\d+)",
+                client_text,
+            )
+            assert len(splits) == 1, splits
+            quantity, child, source, revision = map(int, splits[0])
+            assert quantity == args.inventory_grid_split and child != source and revision > 0, splits
         records = re.findall(r"VOXEL LOOT (collected|dropped|retained) seed=(\d+) id=(\d+)", "\n".join(loot_logs))
         acquired = sorted(int(seed) for action, seed, _ in records if action != "dropped")
         assert acquired == list(range(6)), f"Missing or duplicate voxel acquisitions: {records}"

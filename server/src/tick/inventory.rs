@@ -98,7 +98,7 @@ impl std::fmt::Debug for Endpoint {
     }
 }
 
-fn seed_world(inventory: &mut Inventory, items: &mut Vec<WorldItem>) {
+fn seed_world(inventory: &mut Inventory, items: &mut Vec<WorldItem>, bandages: u16) {
     inventory
         .register_compartment(
             BANDAGE_SPARE_SLOT,
@@ -116,7 +116,7 @@ fn seed_world(inventory: &mut Inventory, items: &mut Vec<WorldItem>) {
             .insert_seed(
                 seed,
                 Condition::Intact,
-                if seed == "med.bandage" { 2 } else { 1 },
+                if seed == "med.bandage" { bandages } else { 1 },
                 GridLocation {
                     compartment: source,
                     placement: Placement {
@@ -455,7 +455,14 @@ impl Endpoint {
         }
         if raid.loot_active() && self.raid != Some(raid.raid_id) {
             let mut inventory = self.empty_inventory();
-            seed_world(&mut inventory, &mut self.world_items);
+            let bandages = if std::env::var("TK_PLAYTEST_GRID_SPLIT")
+                .is_ok_and(|v| matches!(v.as_str(), "1" | "2"))
+            {
+                3
+            } else {
+                2
+            };
+            seed_world(&mut inventory, &mut self.world_items, bandages);
             self.loot_ids = self
                 .world_items
                 .iter()
@@ -945,7 +952,7 @@ mod tests {
     fn ground_pickup_removes_only_after_commit_and_only_once() {
         let mut world = Vec::new();
         let mut inventory = Inventory::default();
-        seed_world(&mut inventory, &mut world);
+        seed_world(&mut inventory, &mut world, 2);
         let item = world[0].id;
         let source = world[0].source;
         let original = *inventory.get(item).unwrap();

@@ -142,6 +142,18 @@ evidência pendente; não congele o estado, simule confirmação ou atrase o
 servidor para obter a imagem. `inside` não substitui revisão de legibilidade,
 foco, sobreposição ou áudio. Não há injeção de input nem vídeo neste modo.
 
+#### Quantidades de divisão em UDP solo
+
+```sh
+python scripts/playtest.py --voxel-loot --inventory-grid --no-capture \
+  --inventory-grid-split 1 --viewport 1280x720 --output "$OUT"
+```
+
+Repita com `--inventory-grid-split 2` em uma saída nova. Ambas as rodadas
+usam uma pilha de três bandagens apenas na fixture opt-in; a raid normal
+continua com duas. A sonda confirma a quantidade escolhida e o merge
+posterior. Usa teclas sintéticas do Bevy, não um dispositivo físico.
+
 #### Diagnóstico de fechamento durante uma movimentação pendente
 
 Em execução coordenada, com diretório novo:

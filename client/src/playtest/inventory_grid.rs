@@ -41,6 +41,11 @@ impl bevy::prelude::Plugin for Plugin {
         app.insert_resource(Probe {
             integrated: self.integrated,
             benchmark: self.integrated && benchmark_enabled(),
+            split_quantity: std::env::var("TK_PLAYTEST_GRID_SPLIT").ok().map(|value| {
+                let quantity = value.parse().expect("numeric split fixture quantity");
+                assert!(self.integrated && matches!(quantity, 1 | 2));
+                quantity
+            }),
             ..default()
         })
         .add_systems(Update, drive.after(ClientSystems::Present));
@@ -101,6 +106,7 @@ pub(super) struct Probe {
     finished: bool,
     benchmark: bool,
     benchmark_run: Option<Benchmark>,
+    split_quantity: Option<u16>,
 }
 
 struct Benchmark {
@@ -134,8 +140,11 @@ impl Probe {
         let current = grid.items[index(item)].1.placement;
         let down = (index(item) + grid.items.len() - index(selected)) % grid.items.len();
         self.keys.extend((0..down).map(|_| vec![ArrowDown]));
-        if matches!(step, Step::Split { .. }) {
-            self.keys.extend([vec![ShiftLeft, Enter], vec![Enter]]);
+        if let Step::Split { ref new_stack, .. } = step {
+            self.keys.push_back(vec![ShiftLeft, Enter]);
+            self.keys
+                .extend((1..new_stack.quantity).map(|_| vec![ArrowRight]));
+            self.keys.push_back(vec![Enter]);
         } else {
             self.keys.push_back(vec![Enter]);
         }
@@ -398,12 +407,16 @@ fn drive(
                     let footprint = planned_items()["med.bandage"].footprint;
                     let target = destination(grid, id, footprint, bandage.placement.rotation, true)
                         .expect("GRID PROBE needs a free cell for the bandage split");
+                    let quantity = probe.split_quantity.unwrap_or(1);
+                    if probe.split_quantity.is_some() {
+                        assert_eq!(bandage.quantity, 3, "expected the three-unit test fixture");
+                    }
                     let new_stack = ProjectedItem {
                         placement: target,
-                        quantity: 1,
+                        quantity,
                         ..bandage.clone()
                     };
-                    actual.get_mut(&id).unwrap().quantity -= 1;
+                    actual.get_mut(&id).unwrap().quantity -= quantity;
                     probe.route(
                         grid,
                         selected,
@@ -433,7 +446,13 @@ fn drive(
                 actual.remove(&new_id);
                 assert_eq!(actual, check.expected);
                 let original = actual.get_mut(&source).unwrap();
-                original.quantity += 1;
+                original.quantity += new_stack.quantity;
+                if probe.split_quantity.is_some() {
+                    info!(
+                        "GRID VARIABLE SPLIT confirmed quantity={} child={} source={} revision={}",
+                        new_stack.quantity, new_id.0, source.0, check.revision
+                    );
+                }
                 let target = original.placement;
                 probe.route(grid, selected, new_id, target, Step::Merge, actual);
                 return;
