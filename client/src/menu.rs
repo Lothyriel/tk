@@ -13,6 +13,7 @@ use common::{
     raid::{MatchMode, RaidPhase, RaidStatus, SIMULATION_HZ},
 };
 
+use crate::connection::{Connection, Request};
 use crate::preferences::{Preferences, Store};
 use crate::{ClientSystems, input::inventory_panel::Panel, loadout, sync::ClientSession};
 
@@ -140,6 +141,8 @@ enum Action {
     Revert,
     ApplySettings,
     BackSettings,
+    Reconnect,
+    Disconnect,
 }
 
 impl Action {
@@ -235,6 +238,8 @@ fn setup(mut commands: Commands) {
                 Action::Return,
                 Action::Resume,
                 Action::LeaveArena,
+                Action::Reconnect,
+                Action::Disconnect,
                 Action::Quit,
                 Action::Settings,
                 Action::FovLess,
@@ -297,7 +302,12 @@ fn available(
         Surface::Lobby => action.is_some_and(|action| {
             matches!(
                 action,
-                Action::Ready | Action::Bench | Action::Mode | Action::Quit | Action::Settings
+                Action::Ready
+                    | Action::Bench
+                    | Action::Mode
+                    | Action::Quit
+                    | Action::Settings
+                    | Action::Disconnect
             ) || action.changes_kit()
         }),
         Surface::Bench => match bench {
@@ -313,7 +323,7 @@ fn available(
         Surface::ArenaWaiting => action == Some(&Action::LeaveArena),
         Surface::Pause => matches!(
             action,
-            Some(Action::Resume | Action::Quit | Action::Settings)
+            Some(Action::Resume | Action::Quit | Action::Settings | Action::Disconnect)
         ),
         Surface::Settings => matches!(
             action,
@@ -329,8 +339,15 @@ fn available(
                     | Action::BackSettings
             )
         ),
-        Surface::Debrief => matches!(action, Some(Action::Return | Action::Quit)),
-        Surface::Waiting | Surface::Connection => action == Some(&Action::Quit),
+        Surface::Debrief => matches!(
+            action,
+            Some(Action::Return | Action::Quit | Action::Disconnect)
+        ),
+        Surface::Waiting => matches!(action, Some(Action::Quit | Action::Disconnect)),
+        Surface::Connection => matches!(
+            action,
+            Some(Action::Quit | Action::Reconnect | Action::Disconnect)
+        ),
         Surface::Playing | Surface::Inventory => false,
     };
     let enabled = match action {
@@ -369,6 +386,7 @@ fn route(
     mut activations: MessageWriter<Activation>,
     mut exit: MessageWriter<AppExit>,
     (mut preferences, store): (ResMut<Preferences>, Res<Store>),
+    mut connection: Option<ResMut<Connection>>,
 ) {
     let old = menu.surface;
     let local = session.local(id.0);
@@ -467,13 +485,14 @@ fn route(
                 pending,
                 editor.draft.as_ref(),
             );
-            enabled
-                || (shown
-                    && pending
-                    && matches!(
-                        action,
-                        Some(Action::Ready | Action::Return | Action::LeaveArena)
-                    ))
+            connection_action_visible(*action, connection.is_some(), client.is_disconnected())
+                && (enabled
+                    || (shown
+                        && pending
+                        && matches!(
+                            action,
+                            Some(Action::Ready | Action::Return | Action::LeaveArena)
+                        )))
         })
         .collect();
     candidates.sort_unstable_by_key(|(_, order, ..)| order.0);
@@ -569,6 +588,15 @@ fn route(
         }
         Some(Action::Quit) => {
             exit.write(AppExit::Success);
+        }
+        Some(Action::Reconnect | Action::Disconnect) => {
+            if let Some(connection) = connection.as_mut() {
+                connection.request = Some(if action == Some(&Action::Reconnect) {
+                    Request::Connect
+                } else {
+                    Request::Disconnect
+                });
+            }
         }
         Some(Action::Settings) => {
             menu.settings_focus = Some(entity);
@@ -693,6 +721,7 @@ fn present(
     mut scroll: Query<(&ComputedNode, &UiGlobalTransform, &mut ScrollPosition), With<BenchScroll>>,
     bounds: Query<(&ComputedNode, &UiGlobalTransform)>,
     mut last_focus: Local<Option<Entity>>,
+    connection: Option<Res<Connection>>,
 ) {
     root.display = if matches!(
         menu.surface,
@@ -785,8 +814,11 @@ fn present(
             )
         }
         Surface::Connection if client.is_disconnected() => format!(
-            "DISCONNECTED: {:?}\nQuit and restart to reconnect.",
-            client.disconnect_reason()
+            "DISCONNECTED\n{}",
+            connection
+                .as_ref()
+                .and_then(|connection| connection.notice.as_deref())
+                .unwrap_or("Reconnect to start a fresh session.")
         ),
         Surface::Connection if client.is_connected() && participant.is_some() => {
             "CONNECTION STALE\nWaiting for authoritative state.".into()
@@ -795,7 +827,12 @@ fn present(
         _ => String::new(),
     };
     for (action, children, mut node) in &mut main {
-        node.display = if available(menu.surface, Some(action), None, editable, pending, None).0 {
+        node.display = if available(menu.surface, Some(action), None, editable, pending, None).0
+            && connection_action_visible(
+                Some(action),
+                connection.is_some(),
+                client.is_disconnected(),
+            ) {
             Display::Flex
         } else {
             Display::None
@@ -842,6 +879,11 @@ fn present(
                 Action::Revert => "Revert unapplied changes".into(),
                 Action::ApplySettings => "Apply and save".into(),
                 Action::BackSettings => "Back (discard draft)".into(),
+                Action::Reconnect => "Reconnect".into(),
+                Action::Disconnect if menu.surface == Surface::Connection => {
+                    "Cancel connection".into()
+                }
+                Action::Disconnect => "Disconnect from server".into(),
             };
         }
     }
@@ -890,6 +932,14 @@ fn mode_name(mode: MatchMode) -> &'static str {
         MatchMode::Raid => "Raid",
         MatchMode::ArenaSolo => "Arena Solo",
         MatchMode::ArenaPvp => "Arena PvP 1v1",
+    }
+}
+
+fn connection_action_visible(action: Option<&Action>, installed: bool, disconnected: bool) -> bool {
+    match action {
+        Some(Action::Reconnect) => installed && disconnected,
+        Some(Action::Disconnect) => installed && !disconnected,
+        _ => true,
     }
 }
 

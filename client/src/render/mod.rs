@@ -195,6 +195,21 @@ fn aimed_fov(base: f32, weapon: WeaponKind, ads: f32) -> f32 {
     (a + (b - a) * common::weapon_animation::ease(ads)).atan() * 2.0
 }
 
+pub(crate) fn reset_connection_visuals(world: &mut World) {
+    let mut visuals = world.query_filtered::<Entity, Or<(
+        With<ProjectileVisual>,
+        With<ImpactMarkVisual>,
+        With<WeaponViewModel>,
+    )>>();
+    let visuals: Vec<_> = visuals.iter(world).collect();
+    for entity in visuals {
+        world.despawn(entity);
+    }
+    if let Some(mut feedback) = world.get_resource_mut::<feedback::Feedback>() {
+        *feedback = feedback::Feedback::default();
+    }
+}
+
 fn spawn_view_model(mut commands: Commands, mut lobby: ResMut<Lobby>, player_id: Res<PlayerId>) {
     let player = commands
         .spawn((
