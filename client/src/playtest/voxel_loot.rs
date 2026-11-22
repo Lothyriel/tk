@@ -46,9 +46,8 @@ impl Route {
             return false;
         };
         if self.index == order.len() {
-            let lane: f32 = if peer || !dual { 2.8 } else { -2.8 };
+            let lane: f32 = if peer { 2.8 } else { -2.8 };
             while let Some(target) = [
-                Vec3::new(if peer { 0.8 } else { -0.8 }, 0.0, -11.0),
                 Vec3::new(lane, 0.0, -11.0),
                 Vec3::new(lane, 0.0, -0.8),
                 Vec3::new(lane.signum() * 3.6, 0.0, -0.8),
