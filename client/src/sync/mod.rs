@@ -10,7 +10,7 @@ use crate::render::{ImpactMarkVisual, ProjectileVisual, player_body_mesh};
 use common::raid::{RaidPhase, RaidState, RaidStatus};
 
 pub(crate) mod cover;
-mod inventory;
+pub(crate) mod inventory;
 mod motion;
 #[cfg(test)]
 pub(crate) use motion::LocalMotionPose;
@@ -58,6 +58,8 @@ impl bevy::prelude::Plugin for Plugin {
         app.init_resource::<ClientSession>()
             .init_resource::<cover::State>()
             .init_resource::<inventory::State>()
+            .add_message::<inventory::Operate>()
+            .add_message::<inventory::OperationFinished>()
             .insert_resource(SnapshotLoss {
                 every: std::env::var("TK_DROP_SNAPSHOT_EVERY")
                     .ok()
