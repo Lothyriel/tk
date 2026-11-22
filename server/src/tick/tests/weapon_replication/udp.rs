@@ -71,6 +71,8 @@ struct UdpPeer {
     transport: NetcodeClientTransport,
     input: ClientInput,
     dropped: Arc<AtomicUsize>,
+    snapshot_blackout: bool,
+    snapshots_dropped: usize,
 }
 
 impl UdpPeer {
@@ -100,6 +102,8 @@ impl UdpPeer {
             transport,
             input: ClientInput::default(),
             dropped,
+            snapshot_blackout: false,
+            snapshots_dropped: 0,
         }
     }
 }
@@ -144,7 +148,13 @@ impl Harness {
         for peer in peers.iter_mut() {
             peer.peer.network.update(dt);
             peer.transport.update(dt, &mut peer.peer.network).unwrap();
-            peer.peer.receive();
+            peer.peer.receive_with_snapshot_filter(|| {
+                if peer.snapshot_blackout {
+                    peer.snapshots_dropped += 1;
+                    return false;
+                }
+                true
+            });
             if peer.peer.network.is_connected() {
                 peer.peer
                     .network
@@ -628,6 +638,213 @@ fn inventory_udp_private_resync_under_loss() {
     let world = harness.app.world();
     let entity = world.resource::<Lobby>().players[&7];
     assert_eq!(world.get::<ClientInput>(entity).unwrap().camera.yaw, 0.25);
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn inventory_udp_contested_ground_pickup_with_snapshot_loss_and_disconnect() {
+    use common::{
+        catalog::{
+            item_inventory::{Condition, ItemContents},
+            item_manifest::{S1_SEEDS, item_visuals},
+        },
+        replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+    };
+
+    let drain = |peer: &mut UdpPeer| {
+        std::iter::from_fn(|| peer.peer.network.receive_message(CHANNEL))
+            .map(|bytes| InventoryUpdate::decode(&bytes).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let mut harness = Harness::new();
+    // Lose snapshots at the receiving channel, not whole datagrams. Both
+    // reliable pickup inputs must reach the *same* authoritative tick.
+    let mut first = UdpPeer::new(7, harness.address, harness.now, false);
+    let mut second = UdpPeer::new(8, harness.address, harness.now, false);
+    harness.pump(&mut [&mut first, &mut second], 192);
+    for peer in [&mut first, &mut second] {
+        drain(peer);
+        peer.input.lobby_sequence = 1;
+    }
+    harness.pump(&mut [&mut first, &mut second], 512);
+    let bootstrap = [&mut first, &mut second].map(drain);
+    let [first_view, second_view] = &bootstrap;
+    let [_, _, ground] = first_view.as_slice() else {
+        panic!("expected fresh raid bootstrap, got {first_view:?}");
+    };
+    let UpdateBody::Ground(items) = &ground.body else {
+        panic!("expected public ground list");
+    };
+    assert_eq!(second_view[2].body, ground.body);
+    let item = &items[0];
+    let expected_ground = UpdateBody::Ground(items[1..].to_vec());
+    let epoch = u32::try_from(ground.session.raid_epoch).unwrap();
+    assert!(epoch > 0);
+    let center = Vec3::from_array(item.root)
+        + Vec3::from_array(item_visuals()[S1_SEEDS[0]].collider_center());
+    let actors = [7, 8].map(|id| harness.app.world().resource::<Lobby>().players[&id]);
+    for ((peer, entity), dx) in [&mut first, &mut second]
+        .into_iter()
+        .zip(actors)
+        .zip([-0.5, 0.5])
+    {
+        let world = harness.app.world_mut();
+        assert_eq!(
+            world.get::<Participant>(entity).unwrap().status,
+            RaidStatus::Active
+        );
+        // Two non-overlapping approaches; focus itself comes from server sight.
+        let start = Vec3::new(center.x + dx, 1.02, center.z + 1.05);
+        world.get_mut::<Transform>(entity).unwrap().translation = start;
+        let ray = center - (start + Vec3::Y * PLAYER_VIEW_HEIGHT);
+        peer.input.camera.yaw = (-ray.x).atan2(-ray.z);
+        peer.input.camera.pitch = ray.y.atan2(ray.x.hypot(ray.z));
+    }
+    harness.pump(&mut [&mut first, &mut second], 48);
+    let snapshot_sequences = [&first, &second].map(|p| p.peer.latest.as_ref().unwrap().sequence);
+    for peer in [&mut first, &mut second] {
+        assert!(
+            drain(peer)
+                .iter()
+                .any(|update| update.body == UpdateBody::GroundFocus(Some(item.id)))
+        );
+        peer.snapshot_blackout = true;
+        peer.input.interact = true;
+        peer.input.pickup_focus = Some((epoch - 1, item.id));
+    }
+    harness.pump(&mut [&mut first, &mut second], 16);
+    for peer in [&mut first, &mut second] {
+        assert!(
+            drain(peer).is_empty(),
+            "stale epoch changed a ready-to-pick item"
+        );
+        peer.input.interact = false;
+    }
+    harness.step(&mut [&mut first, &mut second]);
+    for peer in [&mut first, &mut second] {
+        peer.input.interact = true;
+        peer.input.pickup_focus = Some((epoch, item.id));
+    }
+    harness.step(&mut [&mut first, &mut second]);
+    for actor in actors {
+        let input = harness.app.world().get::<ClientInput>(actor).unwrap();
+        assert!(
+            input.interact && input.pickup_focus == Some((epoch, item.id)),
+            "both pickup requests must reach the same tick"
+        );
+    }
+    let world = harness.app.world();
+    let state = world.resource::<WorldState>();
+    let raid = world.resource::<RaidState>();
+    let carried = [7, 8].map(|id| state.inventory.carried(raid, id));
+    assert_eq!(
+        carried.iter().sum::<u32>(),
+        1,
+        "exactly one unit commits in the collision tick"
+    );
+    harness.pump(&mut [&mut first, &mut second], 32);
+    let mut award = None;
+    for (index, peer) in [&mut first, &mut second].into_iter().enumerate() {
+        assert!(peer.snapshots_dropped > 0);
+        assert_eq!(
+            peer.peer.latest.as_ref().unwrap().sequence,
+            snapshot_sequences[index]
+        );
+        let mut tombstones = 0;
+        let mut focus_clears = 0;
+        for update in drain(peer) {
+            assert_eq!(update.session, bootstrap[index][0].session);
+            match update.body {
+                UpdateBody::Delta(mut deltas) => {
+                    assert_eq!(deltas.len(), 1);
+                    let delta = deltas.pop().unwrap();
+                    assert_eq!(delta.version.id, CompartmentId(peer.peer.id));
+                    assert_eq!(delta.version.revision, 1);
+                    assert_eq!(delta.items.len(), 1);
+                    assert_eq!(delta.items[0].id, item.id);
+                    let granted = delta.items[0].item.clone().expect("winner gets the item");
+                    assert_eq!(granted.definition, S1_SEEDS[0]);
+                    assert_eq!(granted.condition, Condition::Intact);
+                    assert_eq!(granted.quantity, 1);
+                    assert_eq!(granted.contents, ItemContents::Dressing { sealed: true });
+                    assert!(
+                        award.replace((index, granted)).is_none(),
+                        "two pickup commits"
+                    );
+                }
+                UpdateBody::Ground(_) => {
+                    assert_eq!(update.body, expected_ground);
+                    tombstones += 1;
+                }
+                UpdateBody::GroundFocus(None) => focus_clears += 1,
+                other => panic!("unexpected pickup update: {other:?}"),
+            }
+        }
+        assert_eq!((tombstones, focus_clears), (1, 1));
+        peer.snapshot_blackout = false;
+    }
+    let (winner_index, granted) = award.expect("one pickup must commit");
+    assert_eq!(
+        carried[winner_index], 1,
+        "the private award goes to the authoritative owner"
+    );
+    let (winner, loser) = if winner_index == 0 {
+        (&mut first, &mut second)
+    } else {
+        (&mut second, &mut first)
+    };
+    let winner_id = winner.peer.id;
+    winner.transport.disconnect();
+    loser.input.interact = false;
+    harness.pump(&mut [loser], 16);
+    assert!(
+        harness
+            .app
+            .world()
+            .get_entity(actors[winner_index])
+            .is_err()
+    );
+    let loser_index = 1 - winner_index;
+    assert!(loser.peer.latest.as_ref().unwrap().sequence > snapshot_sequences[loser_index]);
+    // Retap the consumed ID after disconnect; do not infer ownership from the
+    // lack of a delta alone. Ask for the loser's authoritative private view.
+    loser.input.interact = true;
+    loser.peer.network.send_message(
+        CHANNEL,
+        InventoryRequest::Resync {
+            session: bootstrap[loser_index][0].session,
+            compartment: CompartmentId(loser.peer.id),
+        }
+        .encode()
+        .unwrap(),
+    );
+    let mut fresh = UdpPeer::new(winner_id, harness.address, harness.now, false);
+    harness.pump(&mut [&mut fresh, loser], 128);
+    let updates = drain(loser);
+    assert_eq!(
+        updates.len(),
+        1,
+        "stale pickup must not give loot to the remaining player"
+    );
+    assert!(matches!(&updates[0].body, UpdateBody::Snapshot(view)
+        if view.version.id == CompartmentId(loser.peer.id)
+        && view.version.revision == 0 && view.items.is_empty()));
+    let updates = drain(&mut fresh);
+    assert_eq!(updates.len(), 3);
+    let fresh_key = updates[0].session;
+    assert_eq!(updates[0].body, UpdateBody::Begin);
+    let old_key = bootstrap[winner_index][0].session;
+    assert_eq!(fresh_key.raid_epoch, old_key.raid_epoch);
+    assert!(fresh_key.session_epoch > old_key.session_epoch);
+    assert!(updates.iter().all(|update| update.session == fresh_key));
+    assert!(matches!(&updates[1].body, UpdateBody::Snapshot(view)
+        if view.version.id == CompartmentId(winner_id)
+        && view.version.revision == 1 && view.items == [(item.id, granted)]));
+    assert_eq!(updates[2].body, expected_ground);
+    println!(
+        "TK GROUND PICKUP UDP id={:?} winner={winner_id} snapshot_loss={}/{} stale_and_reconnect=ok",
+        item.id, first.snapshots_dropped, second.snapshots_dropped
+    );
 }
 
 #[test]

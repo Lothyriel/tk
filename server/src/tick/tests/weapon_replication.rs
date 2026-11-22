@@ -65,9 +65,15 @@ impl Peer {
     }
 
     fn receive(&mut self) {
+        self.receive_with_snapshot_filter(|| true);
+    }
+
+    fn receive_with_snapshot_filter(&mut self, mut keep: impl FnMut() -> bool) {
         // Deliberately consume unreliable data before reliable configuration.
         while let Some(bytes) = self.network.receive_message(DefaultChannel::Unreliable) {
-            self.receiver.snapshot(data::decode(&bytes)).unwrap();
+            if keep() {
+                self.receiver.snapshot(data::decode(&bytes)).unwrap();
+            }
         }
         while let Some(bytes) = self.network.receive_message(CONFIGURATION_CHANNEL) {
             self.configurations += usize::from(matches!(
