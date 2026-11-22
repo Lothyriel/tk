@@ -607,6 +607,47 @@ fn ground_focus_checks_real_cover_reach_and_actor_state() {
     assert_eq!(focus(&mut app, 1.5), None);
 }
 
+#[test]
+fn ground_drop_uses_lateral_fallback_and_rejects_a_blocked_release() {
+    use bevy::ecs::system::RunSystemOnce;
+
+    let (mut app, actor, _) = physical_fixture();
+    app.world_mut()
+        .get_mut::<ClientInput>(actor)
+        .unwrap()
+        .camera = CameraInput::default();
+    let root = app.world().get::<Transform>(actor).unwrap().translation;
+    let release = |app: &mut App| {
+        app.world_mut()
+            .run_system_once(move |sight: inventory::TargetSight| {
+                sight.drop_center(actor, Vec3::splat(0.08), &[])
+            })
+            .unwrap()
+    };
+    let unobstructed = release(&mut app).expect("clear floor ahead");
+    assert!((unobstructed.x - root.x).abs() < 0.01);
+    assert!(unobstructed.z < root.z - 0.8);
+
+    let put_wall = |app: &mut App, distance: f32| {
+        app.world_mut()
+            .spawn((
+                Collider::cuboid(2.0, 0.9, 0.025),
+                Transform::from_translation(root + Vec3::new(0.0, 0.0, -distance)),
+            ))
+            .id()
+    };
+    let wall = put_wall(&mut app, 0.75);
+    steps(&mut app, 3);
+    let fallback = release(&mut app).expect("space on the near side of the wall");
+    assert!(fallback.z - 0.08 > root.z - 0.75 + 0.025);
+    assert!((fallback.x - root.x).abs() > 0.5);
+
+    app.world_mut().entity_mut(wall).despawn();
+    put_wall(&mut app, 0.38);
+    steps(&mut app, 3);
+    assert_eq!(release(&mut app), None);
+}
+
 fn normal_shot(app: &mut App, shooter: Entity, target: Vec3) {
     let t = *app.world().get::<Transform>(shooter).unwrap();
     let eye = t.translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
