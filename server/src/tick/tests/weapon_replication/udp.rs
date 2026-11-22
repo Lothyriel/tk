@@ -184,7 +184,7 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
             ItemInstanceId,
             item_manifest::{S1_SEEDS, item_visuals},
         },
-        replication::inventory::{CHANNEL, InventoryUpdate, UpdateBody},
+        replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
     };
 
     let drain = |peer: &mut UdpPeer| {
@@ -297,6 +297,63 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
             .carried,
         0
     );
+
+    first.input.interact = false;
+    first.input.pickup_focus = None;
+    for revision in [0, 1, 1] {
+        first.peer.network.send_message(
+            CHANNEL,
+            InventoryRequest::Drop {
+                session: initial[0].session,
+                item: item.id,
+                revision,
+            }
+            .encode()
+            .unwrap(),
+        );
+    }
+    harness.pump(&mut [&mut first, &mut late], 96);
+    let updates = drain(&mut first);
+    let removals: Vec<_> = updates
+        .iter()
+        .filter_map(|update| match &update.body {
+            UpdateBody::Delta(deltas) => Some(deltas),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(removals.len(), 1);
+    assert_eq!(removals[0][0].version.revision, 2);
+    assert_eq!(removals[0][0].items[0].id, item.id);
+    assert!(removals[0][0].items[0].item.is_none());
+    let public = drain(&mut late);
+    let [update] = public.as_slice() else {
+        panic!("expected one public ground update: {public:?}")
+    };
+    let UpdateBody::Ground(dropped) = &update.body else {
+        panic!("expected ground update")
+    };
+    assert_eq!(dropped.len(), items.len());
+    let dropped = &dropped[0];
+    assert_eq!((dropped.id, dropped.seed), (item.id, item.seed));
+    assert_eq!(displayed(&first).carried, 0);
+    let visual = &item_visuals()[S1_SEEDS[0]];
+    let center = Vec3::from_array(dropped.root) + Vec3::from_array(visual.collider_center());
+    assert!((center.y - visual.collider_half_extents()[1] - 0.1).abs() < 0.01);
+    let ray = center - (start + Vec3::Y * PLAYER_VIEW_HEIGHT);
+    first.input.camera.pitch = ray.y.atan2(-ray.z);
+    harness.pump(&mut [&mut first, &mut late], 32);
+    let _ = drain(&mut first);
+    first.input.interact = true;
+    first.input.pickup_focus = Some((epoch, item.id));
+    harness.pump(&mut [&mut first, &mut late], 96);
+    assert_eq!(displayed(&first).carried, 1);
+    assert!(
+        drain(&mut first)
+            .iter()
+            .any(|update| matches!(&update.body, UpdateBody::Delta(deltas)
+        if deltas[0].version.revision == 3 && deltas[0].items[0].id == item.id))
+    );
+    assert_eq!(drain(&mut late).len(), 1);
 
     // Stage the player in the exit but keep the normal hold duration and
     // production credit/debrief transitions. No legacy crate was collected.

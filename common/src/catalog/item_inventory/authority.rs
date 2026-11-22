@@ -147,6 +147,46 @@ impl InventoryAuthority {
         .map(Some)
     }
 
+    /// Move an owned instance to a server-selected, empty world slot.
+    pub fn drop_to_world(
+        &mut self,
+        item: ItemInstanceId,
+        owner: VersionedCompartment,
+        slot: CompartmentId,
+    ) -> Result<VersionedCommit, OperationResult> {
+        let unavailable = OperationResult::Rejected(TransactionError::Unavailable);
+        if owner.id == slot
+            || !self
+                .inventory
+                .get(item)
+                .is_some_and(|entry| entry.location.compartment == owner.id)
+            || self
+                .inventory
+                .items
+                .values()
+                .any(|entry| entry.location.compartment == slot)
+        {
+            return Err(unavailable);
+        }
+        let destination = self
+            .inventory
+            .first_fit(item, slot)
+            .map_err(|error| OperationResult::Rejected(TransactionError::Rule(error)))?
+            .ok_or(unavailable)?;
+        let expected = [
+            owner,
+            VersionedCompartment {
+                id: slot,
+                revision: self.revision(slot).ok_or(unavailable)?,
+            },
+        ];
+        self.commit(
+            InventoryAction::Move { item, destination },
+            expected,
+            |id| id == owner.id || id == slot,
+        )
+    }
+
     pub fn apply(
         &mut self,
         session: &mut OperationSession,

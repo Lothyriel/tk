@@ -14,7 +14,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 pub const CHANNEL: u8 = 6;
 pub const MAX_REQUEST_BYTES: usize = 256;
 pub const MAX_UPDATE_BYTES: usize = 16 * 1024;
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 
 #[derive(Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub enum InventoryRequest {
@@ -22,6 +22,11 @@ pub enum InventoryRequest {
     Resync {
         session: SessionKey,
         compartment: CompartmentId,
+    },
+    Drop {
+        session: SessionKey,
+        item: ItemInstanceId,
+        revision: u64,
     },
 }
 

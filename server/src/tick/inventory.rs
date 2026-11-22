@@ -10,7 +10,7 @@ use common::{
         item_grid::{Footprint, Placement, Rotation},
         item_inventory::{
             Condition, GridLocation, Inventory, InventoryAuthority, OperationSession, SessionKey,
-            VersionedCommit,
+            VersionedCommit, VersionedCompartment,
         },
         item_manifest::{S1_SEEDS, item_visuals, planned_items},
     },
@@ -54,7 +54,7 @@ struct Peer {
     operations: OperationSession,
     remaining: u8,
     open: Option<CompartmentId>,
-    ground_count: usize,
+    ground: Vec<GroundItem>,
     focus: Option<ItemInstanceId>,
     pickup_held: bool,
 }
@@ -188,6 +188,66 @@ pub(super) struct TargetSight<'w, 's> {
 }
 
 impl TargetSight<'_, '_> {
+    fn drop_center(&self, entity: Entity, half: Vec3, items: &[WorldItem]) -> Option<Vec3> {
+        let (input, root, movement, participant, pose, body, _) = self.actors.get(entity).ok()?;
+        if participant.status != RaidStatus::Active
+            || !body.alive()
+            || !matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
+        {
+            return None;
+        }
+        let eye = super::simulation::neutral_eye(root, movement);
+        let facing = Quat::from_rotation_y(input.camera.yaw);
+        if !eye.is_finite() || !facing.is_finite() {
+            return None;
+        }
+        let context = self.context.single().ok()?;
+        let shape = Collider::cuboid(half.x, half.y, half.z);
+        let filter = QueryFilter::new()
+            .groups(CollisionGroups::new(Group::ALL, Group::GROUP_1))
+            .exclude_collider(entity)
+            .exclude_sensors();
+        let options = ShapeCastOptions::with_max_time_of_impact(1.0);
+        // Try straight ahead, then either side. Never teleport through a wall
+        // or discard the inventory instance if no supported placement exists.
+        for offset in [
+            Vec3::new(0.0, 0.0, -0.95),
+            Vec3::new(-0.8, 0.0, -0.55),
+            Vec3::new(0.8, 0.0, -0.55),
+        ] {
+            let travel = facing * offset;
+            if context
+                .cast_shape(eye, Quat::IDENTITY, travel, &shape, options, filter)
+                .is_some()
+            {
+                continue;
+            }
+            let start = eye + travel;
+            let down = Vec3::NEG_Y * 2.5;
+            let Some((_, hit)) =
+                context.cast_shape(start, Quat::IDENTITY, down, &shape, options, filter)
+            else {
+                continue;
+            };
+            if !(0.0..=1.0).contains(&hit.time_of_impact)
+                || !hit.details.is_some_and(|details| details.normal1.y > 0.9)
+            {
+                continue;
+            }
+            let center = start + down * hit.time_of_impact + Vec3::Y * 0.003;
+            if items.iter().any(|item| {
+                (center - item.center)
+                    .abs()
+                    .cmplt(half + item.half_extents)
+                    .all()
+            }) {
+                continue;
+            }
+            return Some(center);
+        }
+        None
+    }
+
     fn pickup_input(&self, entity: Entity) -> Option<((u32, ItemInstanceId), bool)> {
         let (input, root, ..) = self.actors.get(entity).ok()?;
         input
@@ -341,7 +401,7 @@ fn process(
                     operations: OperationSession::new(key),
                     remaining: REQUESTS_PER_WINDOW,
                     open: None,
-                    ground_count: 0,
+                    ground: Vec::new(),
                     focus: None,
                     pickup_held: false,
                 },
@@ -352,10 +412,8 @@ fn process(
             }
         }
         let peer = state.peers.get_mut(&client).expect("connected peer");
-        // Static list changes only on spawn and cleanup. Future moves/drops
-        // must track content changes, not just the number of items.
-        if peer.ground_count != state.world_items.len() && server.is_connected(client) {
-            let items = state
+        if server.is_connected(client) {
+            let items: Vec<_> = state
                 .world_items
                 .iter()
                 .map(|item| {
@@ -368,8 +426,10 @@ fn process(
                     }
                 })
                 .collect();
-            send(server, client, peer.key, UpdateBody::Ground(items));
-            peer.ground_count = state.world_items.len();
+            if peer.ground != items {
+                peer.ground.clone_from(&items);
+                send(server, client, peer.key, UpdateBody::Ground(items));
+            }
         }
         let focus = sight.focus(entity, &state.world_items);
         if peer.focus != focus && server.is_connected(client) {
@@ -454,6 +514,54 @@ fn process(
             let open = peer.open;
             let can_access = |id| id == CompartmentId(client) || open == Some(id);
             match InventoryRequest::decode(&bytes) {
+                Ok(InventoryRequest::Drop {
+                    session,
+                    item,
+                    revision,
+                }) if session == key && raid.phase == RaidPhase::Active => {
+                    let owner = CompartmentId(client);
+                    if authority.revision(owner) != Some(revision)
+                        || !authority
+                            .inventory()
+                            .get(item)
+                            .is_some_and(|entry| entry.location.compartment == owner)
+                    {
+                        continue;
+                    }
+                    let Some(index) = state.loot_ids.iter().position(|&id| id == item) else {
+                        continue;
+                    };
+                    let visual = &item_visuals()[S1_SEEDS[index]];
+                    let half_extents = Vec3::from_array(visual.collider_half_extents());
+                    let Some(center) =
+                        sight.drop_center(peer.entity, half_extents, &state.world_items)
+                    else {
+                        continue;
+                    };
+                    let source = CompartmentId(WORLD_SLOT_START + index as u64);
+                    if let Ok(commit) = authority.drop_to_world(
+                        item,
+                        VersionedCompartment {
+                            id: owner,
+                            revision,
+                        },
+                        source,
+                    ) {
+                        state.world_items.push(WorldItem {
+                            id: item,
+                            source,
+                            center,
+                            half_extents,
+                        });
+                        state.world_items.sort_unstable_by_key(|entry| entry.id);
+                        send(
+                            server,
+                            client,
+                            key,
+                            UpdateBody::Delta(commit.project(key, |id| id == owner)),
+                        );
+                    }
+                }
                 Ok(InventoryRequest::Resync {
                     session,
                     compartment,
@@ -532,9 +640,7 @@ mod tests {
     use bevy_renet2::prelude::RenetClient;
     use common::catalog::{
         item_grid::{Placement, Rotation},
-        item_inventory::{
-            InventoryAction, InventoryOperation, OperationResult, VersionedCompartment,
-        },
+        item_inventory::{InventoryAction, InventoryOperation, OperationResult},
     };
 
     #[test]
