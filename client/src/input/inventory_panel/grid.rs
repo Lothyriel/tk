@@ -1683,6 +1683,49 @@ mod tests {
     }
 
     #[test]
+    fn inventory_grid_escape_cancels_split_before_or_after_quantity_choice() {
+        for choose_quantity in [false, true] {
+            let (mut app, _, _) = fixture_with_stacks(true);
+            let revision = app
+                .world()
+                .resource::<State>()
+                .owned_grid(1, 7)
+                .unwrap()
+                .version;
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(KeyCode::ShiftLeft);
+            keys.press(KeyCode::Enter);
+            app.update();
+            if choose_quantity {
+                key(&mut app, KeyCode::Enter);
+                key(&mut app, KeyCode::ArrowDown);
+            }
+            let panel = app.world().resource::<Panel>();
+            assert_eq!(
+                panel.drag.unwrap().split.unwrap().choosing,
+                !choose_quantity
+            );
+            key(&mut app, KeyCode::Escape);
+            let panel = app.world().resource::<Panel>();
+            assert!(panel.open && panel.drag.is_none() && panel.pending.is_none());
+            assert_eq!(
+                app.world()
+                    .resource::<State>()
+                    .owned_grid(1, 7)
+                    .unwrap()
+                    .version,
+                revision
+            );
+            let mut server = RenetServer::new(data::renet_config());
+            server.add_connection(7, false);
+            assert!(transfer(&mut app, &mut server).is_none());
+            key(&mut app, KeyCode::Escape);
+            assert!(!app.world().resource::<Panel>().open);
+        }
+    }
+
+    #[test]
     fn inventory_grid_split_clamps_quantity_and_waits_for_confirmed_stack() {
         let (mut app, mut authority, item) = fixture_with_stacks(true);
         let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
