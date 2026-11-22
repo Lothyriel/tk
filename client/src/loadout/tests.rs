@@ -1,4 +1,117 @@
 use super::*;
+
+/// A layout fixture, not a device test. Inject coordinates into Bevy's
+/// pointer stream; the UI backend, not the test, chooses the click entity.
+#[test]
+fn bench_marker_coordinate_picking_respects_target_scale_and_overlay() {
+    use bevy::{
+        app::HierarchyPropagatePlugin,
+        camera::{ComputedCameraValues, RenderTarget, RenderTargetInfo},
+        picking::{
+            InteractionPlugin, PickingPlugin,
+            events::PointerClick,
+            pointer::{Location, PointerAction, PointerButton, PointerId, PointerInput},
+        },
+        ui::{
+            ComputedUiRenderTargetInfo, ComputedUiTargetCamera, UiGlobalTransform, UiStack,
+            picking_backend::UiPickingPlugin, update::propagate_ui_target_cameras,
+        },
+        window::{PrimaryWindow, WindowRef},
+    };
+
+    #[derive(Resource, Default)]
+    struct Clicks(Vec<Entity>);
+
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        PickingPlugin,
+        InteractionPlugin,
+        UiPickingPlugin,
+        HierarchyPropagatePlugin::<ComputedUiTargetCamera>::new(PostUpdate),
+        HierarchyPropagatePlugin::<ComputedUiRenderTargetInfo>::new(PostUpdate),
+    ))
+    .init_resource::<UiScale>()
+    .init_resource::<UiStack>()
+    .init_resource::<Clicks>()
+    .add_systems(Update, propagate_ui_target_cameras)
+    .add_observer(
+        |event: On<PointerClick>, nodes: Query<(), With<Node>>, mut clicks: ResMut<Clicks>| {
+            // Bevy can also deliver the click to the window backend; this
+            // assertion is about the UI target, distinct from the window.
+            if nodes.contains(event.entity) {
+                clicks.0.push(event.entity);
+            }
+        },
+    );
+
+    let window = app
+        .world_mut()
+        .spawn((Window::default(), PrimaryWindow))
+        .id();
+    let target = RenderTarget::Window(WindowRef::Entity(window));
+    let camera = app
+        .world_mut()
+        .spawn((
+            Camera {
+                computed: ComputedCameraValues {
+                    target_info: Some(RenderTargetInfo {
+                        physical_size: UVec2::new(800, 600),
+                        scale_factor: 2.0,
+                    }),
+                    ..default()
+                },
+                ..default()
+            },
+            target.clone(),
+        ))
+        .id();
+    app.world_mut().spawn(PointerId::Mouse);
+
+    let mut node = |size, pickable| {
+        app.world_mut()
+            .spawn((
+                Node::default(),
+                UiTargetCamera(camera),
+                ComputedNode { size, ..default() },
+                UiGlobalTransform::from_xy(320.0, 240.0),
+                InheritedVisibility::VISIBLE,
+                pickable,
+            ))
+            .id()
+    };
+    let preview = node(Vec2::splat(200.0), Pickable::default());
+    let marker = node(Vec2::splat(42.0), Pickable::default());
+    let label = node(Vec2::splat(20.0), Pickable::IGNORE);
+    app.update();
+    *app.world_mut().resource_mut::<UiStack>() = UiStack {
+        uinodes: vec![preview, marker, label],
+        partition: std::iter::once(0..3).collect(),
+    };
+
+    let location = |position| Location {
+        target: target.normalize(Some(window)).unwrap(),
+        position,
+    };
+    let click_at = |app: &mut App, position| {
+        for action in [
+            PointerAction::Move { delta: Vec2::ZERO },
+            PointerAction::Press(PointerButton::Primary),
+            PointerAction::Release(PointerButton::Primary),
+        ] {
+            app.world_mut().write_message(PointerInput::new(
+                PointerId::Mouse,
+                location(position),
+                action,
+            ));
+            app.update();
+        }
+    };
+    click_at(&mut app, Vec2::new(160.0, 120.0));
+    click_at(&mut app, Vec2::new(180.0, 120.0));
+    assert_eq!(app.world().resource::<Clicks>().0, [marker, preview]);
+}
+
 use bevy_renet2::prelude::RenetServer;
 use common::{
     ClientData, EquipmentSlot,
