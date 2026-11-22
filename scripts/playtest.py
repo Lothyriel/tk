@@ -244,6 +244,8 @@ def main():
     parser.add_argument("--inventory-telemetry", action="store_true",
                         help="Measure application payloads and Linux process RSS during the solo grid route")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
+    parser.add_argument("--combat-hud-checkpoint", action="store_true",
+                        help="Capture two server-confirmed combat HUD states")
     parser.add_argument("--weapon-kit", choices=("compact", "suppressed", "afg"),
                         help="Seed server-owned M4A1 kit and physical magazines for native acceptance")
     parser.add_argument("--configure-weapons", action="store_true",
@@ -272,6 +274,11 @@ def main():
     parser.add_argument("--audio", action="store_true",
                         help="Enable game audio and verify local and spatial playback sinks")
     args = parser.parse_args()
+    if args.combat_hud_checkpoint and not (
+        args.animation_review and args.clients == 2 and args.viewport == (1280, 720)
+        and not (args.video or args.no_capture or args.weapon_debug or args.voxel_loot)
+    ):
+        parser.error("--combat-hud-checkpoint requires --animation-review --clients 2 --viewport 1280x720 with static capture")
     arena = args.arena_solo or args.arena_pvp
     if arena and (args.arena_solo and args.arena_pvp
                   or args.clients != (1 if args.arena_solo else 2)
@@ -327,6 +334,8 @@ def main():
     root = Path(__file__).resolve().parents[1]
     output = (args.output or root / "target" / "playtest").resolve()
     output.mkdir(parents=True, exist_ok=True)
+    if args.combat_hud_checkpoint and any(output.glob("combat-hud-magazine-*.png")):
+        parser.error("--combat-hud-checkpoint needs fresh output for its captures")
     arena_captures = ("arena-eliminated", "arena-respawn", "arena-reentry")
     if args.arena_solo:
         for name in arena_captures:
@@ -419,6 +428,9 @@ def main():
     if args.animation_review:
         assert args.clients == 2, "Animation review requires a real UDP observer"
         env["TK_ANIMATION_REVIEW"] = "1"
+    env.pop("TK_PLAYTEST_COMBAT_HUD_CHECKPOINT", None)
+    if args.combat_hud_checkpoint:
+        env["TK_PLAYTEST_COMBAT_HUD_CHECKPOINT"] = "1"
     if args.weapon_debug:
         env["TK_WEAPON_DEBUG"] = "1"
         env["TK_WEAPON_LOD"] = args.weapon_lod
@@ -454,6 +466,7 @@ def main():
         "requested_viewport": args.viewport,
         "requested_pov_hz": args.pov_hz,
         "video": args.video, "animation_review": args.animation_review,
+        "combat_hud_checkpoint": args.combat_hud_checkpoint,
         "no_capture": args.no_capture, "audio": args.audio,
         "loot_inspect": args.loot_inspect,
         "pet_probe": args.pet_probe,
@@ -758,6 +771,18 @@ def main():
         assert [width, height] == resolution, f"Native viewport changed during the run: {path}"
         evidence.append(f"{name}.png: {width}x{height}, {len(data)} bytes")
     settings["resolution"] = resolution
+    if args.combat_hud_checkpoint:
+        checkpoints = re.findall(
+            r"COMBAT HUD CHECKPOINT (present|absent) item=(\d+) snapshot=(\d+)", client_text)
+        assert [state for state, _, _ in checkpoints] == ["present", "absent"], checkpoints
+        (_, item, first), (_, other, last) = checkpoints
+        assert item == other and 0 < int(first) < int(last), checkpoints
+        for state, _, _ in checkpoints:
+            path = output / f"combat-hud-magazine-{state}.png"
+            data = path.read_bytes()
+            assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, path
+            assert struct.unpack(">II", data[16:24]) == (1280, 720), path
+            evidence.append(f"{path.name}: 1280x720, {len(data)} bytes")
     if args.bench_draft:
         reviewed = re.findall(r"BENCH REVIEW (confirmed|draft|discarded) handle=(\d+) marker=0 focused=true", client_text)
         assert tuple(view for view, _ in reviewed) == bench_views, "Missing or repeated workbench stages"

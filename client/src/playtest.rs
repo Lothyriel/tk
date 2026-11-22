@@ -73,6 +73,14 @@ impl bevy::prelude::Plugin for Plugin {
                 asset_review::camera.after(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(PostUpdate, video::record);
+        if combat_hud_checkpoint() {
+            app.add_systems(
+                Update,
+                capture_combat_hud
+                    .after(ClientSystems::Present)
+                    .after(review_hud),
+            );
+        }
         let stride_bench = matches!(
             std::env::var("TK_PLAYTEST_POV").as_deref(),
             Ok("stop-lean" | "armed-stride")
@@ -93,6 +101,11 @@ impl bevy::prelude::Plugin for Plugin {
     }
 }
 
+fn combat_hud_checkpoint() -> bool {
+    std::env::var_os("TK_PLAYTEST_COMBAT_HUD_CHECKPOINT").is_some()
+        && std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("0")
+}
+
 fn review_hud(driver: Res<Driver>, mut hud: Query<&mut Node, With<crate::hud::RaidHud>>) {
     let observing = driver.step == Step::Pov
         && std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1")
@@ -100,12 +113,56 @@ fn review_hud(driver: Res<Driver>, mut hud: Query<&mut Node, With<crate::hud::Ra
     for mut node in &mut hud {
         // The verbose raid panel covers the hands in portrait review windows.
         // State evidence stays in the route logs; restore ordinary HUD afterward.
-        node.display = if observing || matches!(driver.step, Step::Animation | Step::AssetReview) {
+        node.display = if observing
+            || driver.step == Step::AssetReview
+            || (driver.step == Step::Animation && !combat_hud_checkpoint())
+        {
             Display::None
         } else {
             Display::Flex
         };
     }
+}
+
+fn capture_combat_hud(
+    mut commands: Commands,
+    driver: Res<Driver>,
+    session: Res<ClientSession>,
+    player: Res<PlayerId>,
+    hud: Single<&Text, With<crate::hud::RaidHud>>,
+    mut seen: Local<Option<(common::WeaponInstanceId, bool)>>,
+) {
+    if driver.step != Step::Animation || seen.is_some_and(|(_, complete)| complete) {
+        return;
+    }
+    let Some(actor) = session.local(player.0).filter(|actor| {
+        actor.alive
+            && actor.weapon_slot == common::EquipmentSlot::Primary
+            && actor.mechanics.chambered
+    }) else {
+        return;
+    };
+    let (state, expected) = match (*seen, actor.mechanics.inserted_magazine()) {
+        (None, Some(magazine)) => (
+            "present",
+            format!("Chamber loaded | Magazine {}", magazine.rounds()),
+        ),
+        (Some((id, false)), None)
+            if id == actor.weapon_instance && !actor.mechanics.magazine_inserted =>
+        {
+            ("absent", "Chamber loaded | Magazine absent".into())
+        }
+        _ => return,
+    };
+    if !hud.lines().any(|line| line == expected) {
+        return;
+    }
+    *seen = Some((actor.weapon_instance, state == "absent"));
+    capture(&mut commands, &format!("combat-hud-magazine-{state}"));
+    info!(
+        "COMBAT HUD CHECKPOINT {state} item={} snapshot={}",
+        actor.weapon_instance.0, session.last_sequence
+    );
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
