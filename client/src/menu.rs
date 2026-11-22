@@ -767,7 +767,7 @@ fn present(
     let editable = !pending && editor.editable(&session, id.0);
     ***status = match menu.surface {
         Surface::Lobby => format!(
-            "KIT PREPARATION · {}\n{}\nTab / arrows: select · Enter / Space: activate",
+            "KIT PREPARATION | {}\n{}\nTab / arrows: select | Enter / Space: activate",
             if ready || !editable {
                 mode_name(session.raid.mode)
             } else {
@@ -779,7 +779,7 @@ fn present(
                 "Awaiting confirmed weapon kit".into()
             } else if session.raid.phase == RaidPhase::Countdown {
                 format!(
-                    "Deploying in {:.1}s · Kit locked",
+                    "Deploying in {:.1}s | Kit locked",
                     session.raid.seconds_left
                 )
             } else if ready {
@@ -797,7 +797,7 @@ fn present(
             }
         ),
         Surface::Pause | Surface::ArenaPause => {
-            "LOCAL PAUSE\nServer and dangers continue.\nTab / arrows: select · Enter / Esc: resume"
+            "LOCAL PAUSE\nServer and dangers continue.\nTab / arrows: select | Enter / Esc: resume"
                 .into()
         }
         Surface::ArenaWaiting => {
@@ -818,7 +818,7 @@ fn present(
             }
         }
         Surface::Settings => format!(
-            "LOCAL PREFERENCES\n{}\nTab / arrows: select · Enter / Space: activate",
+            "LOCAL PREFERENCES\n{}\nTab / arrows: select | Enter / Space: activate",
             menu.settings_status
         ),
         Surface::Debrief | Surface::Waiting => {
@@ -826,7 +826,7 @@ fn present(
             let hint = if menu.pending.is_some() {
                 "Awaiting lobby confirmation"
             } else if menu.surface == Surface::Debrief {
-                "Tab / arrows: select · Enter / Space: activate"
+                "Tab / arrows: select | Enter / Space: activate"
             } else if p.status == common::raid::RaidStatus::Waiting {
                 "Raid in progress. Waiting for next lobby."
             } else {
@@ -838,7 +838,7 @@ fn present(
                 "RAID IN PROGRESS"
             };
             format!(
-                "{title}\nResult: {:?} · Secured: {}\n{hint}",
+                "{title}\nResult: {:?} | Secured: {}\n{hint}",
                 p.status, p.secured
             )
         }
@@ -892,16 +892,19 @@ fn present(
                 Action::Quit => "Quit client".into(),
                 Action::Settings => "Preferences".into(),
                 Action::FovLess => {
-                    format!("− Vertical FOV: {}°", menu.settings.unwrap_or_default().fov)
+                    format!(
+                        "- Vertical FOV: {} deg",
+                        menu.settings.unwrap_or_default().fov
+                    )
                 }
                 Action::FovMore => "+ Vertical FOV".into(),
                 Action::MouseLess => format!(
-                    "− Sensitivity: {}%",
+                    "- Sensitivity: {}%",
                     menu.settings.unwrap_or_default().sensitivity_percent
                 ),
                 Action::MouseMore => "+ Sensitivity".into(),
                 Action::ReloadKey => format!(
-                    "Reload key: {} · cycle",
+                    "Reload key: {} (cycle)",
                     menu.settings.unwrap_or_default().reload.label()
                 ),
                 Action::Defaults => "Use defaults in draft".into(),

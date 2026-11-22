@@ -7,6 +7,7 @@ use bevy::{
         mouse::MouseButtonInput,
     },
     prelude::*,
+    render::view::screenshot::{Screenshot, save_to_disk},
     ui::UiGlobalTransform,
     ui_widgets::Button,
     window::{CursorGrabMode, CursorMoved, CursorOptions, PrimaryWindow, WindowEvent},
@@ -57,8 +58,20 @@ impl Probe {
 
 impl Plugin for Probe {
     fn build(&self, app: &mut App) {
+        let mut route = Route::default();
+        if let Some(path) = std::env::var_os("TK_PREFERENCES_SCREENSHOT") {
+            assert_eq!(
+                *self,
+                Self::Keyboard,
+                "Preferences review uses the keyboard probe"
+            );
+            let path = std::path::PathBuf::from(path);
+            assert!(!path.exists(), "Preferences review needs a fresh PNG path");
+            route.preferences = Some(path);
+            route.step = Step::OpenPreferences;
+        }
         app.insert_resource(*self)
-            .init_resource::<Route>()
+            .insert_resource(route)
             .add_systems(Update, drive.after(ClientSystems::Present));
     }
 }
@@ -77,6 +90,8 @@ enum Step {
     CloseAgain,
     Reenter,
     Done,
+    OpenPreferences,
+    CapturePreferences,
 }
 
 impl Step {
@@ -88,7 +103,8 @@ impl Step {
             Self::Ready | Self::ReadyAgain | Self::Reenter => "Ready / deploy",
             Self::Cancel => "Cancel ready",
             Self::Leave => "Leave Arena / return to lobby",
-            Self::Done => return None,
+            Self::OpenPreferences => "Preferences",
+            Self::Done | Self::CapturePreferences => return None,
         })
     }
 
@@ -105,6 +121,7 @@ impl Step {
             BenchAgain => CloseAgain,
             CloseAgain => Reenter,
             Reenter | Done => Done,
+            OpenPreferences | CapturePreferences => CapturePreferences,
         }
     }
 
@@ -116,6 +133,7 @@ impl Step {
             Self::Leave => 3,
             Self::BenchAgain | Self::CloseAgain | Self::Reenter => 4,
             Self::Done => 5,
+            Self::OpenPreferences | Self::CapturePreferences => 0,
         }
     }
 }
@@ -129,6 +147,8 @@ struct Route {
     moved_mouse: bool,
     first_raid: Option<u32>,
     checked_return_focus: bool,
+    preferences: Option<std::path::PathBuf>,
+    capture_requested: bool,
 }
 
 type Widgets<'w, 's> = Query<
@@ -182,6 +202,7 @@ fn key_event(window: Entity, key_code: KeyCode, state: ButtonState) -> KeyboardI
 
 #[allow(clippy::too_many_arguments)] // Separate input and read-only presentation queries.
 fn drive(
+    mut commands: Commands,
     (probe, mut route, time): (Res<Probe>, ResMut<Route>, Res<Time<Real>>),
     (session, player, input, menu): (
         Res<ClientSession>,
@@ -243,6 +264,53 @@ fn drive(
     let Some(actor) = session.local(player.0) else {
         return;
     };
+    if step == CapturePreferences {
+        let path = route.preferences.clone().expect("Preferences capture path");
+        if route.capture_requested {
+            if path.is_file() {
+                info!("PREFERENCES REVIEW saved {}", path.display());
+                exit.write(AppExit::Success);
+            }
+            return;
+        }
+        if presented_button(&widgets, &text, "Apply and save").is_none()
+            || presented_button(&widgets, &text, "Back (discard draft)").is_none()
+            || now - route.since < 0.2
+        {
+            return;
+        }
+        info!(
+            "PREFERENCES REVIEW viewport={}x{} focused={:?}",
+            window.physical_width(),
+            window.physical_height(),
+            menu.focused_widget()
+        );
+        for (entity, children, node, style, routed, outline) in &widgets {
+            if !routed || style.display == Display::None || node.size() == Vec2::ZERO {
+                continue;
+            }
+            let label = children.iter().find_map(|child| text.get(child).ok());
+            let center = layout
+                .get(entity)
+                .map(|transform| *transform * Vec2::ZERO)
+                .ok();
+            info!(
+                "PREFERENCES REVIEW {entity:?} label={label:?} center={center:?} size={:?} outlined={}",
+                node.size(),
+                outline.is_some_and(|outline| outline.color != Color::NONE)
+            );
+        }
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(path));
+        route.capture_requested = true;
+        return;
+    }
+    if step == OpenPreferences
+        && (session.raid.phase != RaidPhase::Lobby || actor.participant.ready)
+    {
+        return;
+    }
     let button = |prefix: &str| {
         presented_button(&widgets, &text, prefix)
             .and_then(|(entity, _, laid_out)| laid_out.then_some(entity))

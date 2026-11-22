@@ -55,9 +55,11 @@ fn main() {
                 && (!playtest || voxel_grid)),
         "run grid review alone or with the no-video solo voxel grid route"
     );
-    let viewport = (playtest || grid_review)
-        .then(playtest::requested_viewport)
-        .flatten();
+    let viewport = (playtest
+        || grid_review
+        || (arena_menu_probe.is_some() && std::env::var_os("TK_PREFERENCES_SCREENSHOT").is_some()))
+    .then(playtest::requested_viewport)
+    .flatten();
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
