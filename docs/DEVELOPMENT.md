@@ -131,6 +131,13 @@ do tronco compatíveis nos checkpoints `prone`, `refused` e `return`. Compare
 os logs e capturas: a geometria da cobertura pode ocultar parte da silhueta.
 O preset não testa queda por lesão nem certifica naturalidade em movimento.
 
+Para o tropeço, use `python scripts/playtest.py --no-build --pov stumble
+--clients 2 --viewport 900x700 --output target/pov-stumble` após coordenar a
+execução. O líder corre contra um obstáculo baixo, mantém a corrida durante
+a retomada sem rearmar o contato e recua em pé. O observador descarta cada
+terceiro snapshot e confirma tropeço, retorno em contato e recuo na ordem.
+O preset não substitui a matriz física de caminhada, degrau e parede.
+
 No relatório `observer_gait` em `run-settings.json`, compare os picos por
 quadro com `peak_support_excursion`: o maior deslocamento desde o primeiro
 quadro de um trecho continuamente carregado (peso > 0,95, pelo menos dois

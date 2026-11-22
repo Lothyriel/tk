@@ -24,6 +24,7 @@ POV_CAPTURES = {
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "armed-stride": ("rest", "walk", "run", "turn", "moving-ads", "return"),
     "prone": ("rest", "prone", "refused", "clear", "return"),
+    "stumble": ("rest", "stumble", "contact", "return"),
     "side-cover": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "handling-route": ("rest", "walk", "run", "stop", "crouch", "left", "right",
                        "neutral", "ads", "moving-ads", "hip", "inspect", "cancel", "return"),
@@ -32,6 +33,7 @@ DUAL_POV = {
     "stop-lean": ("run", "left", "right", "return"),
     "armed-stride": ("turn", "moving-ads", "return"),
     "prone": ("prone", "refused", "return"),
+    "stumble": ("stumble", "contact", "return"),
 }
 
 
@@ -185,7 +187,9 @@ def main():
     if args.pov and (args.animation_review or args.configure_weapons
                      or (args.video and (args.pov != "stop-lean" or args.clients != 1 or args.pov_hz))
                      or (args.clients == 2 and args.pov not in DUAL_POV)):
-        parser.error("--pov is standalone; dual clients require stop-lean, armed-stride or prone. Video requires solo stop-lean without --pov-hz")
+        parser.error("--pov is standalone; the selected preset does not support those options")
+    if args.pov == "stumble" and args.clients != 2:
+        parser.error("stumble requires an observer (--clients 2)")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
     assert not args.clean_art or args.weapon_debug, "--clean-art requires --weapon-debug"
     assert not args.neutral_art or args.clean_art, "--neutral-art requires --clean-art"
@@ -435,6 +439,13 @@ def main():
                     for cue in ("prone", "refused", "return"):
                         expected = "false" if cue == "return" else "true"
                         assert f"POV PRONE {role} {'pov-' if role == 'LEADER' else ''}{cue} prone={expected} " in text
+            if args.pov == "stumble":
+                for role, text, prefix in (("LEADER", client_text, "pov-"), ("PEER", peer_text, "")):
+                    cues = re.findall(rf"POV STUMBLE {role} {prefix}(\S+) mode=(\S+)", text)
+                    expected = [("stumble", "Stumbling"), ("contact", "Standing"), ("return", "Standing")]
+                    if role == "LEADER":
+                        expected.insert(0, ("rest", "Standing"))
+                    assert cues == expected, f"Unexpected stumble checkpoints on {role}: {cues}"
             for name in DUAL_POV[args.pov]:
                 assert f"POV OBSERVER {name} " in peer_text, f"Missing observer cue {name}: {peer}"
                 data = (peer / f"pov-{name}.png").read_bytes()

@@ -155,6 +155,79 @@ pub(super) enum Ads {
 /// ready assembly a short, bounded warm-up before sampling the first pose.
 pub(super) const VIEW_WARMUP_SECONDS: f64 = 1.0;
 
+#[derive(Default)]
+pub(super) struct Stumble {
+    stage: u8,
+    standing_since: f64,
+}
+
+impl Stumble {
+    fn at_block(player: &common::ClientData) -> bool {
+        (7.48..7.80).contains(&player.pos[2])
+    }
+
+    pub(super) fn advance(
+        &mut self,
+        elapsed: f64,
+        ready: bool,
+        player: &common::ClientData,
+    ) -> Result<Option<&'static str>, &'static str> {
+        use common::humanoid::PhysicalMode::{Standing, Stumbling};
+        if self.finished() {
+            return Ok(None);
+        }
+        if elapsed >= 15.0 {
+            return Err("stumble route timed out");
+        }
+        if !ready {
+            return Ok(None);
+        }
+        let mode = player.pose.mode;
+        if !matches!(mode, Standing | Stumbling) || player.pos[2] < 7.48 {
+            return Err("unexpected fall or crossing the stumble obstacle");
+        }
+        let cue = match self.stage {
+            0 if mode == Standing => "pov-rest",
+            1 if mode == Stumbling && Self::at_block(player) => "pov-stumble",
+            2 if mode == Standing && Self::at_block(player) => {
+                self.standing_since = elapsed;
+                self.stage = 3;
+                return Ok(None);
+            }
+            3 if mode == Stumbling => return Err("obstacle triggered again without separation"),
+            3 if elapsed - self.standing_since > 0.9 && Self::at_block(player) => "pov-contact",
+            4 if mode == Standing && player.pos[2] > 8.55 => "pov-return",
+            _ => return Ok(None),
+        };
+        self.stage += 1;
+        Ok(Some(cue))
+    }
+
+    pub(super) fn input(&self, input: &mut common::ClientInput) {
+        input.forward = (1..=3).contains(&self.stage);
+        input.run = input.forward;
+        input.backward = self.stage == 4;
+    }
+
+    pub(super) fn finished(&self) -> bool {
+        self.stage == 5
+    }
+
+    pub(super) fn observe(
+        stage: u8,
+        player: &common::ClientData,
+    ) -> Result<Option<&'static str>, &'static str> {
+        use common::humanoid::PhysicalMode::{Standing, Stumbling};
+        Ok(match (stage, player.pose.mode) {
+            (0, Stumbling) if Self::at_block(player) => Some("stumble"),
+            (1, Standing) if Self::at_block(player) => Some("contact"),
+            (2, Stumbling) => return Err("observer saw a second stumble before separation"),
+            (2, Standing) if player.pos[2] > 8.55 => Some("return"),
+            _ => None,
+        })
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum ProneStage {
     #[default]
@@ -530,6 +603,40 @@ impl Handling {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stumble_bench_requires_one_episode_and_return_on_both_clients() {
+        use common::humanoid::PhysicalMode::{Standing, Stumbling};
+        let mut route = Stumble::default();
+        let mut input = common::ClientInput::default();
+        let mut player = common::ClientData {
+            pos: [0.75, 1.02, 10.0],
+            ..default()
+        };
+        assert_eq!(route.advance(1.0, true, &player), Ok(Some("pov-rest")));
+        route.input(&mut input);
+        assert!(input.forward && input.run);
+        player.pos[2] = 7.62;
+        assert_eq!(route.advance(1.7, true, &player), Ok(None));
+        player.pose.mode = Stumbling;
+        assert_eq!(route.advance(1.8, true, &player), Ok(Some("pov-stumble")));
+        assert_eq!(Stumble::observe(0, &player), Ok(Some("stumble")));
+        player.pose.mode = Standing;
+        assert_eq!(route.advance(2.5, true, &player), Ok(None));
+        assert_eq!(Stumble::observe(1, &player), Ok(Some("contact")));
+        assert_eq!(route.advance(3.0, true, &player), Ok(None));
+        player.pose.mode = Stumbling;
+        assert!(route.advance(3.1, true, &player).is_err());
+        assert!(Stumble::observe(2, &player).is_err());
+        player.pose.mode = Standing;
+        assert_eq!(route.advance(3.5, true, &player), Ok(Some("pov-contact")));
+        route.input(&mut input);
+        assert!(input.backward && !input.forward && !input.run);
+        player.pos[2] = 8.6;
+        assert_eq!(Stumble::observe(2, &player), Ok(Some("return")));
+        assert_eq!(route.advance(4.0, true, &player), Ok(Some("pov-return")));
+        assert!(route.finished());
+    }
 
     #[test]
     fn prone_bench_waits_under_cover_without_replaying_toggle() {

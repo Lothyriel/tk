@@ -23,6 +23,11 @@ pub const POV_PRONE_CANOPY: MapBlock = MapBlock {
     half_size: [1.4, 0.10, 0.35],
     surface: SurfaceKind::Concrete,
 };
+pub const POV_STUMBLE_BLOCK: MapBlock = MapBlock {
+    center: [0.0, 0.32, 6.8],
+    half_size: [1.45, 0.22, 0.45],
+    surface: SurfaceKind::Concrete,
+};
 
 pub fn pov_blocks() -> impl Iterator<Item = MapBlock> {
     pov_fixture()
@@ -32,6 +37,10 @@ pub fn pov_blocks() -> impl Iterator<Item = MapBlock> {
         .chain(
             (std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("prone"))
                 .then_some(POV_PRONE_CANOPY),
+        )
+        .chain(
+            (std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("stumble"))
+                .then_some(POV_STUMBLE_BLOCK),
         )
 }
 
@@ -59,7 +68,8 @@ pub fn pov_fixture() -> bool {
             | "side-cover"
             | "handling-route"
             | "armed-stride"
-            | "prone")
+            | "prone"
+            | "stumble")
     )
 }
 
