@@ -412,6 +412,24 @@ a excursão dos pés/âncoras e o pico de rotação do tórax entre quadros.
 Sem cobertura contínua, a execução retorna erro mesmo se o percurso
 terminar. `measured` indica cobertura, não aceite visual ou de qualidade.
 
+### Primeiros apoios após a recuperação (TAR-97)
+
+Use uma saída nova para a rodada UDP local, sem captura:
+
+```sh
+python scripts/playtest.py --pov recovery-steps --clients 2 --no-capture \
+  --pov-peer-lossless --viewport 600x400 --output "$OUT"
+```
+
+Repita com outra saída e sem `--pov-peer-lossless` para descartar cada
+terceiro snapshot nos dois clientes. A fixture opt-in provoca uma queda;
+o observador registra os dois primeiros apoios alternados após a
+recuperação, para o mesmo ator, raid e vida. `recovery-steps.json` fica
+na saída do cliente observador. Uma lacuna de quadros acima de 50 ms
+interrompe a sonda; passos tardios não substituem os primeiros apoios.
+Um relatório completo mede cobertura e excursão dos pés, não substitui
+a avaliação visual em velocidade normal.
+
 ### Inversão lateral em pé — contrato de telemetria (TAR-97)
 
 Execute em UDP local com dois clientes nativos, sem gravar mídia:
