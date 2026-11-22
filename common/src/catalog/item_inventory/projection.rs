@@ -2,9 +2,9 @@
 use super::*;
 use rkyv::{Archive, Deserialize, Serialize};
 
-const MAX_SNAPSHOT_ITEMS: usize = 256;
+pub(super) const MAX_SNAPSHOT_ITEMS: usize = 256;
 
-#[derive(Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub struct ProjectedItem {
     pub definition: String,
     pub condition: Condition,

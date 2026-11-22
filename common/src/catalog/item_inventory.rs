@@ -17,6 +17,8 @@ mod projection;
 pub use projection::{
     CompartmentDelta, InventorySnapshot, ItemDelta, ProjectedItem, SnapshotError, VersionedCommit,
 };
+mod replica;
+pub use replica::{InventoryReplica, ReplicaUpdate};
 mod transaction;
 pub use transaction::{InventoryAction, InventoryChange, InventoryCommit, TransactionError};
 
