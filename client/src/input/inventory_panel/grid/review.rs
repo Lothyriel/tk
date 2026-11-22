@@ -41,6 +41,9 @@ impl Plugin for GridReview {
             .insert_resource(Output {
                 directory,
                 automated: self.automated,
+                split_quantity: std::env::var("TK_PLAYTEST_GRID_SPLIT")
+                    .ok()
+                    .and_then(|value| value.parse().ok()),
             })
             .add_systems(PostUpdate, observe.after(UiSystems::PostLayout));
         if self.pointer_checkpoint {
@@ -64,6 +67,7 @@ impl Plugin for GridReview {
 struct Output {
     directory: PathBuf,
     automated: bool,
+    split_quantity: Option<u16>,
 }
 
 #[derive(Resource, Default)]
@@ -445,6 +449,14 @@ fn observe(
         else {
             return;
         };
+        // The chooser opens at one; wait for the requested value to be
+        // presented before spending the single screenshot for this state.
+        if output
+            .split_quantity
+            .is_some_and(|requested| requested != value)
+        {
+            return;
+        }
         let mut controls_mask = 0;
         for (node, transform, button) in &quantity_nodes {
             if node.size().min_element() > 0.0 {

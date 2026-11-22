@@ -419,9 +419,9 @@ def main():
                                                and not args.inventory_grid_bench):
         parser.error("--inventory-grid-close-ack requires the plain solo --inventory-grid route")
     if args.inventory_grid_split and not (args.inventory_grid and not (
-        grid_review or args.inventory_grid_bench or args.inventory_grid_close_ack or args.inventory_telemetry
+        args.inventory_grid_bench or args.inventory_grid_close_ack or args.inventory_telemetry
     )):
-        parser.error("--inventory-grid-split requires the plain solo --inventory-grid route")
+        parser.error("--inventory-grid-split requires solo --inventory-grid without benchmark, close/ACK, or telemetry")
     if args.loot_contest and not (
         args.voxel_loot and args.clients == 2 and args.no_capture and not args.video
         and not args.animation_review and not args.audio and not args.configure_weapons and not args.weapon_kit
@@ -976,6 +976,10 @@ def main():
             result = f"GRID CLOSE ACK: {diagnostic['status']} (solo raid completed; see evidence.json)\n"
         elif grid_review:
             assert not review["findings"], "\n".join(review["findings"])
+            if args.inventory_grid_split:
+                assert review["observed"].get("split-quantity", {}).get("split") == {
+                    "item": source, "source_quantity": 3, "quantity": quantity, "min": 1, "max": 2,
+                }, "The submitted split quantity was not observed in the rendered chooser"
             result = "PASS: native UDP raid with partial static grid evidence (see evidence.json)\n"
         else:
             result = f"PASS: native UDP raid without framebuffer capture; audio={args.audio}\n"
