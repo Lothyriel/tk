@@ -766,7 +766,10 @@ fn sync_view_weapon_visibility(
     mut query: Query<(&WeaponViewModel, &Children, &mut Visibility)>,
     mut mesh_roots: Query<&mut Visibility, (With<WeaponMeshRoot>, Without<WeaponViewModel>)>,
 ) {
-    let usable = !panel.is_some_and(|panel| panel.inspection.is_some())
+    // This camera composites after the default UI camera. Keep the equipped
+    // model from covering inventory controls, without disabling the separate
+    // held-item preview on the same camera.
+    let usable = !panel.is_some_and(|panel| panel.open)
         && session.local(id.0).is_none_or(|p| {
             p.body.anatomy.capacity(common::combat::Region::RightArm) > 0.0
                 && match p.pose.mode {
@@ -1041,6 +1044,50 @@ mod view_tests {
                 assert!(transform.rotation().dot(expected).abs() > 0.99999);
                 assert!(transform.translation().distance(eye) < 0.00001);
             }
+        }
+    }
+
+    #[test]
+    fn inventory_panel_hides_equipped_model_and_restores_it_on_close() {
+        let mut app = App::new();
+        app.init_resource::<ClientSession>()
+            .init_resource::<feedback::Feedback>()
+            .init_resource::<crate::input::inventory_panel::Panel>()
+            .insert_resource(PlayerId(7))
+            .add_systems(Update, sync_view_weapon_visibility);
+        app.world_mut().spawn((
+            LocalPlayer,
+            PlayerVisualState {
+                alive: true,
+                weapon: WeaponKind::Rifle,
+                ..default()
+            },
+        ));
+        let root = app
+            .world_mut()
+            .spawn((WeaponMeshRoot, Visibility::Inherited))
+            .id();
+        let view = app
+            .world_mut()
+            .spawn((
+                WeaponViewModel {
+                    weapon: WeaponKind::Rifle,
+                },
+                Visibility::Inherited,
+            ))
+            .add_child(root)
+            .id();
+        for (open, expected) in [
+            (false, Visibility::Inherited),
+            (true, Visibility::Hidden),
+            (false, Visibility::Inherited),
+        ] {
+            app.world_mut()
+                .resource_mut::<crate::input::inventory_panel::Panel>()
+                .open = open;
+            app.update();
+            assert_eq!(app.world().get::<Visibility>(view), Some(&expected));
+            assert_eq!(app.world().get::<Visibility>(root), Some(&expected));
         }
     }
 
