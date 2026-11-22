@@ -21,6 +21,7 @@ pub(crate) struct State {
     resync: BTreeMap<CompartmentId, bool>,
     last_operation: u64,
     pending: Option<InventoryOperation>,
+    last_result: Option<(u64, OperationResult)>,
     ground: Vec<GroundItem>,
     focus: Option<common::catalog::ItemInstanceId>,
 }
@@ -39,6 +40,32 @@ pub(crate) struct OperationFinished {
 }
 
 impl State {
+    pub(crate) fn grid_session(&self) -> Option<SessionKey> {
+        self.session
+    }
+
+    pub(crate) fn outcome(&self, id: u64) -> Option<OperationResult> {
+        self.last_result
+            .filter(|(last, _)| *last == id)
+            .map(|(_, result)| result)
+    }
+
+    pub(crate) fn send_operation(
+        &mut self,
+        client: &mut RenetClient,
+        intent: &Operate,
+    ) -> Option<u64> {
+        let operation = self.operation(intent)?;
+        let bytes = InventoryRequest::Operate(operation).encode().ok()?;
+        if !client.can_send_message(CHANNEL, bytes.len()) {
+            return None;
+        }
+        client.send_message(CHANNEL, bytes);
+        self.last_operation = operation.id;
+        self.pending = Some(operation);
+        Some(operation.id)
+    }
+
     pub(crate) fn owned_grid(&self, raid: u32, client: u64) -> Option<&InventorySnapshot> {
         let id = CompartmentId(client);
         if self.session?.raid_epoch != u64::from(raid) || self.resync.contains_key(&id) {
@@ -138,6 +165,7 @@ impl State {
             UpdateBody::Result { id, result } => {
                 if let Some(request) = self.pending.filter(|request| request.id == id) {
                     self.pending = None;
+                    self.last_result = Some((id, result));
                     if matches!(result, OperationResult::Conflict | OperationResult::Expired) {
                         for version in request.expected {
                             self.resync.entry(version.id).or_insert(false);
@@ -207,17 +235,7 @@ pub(super) fn receive(
         }
     }
     for intent in intents.read() {
-        let Some(operation) = state.operation(intent) else {
-            continue;
-        };
-        let Ok(bytes) = InventoryRequest::Operate(operation).encode() else {
-            continue;
-        };
-        if client.can_send_message(CHANNEL, bytes.len()) {
-            client.send_message(CHANNEL, bytes);
-            state.last_operation = operation.id;
-            state.pending = Some(operation);
-        }
+        state.send_operation(&mut client, intent);
     }
 }
 

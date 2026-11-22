@@ -1,9 +1,10 @@
-//! Keyboard inventory controls. The confirmed replica remains the only item list.
+//! Inventory controls. The confirmed replica remains the only item list.
 use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_renet2::prelude::RenetClient;
 use common::{PlayerId, catalog::ItemInstanceId, replication::inventory::CHANNEL};
 
 use crate::sync::{ClientSession, inventory::State};
+pub(super) mod grid;
 
 #[derive(Default, Resource)]
 pub(crate) struct Panel {
@@ -11,6 +12,9 @@ pub(crate) struct Panel {
     pub consumed_escape: bool,
     pub selected: Option<ItemInstanceId>,
     pub inspection: Option<Inspection>,
+    drag: Option<grid::Drag>,
+    pending: Option<grid::Pending>,
+    feedback: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -25,11 +29,10 @@ pub(super) fn update(
     keys: Res<ButtonInput<KeyCode>>,
     (session, player, time): (Res<ClientSession>, Res<PlayerId>, Res<Time<Real>>),
     window: Single<&Window, With<PrimaryWindow>>,
-    (inventory, client): (Res<State>, ResMut<RenetClient>),
+    (mut inventory, mut client): (ResMut<State>, ResMut<RenetClient>),
     mut panel: ResMut<Panel>,
-    menu: Option<Res<crate::menu::Menu>>,
+    (menu, pointer): (Option<Res<crate::menu::Menu>>, grid::PointerInput),
 ) {
-    let mut client = client;
     panel.consumed_escape = false;
     if !window.focused
         || menu.is_some_and(|menu| menu.paused())
@@ -41,7 +44,7 @@ pub(super) fn update(
         return;
     }
     if panel.open && keys.just_pressed(KeyCode::Escape) {
-        if panel.inspection.take().is_some() {
+        if panel.inspection.take().is_some() || panel.drag.take().is_some() {
             panel.consumed_escape = true;
             return;
         }
@@ -52,17 +55,30 @@ pub(super) fn update(
         return;
     }
     if keys.just_pressed(KeyCode::Tab) {
-        panel.open = !panel.open;
-        panel.selected = None;
-        panel.inspection = None;
-        if !panel.open {
+        if panel.open {
+            *panel = Panel::default();
             return;
         }
+        panel.open = true;
     }
     if !panel.open {
         return;
     }
     let raid = session.raid.raid_id;
+    grid::reconcile(&mut panel, &inventory, raid, player.0);
+    if panel.inspection.is_none()
+        && grid::interact(
+            &mut panel,
+            &mut inventory,
+            &mut client,
+            raid,
+            player.0,
+            &keys,
+            &pointer,
+        )
+    {
+        return;
+    }
     let Some(grid) = inventory
         .owned_grid(raid, player.0)
         .filter(|grid| !grid.items.is_empty())

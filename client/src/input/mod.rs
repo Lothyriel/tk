@@ -21,6 +21,11 @@ impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LocalInput>()
             .init_resource::<inventory_panel::Panel>()
+            .add_systems(Startup, inventory_panel::grid::setup)
+            .add_systems(
+                Update,
+                inventory_panel::grid::present.in_set(ClientSystems::Present),
+            )
             .add_systems(
                 Update,
                 inventory_panel::update

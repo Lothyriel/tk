@@ -123,6 +123,7 @@ the other combatant to the lobby, where a new pair can prepare another duel.
 | I | Inspect; yields to fire, ADS, reload, sprint or weapon switch |
 | F | Collect nearby loot; hold in the exit to extract |
 | Tab / Up / Down / Delete | Open raid inventory, select an item, and request a drop; Tab or Esc closes the panel |
+| Inventory: drag, or Enter / arrows / Enter | Move an item within the backpack grid; **R** rotates the preview and Esc cancels it. Releasing outside the grid cancels without dropping anything. The grid follows server confirmations |
 | I in raid inventory | Hold the selected item up for local inspection. Arrow keys rotate, +/- change viewing distance, R resets, and I or Esc returns to the list |
 | Escape | Close the workbench, inspection or inventory first, or toggle the local pause menu during a raid. Pausing releases the cursor and suppresses local actions; the server and dangers continue |
 | Up / Down arrow | Narrow / widen the field of view |
