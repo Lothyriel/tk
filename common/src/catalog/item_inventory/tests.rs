@@ -1,6 +1,29 @@
 use super::*;
 use crate::catalog::item_grid::Rotation;
 
+#[test]
+fn item_inventory_does_not_merge_open_and_sealed_dressings() {
+    let mut inventory = fixture();
+    let sealed = inventory
+        .insert_seed("med.bandage", Condition::Intact, 1, at(1, 0, 0))
+        .unwrap();
+    let opened = inventory
+        .insert_seed_with_contents(
+            "med.bandage",
+            Condition::Intact,
+            1,
+            at(1, 1, 0),
+            ItemContents::Dressing { sealed: false },
+        )
+        .unwrap();
+    assert_eq!(
+        inventory.merge(opened, sealed),
+        Err(InventoryError::IncompatibleStack)
+    );
+    assert_eq!(inventory.get(opened).unwrap().quantity, 1);
+    assert_eq!(inventory.get(sealed).unwrap().quantity, 1);
+}
+
 fn at(compartment: u64, x: u8, y: u8) -> GridLocation {
     GridLocation {
         compartment: CompartmentId(compartment),

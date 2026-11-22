@@ -3,8 +3,17 @@ use super::*;
 use crate::{catalog::item_manifest, data};
 use rkyv::{Archive, Deserialize, Serialize};
 
-const SCHEMA_VERSION: u16 = 1;
+const LEGACY_SCHEMA: u16 = 1;
+const SCHEMA_VERSION: u16 = 2;
+const MAGIC: &[u8] = b"\xffTKINV\x00";
 const MAX_BYTES: usize = 1024 * 1024;
+
+#[derive(Archive, Serialize, Deserialize)]
+struct ContentDocument {
+    layout: ArchiveDocument,
+    // Same order as layout.items. Never sort them independently.
+    contents: Vec<ItemContents>,
+}
 
 #[derive(Archive, Serialize, Deserialize)]
 struct ArchiveDocument {
@@ -45,7 +54,7 @@ pub enum ArchiveError {
 
 impl Inventory {
     pub fn export_archive(&self) -> Result<bytes::Bytes, ArchiveError> {
-        let bytes = data::encode(&ArchiveDocument {
+        let layout = ArchiveDocument {
             schema_version: SCHEMA_VERSION,
             catalog_revision: item_manifest::REVISION.into(),
             last_id: self.last_id,
@@ -69,11 +78,18 @@ impl Inventory {
                     location: i.location,
                 })
                 .collect(),
+        };
+        let bytes = data::encode(&ContentDocument {
+            layout,
+            contents: self.items.values().map(|item| item.contents).collect(),
         });
-        if bytes.len() > MAX_BYTES {
+        if bytes.len() > MAX_BYTES - MAGIC.len() {
             return Err(ArchiveError::TooLarge);
         }
-        Ok(bytes)
+        let mut framed = Vec::with_capacity(MAGIC.len() + bytes.len());
+        framed.extend_from_slice(MAGIC);
+        framed.extend_from_slice(&bytes);
+        Ok(framed.into())
     }
 
     /// Validate the whole archive in a detached collection before returning it.
@@ -81,11 +97,24 @@ impl Inventory {
         if bytes.len() > MAX_BYTES {
             return Err(ArchiveError::TooLarge);
         }
-        let doc =
-            data::try_decode::<ArchiveDocument>(bytes).map_err(|_| ArchiveError::Malformed)?;
-        if !matches!(doc.schema_version, 0 | SCHEMA_VERSION) {
-            return Err(ArchiveError::UnsupportedSchema(doc.schema_version));
-        }
+        let (doc, contents) = if let Some(payload) = bytes.strip_prefix(MAGIC) {
+            let doc = data::try_decode::<ContentDocument>(payload)
+                .map_err(|_| ArchiveError::Malformed)?;
+            if doc.layout.schema_version != SCHEMA_VERSION {
+                return Err(ArchiveError::UnsupportedSchema(doc.layout.schema_version));
+            }
+            if doc.contents.len() != doc.layout.items.len() {
+                return Err(ArchiveError::Malformed);
+            }
+            (doc.layout, Some(doc.contents))
+        } else {
+            let doc =
+                data::try_decode::<ArchiveDocument>(bytes).map_err(|_| ArchiveError::Malformed)?;
+            if !matches!(doc.schema_version, 0 | LEGACY_SCHEMA) {
+                return Err(ArchiveError::UnsupportedSchema(doc.schema_version));
+            }
+            (doc, None)
+        };
         if doc.catalog_revision != item_manifest::REVISION {
             return Err(ArchiveError::UnknownRevision(doc.catalog_revision));
         }
@@ -97,7 +126,7 @@ impl Inventory {
                 .register_compartment(c.id, size, c.profile)
                 .map_err(|err| ArchiveError::Compartment(c.id, err))?;
         }
-        for i in doc.items {
+        for (index, i) in doc.items.into_iter().enumerate() {
             if i.id.0 == 0 || i.id.0 > doc.last_id || result.items.contains_key(&i.id) {
                 return Err(ArchiveError::InvalidId(i.id));
             }
@@ -108,8 +137,11 @@ impl Inventory {
                 (_, id) => id,
             };
             let invalid = |err| ArchiveError::InvalidItem(i.id, err);
-            let item = ItemInstance::seed(definition, i.condition, i.quantity, i.location)
+            let mut item = ItemInstance::seed(definition, i.condition, i.quantity, i.location)
                 .map_err(invalid)?;
+            if let Some(contents) = &contents {
+                item = item.with_contents(contents[index]).map_err(invalid)?;
+            }
             result.validate_placement(item, None).map_err(invalid)?;
             result.items.insert(i.id, item);
         }
@@ -159,8 +191,9 @@ mod tests {
         unaligned.extend_from_slice(&bytes);
         let mut inventory = Inventory::import_archive(&unaligned[1..]).unwrap();
         let exported = inventory.export_archive().unwrap();
-        let migrated = data::try_decode::<ArchiveDocument>(&exported).unwrap();
-        assert_eq!(migrated.schema_version, SCHEMA_VERSION);
+        let migrated =
+            data::try_decode::<ContentDocument>(exported.strip_prefix(MAGIC).unwrap()).unwrap();
+        assert_eq!(migrated.layout.schema_version, SCHEMA_VERSION);
         let item = inventory.get(ItemInstanceId(4)).unwrap();
         assert_eq!(item.definition.id, "med.bandage");
         assert_eq!(item.condition, fixture.items[0].condition);
@@ -182,6 +215,40 @@ mod tests {
     }
 
     #[test]
+    fn item_archive_roundtrips_contents_and_rejects_incompatible_payload() {
+        let mut inventory = Inventory::default();
+        let compartment = CompartmentId(1);
+        inventory
+            .register_compartment(compartment, Footprint::new(4, 4).unwrap(), None)
+            .unwrap();
+        let location = GridLocation {
+            compartment,
+            placement: Placement {
+                x: 0,
+                y: 0,
+                rotation: Rotation::Upright,
+            },
+        };
+        let water = ItemContents::Water { millilitres: 175 };
+        let id = inventory
+            .insert_seed_with_contents("food.water500", Condition::Intact, 1, location, water)
+            .unwrap();
+        let exported = inventory.export_archive().unwrap();
+        let restored = Inventory::import_archive(&exported).unwrap();
+        assert_eq!(restored.get(id), inventory.get(id));
+        assert_eq!(restored.get(id).unwrap().mass_g(), 205);
+        let mut doc =
+            data::try_decode::<ContentDocument>(exported.strip_prefix(MAGIC).unwrap()).unwrap();
+        doc.contents[0] = ItemContents::EmptyMagazine;
+        let mut invalid = MAGIC.to_vec();
+        invalid.extend_from_slice(&data::encode(&doc));
+        assert!(matches!(
+            Inventory::import_archive(&invalid),
+            Err(ArchiveError::InvalidItem(bad, InventoryError::InvalidContents)) if bad == id
+        ));
+    }
+
+    #[test]
     fn item_archive_rejects_invalid_wire_versions_references_and_geometry() {
         let mut doc = fixture();
         assert!(matches!(
@@ -193,7 +260,7 @@ mod tests {
             Inventory::import_archive(&data::encode(&doc)),
             Err(ArchiveError::UnsupportedSchema(99))
         ));
-        doc.schema_version = SCHEMA_VERSION;
+        doc.schema_version = LEGACY_SCHEMA;
         assert!(matches!(
             Inventory::import_archive(&data::encode(&doc)),
             Err(ArchiveError::InvalidItem(
