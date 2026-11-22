@@ -61,6 +61,9 @@ struct SnapshotLoss {
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
+        if let Some(path) = std::env::var_os("TK_CAMERA_GAP_TRACE") {
+            app.insert_resource(motion::CameraGapTrace::open(path));
+        }
         app.init_resource::<ClientSession>()
             .init_resource::<cover::State>()
             .init_resource::<inventory::State>()

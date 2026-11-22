@@ -4,6 +4,9 @@ use std::collections::VecDeque;
 
 use super::ClientSession;
 
+mod trace;
+pub(super) use trace::CameraGapTrace;
+
 // Two intervals bridge one lost update; the third covers tick/delivery/frame jitter.
 const INTERPOLATION_DELAY: f64 = 3.0 * common::SNAPSHOT_INTERVAL as f64;
 
@@ -33,18 +36,23 @@ pub(crate) struct LocalMotion {
     samples: VecDeque<Sample>,
     clock_offset: Option<f64>,
     last_received: f64,
+    reset_reason: &'static str,
+    record_gap: Option<f64>,
 }
 
 impl LocalMotion {
     pub(crate) fn record(&mut self, time: f32, pose: LocalMotionPose, received: f64, reset: bool) {
         let time = f64::from(time);
-        let reset = reset
-            || self.samples.back().is_some_and(|last| {
-                time <= last.time
-                    || pose.position.distance(last.pose.position) > 4.0
-                    || received - self.last_received > 0.25
-            });
-        if reset {
+        self.record_gap = self.samples.back().map(|_| received - self.last_received);
+        self.reset_reason = match self.samples.back() {
+            _ if reset => "lifecycle",
+            None => "initial",
+            Some(last) if time <= last.time => "server_time",
+            Some(last) if pose.position.distance(last.pose.position) > 4.0 => "position_jump",
+            Some(_) if self.record_gap.is_some_and(|gap| gap > 0.25) => "arrival_gap",
+            Some(_) => "none",
+        };
+        if !matches!(self.reset_reason, "initial" | "none") {
             self.samples.clear();
             self.clock_offset = None;
         }
@@ -59,6 +67,10 @@ impl LocalMotion {
     }
 
     pub(crate) fn sample(&self, now: f64) -> Option<LocalMotionPose> {
+        self.sample_with_mode(now).map(|(pose, _)| pose)
+    }
+
+    fn sample_with_mode(&self, now: f64) -> Option<(LocalMotionPose, &'static str)> {
         let time = now - self.clock_offset? - INTERPOLATION_DELAY;
         let mut previous = self.samples.front()?;
         for next in self.samples.iter().skip(1) {
@@ -68,40 +80,67 @@ impl LocalMotion {
                 use std::f32::consts::{PI, TAU};
                 let phase_delta =
                     (next.pose.stride_phase - previous.pose.stride_phase + PI).rem_euclid(TAU) - PI;
-                return Some(LocalMotionPose {
-                    position: previous.pose.position.lerp(next.pose.position, alpha),
-                    crouch: previous.pose.crouch.lerp(next.pose.crouch, alpha),
-                    prone: previous.pose.prone.lerp(next.pose.prone, alpha),
-                    stride_phase: previous.pose.stride_phase + phase_delta * alpha,
-                    stride_speed: previous
-                        .pose
-                        .stride_speed
-                        .lerp(next.pose.stride_speed, alpha),
-                    ads: previous.pose.ads.lerp(next.pose.ads, alpha),
-                    roll: previous.pose.roll.lerp(next.pose.roll, alpha),
-                    velocity: previous.pose.velocity.lerp(next.pose.velocity, alpha),
-                    acceleration: previous
-                        .pose
-                        .acceleration
-                        .lerp(next.pose.acceleration, alpha),
-                    turn_rate: previous.pose.turn_rate.lerp(next.pose.turn_rate, alpha),
-                });
+                return Some((
+                    LocalMotionPose {
+                        position: previous.pose.position.lerp(next.pose.position, alpha),
+                        crouch: previous.pose.crouch.lerp(next.pose.crouch, alpha),
+                        prone: previous.pose.prone.lerp(next.pose.prone, alpha),
+                        stride_phase: previous.pose.stride_phase + phase_delta * alpha,
+                        stride_speed: previous
+                            .pose
+                            .stride_speed
+                            .lerp(next.pose.stride_speed, alpha),
+                        ads: previous.pose.ads.lerp(next.pose.ads, alpha),
+                        roll: previous.pose.roll.lerp(next.pose.roll, alpha),
+                        velocity: previous.pose.velocity.lerp(next.pose.velocity, alpha),
+                        acceleration: previous
+                            .pose
+                            .acceleration
+                            .lerp(next.pose.acceleration, alpha),
+                        turn_rate: previous.pose.turn_rate.lerp(next.pose.turn_rate, alpha),
+                    },
+                    if time < previous.time {
+                        "hold_oldest"
+                    } else {
+                        "interpolate"
+                    },
+                ));
             }
             previous = next;
         }
         // Never predict through a wall or keep moving during a packet outage.
-        Some(previous.pose)
+        Some((
+            previous.pose,
+            if time > previous.time {
+                "hold_latest"
+            } else {
+                "hold_oldest"
+            },
+        ))
     }
 }
 
 pub(super) fn present_local_motion(
     session: Res<ClientSession>,
+    player: Res<common::PlayerId>,
     time: Res<Time<Real>>,
     mut players: Query<&mut Transform, With<LocalPlayer>>,
+    trace: Option<ResMut<CameraGapTrace>>,
 ) {
-    if let Some(pose) = session.local_motion.sample(time.elapsed_secs_f64()) {
+    if let Some((pose, mode)) = session
+        .local_motion
+        .sample_with_mode(time.elapsed_secs_f64())
+    {
+        let mut written = false;
         for mut transform in &mut players {
             transform.translation = pose.position;
+            written = true;
+        }
+        if written
+            && let Some(mut trace) = trace
+            && session.local(player.0).is_some()
+        {
+            trace.frame(&session, player.0, &time, pose.position, mode);
         }
     }
 }
@@ -114,6 +153,40 @@ mod tests {
     use std::time::Duration;
 
     use crate::{ClientSystems, sync::ClientSession};
+
+    #[test]
+    fn local_camera_motion_reports_hold_and_arrival_gap_reset() {
+        use super::{LocalMotion, LocalMotionPose};
+
+        let mut motion = LocalMotion::default();
+        let record = |motion: &mut LocalMotion, time, received, x| {
+            motion.record(
+                time,
+                LocalMotionPose {
+                    position: Vec3::X * x,
+                    ..default()
+                },
+                received,
+                false,
+            );
+        };
+        record(&mut motion, 1.0, 10.0, 0.0);
+        assert_eq!(motion.reset_reason, "initial");
+        assert_eq!(motion.sample_with_mode(10.0).unwrap().1, "hold_oldest");
+        record(&mut motion, 1.03, 10.03, 1.0);
+        assert_eq!(motion.sample_with_mode(10.06).unwrap().1, "interpolate");
+        let (held, mode) = motion.sample_with_mode(10.29).unwrap();
+        assert_eq!(mode, "hold_latest");
+        assert_eq!(held.position, Vec3::X);
+        assert_eq!(motion.reset_reason, "none");
+
+        record(&mut motion, 1.30, 10.30, 2.0);
+        assert_eq!(motion.reset_reason, "arrival_gap");
+        assert!((motion.record_gap.unwrap() - 0.27).abs() < 1e-6);
+        let (recovered, mode) = motion.sample_with_mode(10.30).unwrap();
+        assert_eq!(mode, "hold_oldest");
+        assert_eq!(recovered.position, Vec3::X * 2.0);
+    }
 
     fn fixture(fps: f64) -> (App, RenetServer, Entity, [Entity; 2]) {
         let mut peer = RenetClient::new(data::renet_config(), false);
