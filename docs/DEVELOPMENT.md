@@ -57,6 +57,23 @@ Procure `ARENA MENU PROBE PASS` no log. Os eventos sintéticos de janela do
 Bevy percorrem o picking por coordenadas no layout real. Não certificam
 dispositivos do SO, legibilidade nem perda UDP. A sonda não registra mídia.
 
+Para revisar apenas a tela de Preferências, a variante abaixo abre o menu
+com Tab/Enter sintéticos em um lobby UDP ainda não pronto. Com o servidor
+local em execução, use um diretório novo e um arquivo de preferências isolado:
+
+```sh
+review=$(mktemp -d /tmp/opencode/tk-preferences.XXXXXX)
+printf '%s\n' '{"ui_scale_percent":125,"volume_percent":50}' > "$review/preferences.json"
+TK_PREFERENCES_PATH="$review/preferences.json" \
+  TK_PLAYTEST_VIEWPORT=1280x720 \
+  TK_PREFERENCES_SCREENSHOT="$review/preferences.png" \
+  cargo run --locked -p client -- --arena-menu-probe=keyboard
+```
+
+Confirme as dimensões do PNG e confira os rótulos, o foco e se Aplicar/Voltar
+estão inteiros. As linhas `PREFERENCES REVIEW` registram o layout; o modo não
+altera nem salva preferências e não certifica dispositivos físicos.
+
 ## Revisão estática da grade
 
 Para automatizar o subconjunto de teclado após integração e coordenação:
