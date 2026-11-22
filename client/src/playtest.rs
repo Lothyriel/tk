@@ -78,7 +78,7 @@ impl bevy::prelude::Plugin for Plugin {
         if combat_hud_checkpoint() {
             app.add_systems(
                 Update,
-                capture_combat_hud
+                (capture_combat_hud, capture_combat_hud_switch)
                     .after(ClientSystems::Present)
                     .after(review_hud),
             );
@@ -169,6 +169,72 @@ fn capture_combat_hud(
     info!(
         "COMBAT HUD CHECKPOINT {state} item={} snapshot={}",
         actor.weapon_instance.0, session.last_sequence
+    );
+}
+
+#[derive(Default)]
+struct HudSwitch {
+    primary: Option<(WeaponInstanceId, u64)>,
+    complete: bool,
+}
+
+fn capture_combat_hud_switch(
+    mut commands: Commands,
+    driver: Res<Driver>,
+    session: Res<ClientSession>,
+    player: Res<PlayerId>,
+    hud: Single<&Text, With<crate::hud::RaidHud>>,
+    mut switch: Local<HudSwitch>,
+) {
+    if driver.step != Step::Animation || switch.complete {
+        return;
+    }
+    let Some(actor) = session.local(player.0).filter(|actor| actor.alive) else {
+        return;
+    };
+    let snapshot = session.last_sequence;
+    if actor.weapon_slot == EquipmentSlot::Primary {
+        switch.primary = Some((actor.weapon_instance, snapshot));
+        return;
+    }
+    let Some((primary, before)) = switch.primary else {
+        return;
+    };
+    if actor.weapon_slot != EquipmentSlot::Sidearm {
+        return;
+    }
+    let chamber = if actor.mechanics.chambered {
+        "loaded"
+    } else {
+        "empty"
+    };
+    let magazine = actor.mechanics.inserted_magazine().map_or_else(
+        || {
+            if actor.mechanics.magazine_inserted {
+                "unknown".into()
+            } else {
+                "absent".into()
+            }
+        },
+        |magazine| magazine.rounds().to_string(),
+    );
+    let header = format!(
+        "{}  |  {:?}",
+        actor.weapon_id.spec().name,
+        actor.mechanics.mode
+    );
+    let rounds = format!("Chamber {chamber} | Magazine {magazine}");
+    assert!(primary != actor.weapon_instance && before < snapshot);
+    assert!(
+        hud.lines().any(|line| line.starts_with(&header)) && hud.lines().any(|line| line == rounds),
+        "HUD does not match the first observed confirmed switch at snapshot {snapshot}: {}",
+        hud.as_str(),
+    );
+    switch.complete = true;
+    capture(&mut commands, "combat-hud-switch");
+    info!(
+        "COMBAT HUD SWITCH from={} to={} before={} snapshot={} chamber={chamber} magazine={magazine}",
+        primary.0, actor.weapon_instance.0, before, snapshot,
     );
 }
 

@@ -460,7 +460,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     output = (args.output or root / "target" / "playtest").resolve()
     output.mkdir(parents=True, exist_ok=True)
-    if args.combat_hud_checkpoint and any(output.glob("combat-hud-magazine-*.png")):
+    if args.combat_hud_checkpoint and any(output.glob("combat-hud-*.png")):
         parser.error("--combat-hud-checkpoint needs fresh output for its captures")
     arena_captures = ("arena-eliminated", "arena-respawn", "arena-reentry")
     if args.arena_solo:
@@ -971,8 +971,18 @@ def main():
         assert [state for state, _, _ in checkpoints] == ["present", "absent"], checkpoints
         (_, item, first), (_, other, last) = checkpoints
         assert item == other and 0 < int(first) < int(last), checkpoints
-        for state, _, _ in checkpoints:
-            path = output / f"combat-hud-magazine-{state}.png"
+        switches = re.findall(
+            r"COMBAT HUD SWITCH from=(\d+) to=(\d+) before=(\d+) snapshot=(\d+) "
+            r"chamber=(loaded|empty) magazine=(\d+|absent|unknown)", client_text)
+        assert len(switches) == 1, switches
+        source, target, before, snapshot, chamber, magazine = switches[0]
+        assert source == item and target != source and 0 < int(before) < int(snapshot), switches
+        settings["combat_hud_switch"] = {
+            "from_item": int(source), "to_item": int(target), "before_snapshot": int(before),
+            "snapshot": int(snapshot), "chamber": chamber, "magazine": magazine,
+        }
+        for name in ("combat-hud-magazine-present", "combat-hud-magazine-absent", "combat-hud-switch"):
+            path = output / f"{name}.png"
             data = path.read_bytes()
             assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, path
             width, height = struct.unpack(">II", data[16:24])
