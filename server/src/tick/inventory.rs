@@ -189,7 +189,12 @@ pub(super) struct TargetSight<'w, 's> {
 }
 
 impl TargetSight<'_, '_> {
-    fn drop_center(&self, entity: Entity, half: Vec3, items: &[WorldItem]) -> Option<Vec3> {
+    pub(super) fn drop_center(
+        &self,
+        entity: Entity,
+        half: Vec3,
+        items: &[WorldItem],
+    ) -> Option<Vec3> {
         let (input, root, movement, participant, pose, body, _) = self.actors.get(entity).ok()?;
         if participant.status != RaidStatus::Active
             || !body.alive()
