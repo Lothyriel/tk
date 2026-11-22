@@ -33,11 +33,12 @@ impl bevy::prelude::Plugin for Plugin {
 }
 
 #[derive(Component)]
-struct Preview {
-    raid: u32,
-    item: ItemInstanceId,
+pub(crate) struct Preview {
+    pub(crate) raid: u32,
+    pub(crate) item: ItemInstanceId,
+    pub(crate) yaw_steps: i8,
     asset: String,
-    model: Entity,
+    pub(crate) model: Entity,
     arm: [Entity; 3],
 }
 
@@ -45,7 +46,7 @@ fn present(
     mut commands: Commands,
     (session, id, panel, inventory): (Res<ClientSession>, Res<PlayerId>, Res<Panel>, Res<State>),
     camera: Single<(Entity, &Projection), With<ViewModelCamera>>,
-    previews: Query<(Entity, &Preview)>,
+    mut previews: Query<(Entity, &mut Preview)>,
     (mut hands, mut meshes, mut materials): (
         ResMut<HandAssets>,
         ResMut<Assets<Mesh>>,
@@ -87,13 +88,14 @@ fn present(
         Some((inspect, visual, held_pose(inspect, visual, aspect, side)?))
     });
     let mut reused = false;
-    for (entity, preview) in &previews {
+    for (entity, mut preview) in &mut previews {
         if !reused
             && let Some((inspect, visual, (model, arm))) = active
             && preview.raid == raid
             && preview.item == inspect.item
             && preview.asset == visual.asset_key
         {
+            preview.yaw_steps = inspect.yaw_steps;
             commands.entity(preview.model).insert(model);
             for (entity, pose) in preview.arm.into_iter().zip(arm) {
                 commands.entity(entity).insert(pose);
@@ -142,6 +144,7 @@ fn present(
         commands.entity(root).insert(Preview {
             raid,
             item: inspect.item,
+            yaw_steps: inspect.yaw_steps,
             asset: visual.asset_key.clone(),
             model: mesh,
             arm,

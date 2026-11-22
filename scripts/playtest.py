@@ -118,6 +118,7 @@ def main():
     parser.add_argument("--arena-pvp", action="store_true",
                         help="Verify both PvP respawns and a disconnect with two rendered clients")
     parser.add_argument("--voxel-loot", action="store_true", help="Exercise the six voxel loot seeds instead of collecting legacy crates")
+    parser.add_argument("--loot-inspect", action="store_true", help="With --voxel-loot, capture three static in-hand views of each confirmed item")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
     parser.add_argument("--weapon-kit", choices=("compact", "suppressed", "afg"),
                         help="Seed server-owned M4A1 kit and physical magazines for native acceptance")
@@ -150,6 +151,8 @@ def main():
                   or args.weapon_kit or args.configure_weapons or args.video
                   or args.clean_art or args.audio):
         parser.error("Arena routes require the matching client count (solo=1, PvP=2) and no other review mode")
+    if args.loot_inspect and (not args.voxel_loot or args.no_capture or args.video):
+        parser.error("--loot-inspect requires --voxel-loot and static captures (no --no-capture or --video)")
     if args.voxel_loot and args.pov:
         parser.error("--voxel-loot requires the full raid route")
     if args.viewport and not (args.pov or arena or args.clean_art or args.no_capture):
@@ -200,6 +203,9 @@ def main():
         for directory in (output, output / "peer"):
             for seed in range(6):
                 (directory / f"loot-ground-{seed}.png").unlink(missing_ok=True)
+                if args.loot_inspect:
+                    for view in ("front", "side", "back"):
+                        (directory / f"loot-held-{seed}-{view}.png").unlink(missing_ok=True)
     if not args.no_build:
         # Isolated executable outputs never overwrite a player's running Windows binary.
         for binary in ("server", "client"):
@@ -211,6 +217,9 @@ def main():
     env.pop("TK_PLAYTEST_VOXEL_LOOT", None)
     if args.voxel_loot:
         env["TK_PLAYTEST_VOXEL_LOOT"] = "1"
+    env.pop("TK_PLAYTEST_LOOT_INSPECT", None)
+    if args.loot_inspect:
+        env["TK_PLAYTEST_LOOT_INSPECT"] = "1"
     env.pop("TK_PLAYTEST_WEAPON_KIT", None)
     if args.weapon_kit:
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
@@ -272,6 +281,7 @@ def main():
         "requested_pov_hz": args.pov_hz,
         "video": args.video, "animation_review": args.animation_review,
         "no_capture": args.no_capture, "audio": args.audio,
+        "loot_inspect": args.loot_inspect,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "clean_art": args.clean_art,
         "art_lighting": "neutral white, cast shadows disabled" if args.neutral_art else "raid",
@@ -461,6 +471,12 @@ def main():
         ), "Discard did not preserve each acquired instance"
         assert sum(action == "retained" for action, _, _ in records) == args.clients
         assert "collected loot" not in server_text, "Voxel route collected a legacy crate"
+        if args.loot_inspect:
+            inspected = re.findall(r"VOXEL INSPECT seed=(\d+) id=(\d+) view=(front|side|back)", "\n".join(loot_logs))
+            expected = [(seed, item, view)
+                        for action, seed, item in records if action != "dropped"
+                        for view in ("front", "side", "back")]
+            assert sorted(inspected) == sorted(expected), f"Missing or mismatched inspection evidence: {inspected}"
     milestones = ("extracted; secured=1", "debrief") if args.voxel_loot else (
         "collected loot", "extracted; secured=1", "debrief"
     )
@@ -508,6 +524,14 @@ def main():
             width, height = struct.unpack(">II", data[16:24])
             assert width >= 600 and height >= 400, f"Invalid capture: {path}"
             evidence.append(f"{path.relative_to(output)}: {width}x{height}, {len(data)} bytes")
+            if args.loot_inspect:
+                for view in ("front", "side", "back"):
+                    held = directory / f"loot-held-{seed}-{view}.png"
+                    data = held.read_bytes()
+                    assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000, f"Missing held-item capture: {held}"
+                    width, height = struct.unpack(">II", data[16:24])
+                    assert width >= 600 and height >= 400, f"Invalid capture: {held}"
+                    evidence.append(f"{held.relative_to(output)}: {width}x{height}, {len(data)} bytes")
     (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
     if args.clients == 2:
         names = ["pose-idle", "pose-walk", "pose-run", "pose-strafe", "pose-crouch", "pose-jump", "pose-land", "pose-stop",

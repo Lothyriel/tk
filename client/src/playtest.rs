@@ -234,6 +234,7 @@ struct PlaytestState<'w> {
     driver: ResMut<'w, Driver>,
     inventory: Res<'w, crate::sync::inventory::State>,
     network: ResMut<'w, bevy_renet2::prelude::RenetClient>,
+    inventory_panel: ResMut<'w, crate::input::inventory_panel::Panel>,
 }
 
 type AcceptedViewModels<'w, 's> = Query<
@@ -255,6 +256,15 @@ struct PlaytestLenses<'w, 's> {
     view: Single<'w, 's, &'static Projection, With<crate::render::ViewModelCamera>>,
     configured: AcceptedViewModels<'w, 's>,
     poses: Res<'w, crate::render::actors::PoseCache>,
+    inspected: Query<
+        'w,
+        's,
+        (
+            &'static crate::render::item_inspection::Preview,
+            &'static InheritedVisibility,
+        ),
+    >,
+    inspection_mesh: Query<'w, 's, &'static Children, With<crate::render::voxel::VoxelModel>>,
 }
 
 type PlaytestAudio = Or<(
@@ -279,6 +289,7 @@ fn drive(
         mut driver,
         inventory,
         mut network,
+        mut inventory_panel,
     } = state;
     let now = time.elapsed_secs_f64();
     let lens = |view: bool| {
@@ -903,8 +914,10 @@ fn drive(
         }
         Step::Loot => {
             if voxel_loot::enabled() {
+                let inspect = voxel_loot::inspection_enabled();
+                let timeout = if inspect { 75.0 } else { 55.0 };
                 assert!(
-                    now - driver.since < 55.0 && p.status == RaidStatus::Active,
+                    now - driver.since < timeout && p.status == RaidStatus::Active,
                     "voxel loot route failed: {:?}, position={:?}, status={:?}",
                     driver.voxel_loot,
                     local.pos,
@@ -916,6 +929,13 @@ fn drive(
                     &inventory,
                     &mut network,
                     (session.raid.raid_id, peer, now),
+                    inspect.then(|| {
+                        let shown = projections.inspected.iter().find_map(|(view, visible)| {
+                            (visible.get() && projections.inspection_mesh.get(view.model).is_ok())
+                                .then_some((view.raid, view.item, view.yaw_steps))
+                        });
+                        (&mut *inventory_panel, shown)
+                    }),
                 ) {
                     assert!(
                         session
@@ -928,6 +948,9 @@ fn drive(
                 }
                 if let Some(seed) = driver.voxel_loot.take_capture() {
                     capture(&mut commands, &format!("loot-ground-{seed}"));
+                }
+                if let Some(name) = driver.voxel_loot.take_inspection_capture() {
+                    capture(&mut commands, &name);
                 }
             } else if p.carried == 1 {
                 assert!(!session.raid.loot_available[loot_index]);

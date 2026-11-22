@@ -14,7 +14,7 @@ mod dot_sight;
 pub(crate) mod feedback;
 mod ground_items;
 pub(crate) mod item_icons;
-mod item_inspection;
+pub(crate) mod item_inspection;
 pub(crate) mod shot_audio;
 pub(crate) mod voxel;
 mod weapons;
