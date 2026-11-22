@@ -75,6 +75,20 @@ pub(super) struct Endpoint {
     loot_ids: BTreeMap<ItemInstanceId, usize>,
 }
 
+#[cfg(test)]
+impl Endpoint {
+    pub(super) fn fixture_snapshot(
+        &self,
+        id: CompartmentId,
+    ) -> common::catalog::item_inventory::InventorySnapshot {
+        self.authority
+            .as_ref()
+            .unwrap()
+            .snapshot(id, |candidate| candidate == id)
+            .unwrap()
+    }
+}
+
 impl std::fmt::Debug for Endpoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InventoryEndpoint")

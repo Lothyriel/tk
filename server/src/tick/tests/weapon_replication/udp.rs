@@ -1326,6 +1326,155 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
 
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn inventory_udp_reconnect_resyncs_committed_split_without_replay() {
+    use super::super::super::inventory::UdpInventoryFixture;
+    use common::{
+        catalog::{
+            CompartmentId,
+            item_grid::{Footprint, Placement, Rotation},
+            item_inventory::{
+                Condition, GridLocation, Inventory, InventoryAction, InventoryOperation,
+            },
+        },
+        replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+    };
+
+    let mut harness = Harness::new();
+    let mut peer = UdpPeer::new(7, harness.address, harness.now, false);
+    harness.pump(&mut [&mut peer], 192);
+    let own = CompartmentId(7);
+    let at = |x| GridLocation {
+        compartment: own,
+        placement: Placement {
+            x,
+            y: 0,
+            rotation: Rotation::Upright,
+        },
+    };
+    let mut inventory = Inventory::default();
+    inventory
+        .register_compartment(own, Footprint::new(4, 4).unwrap(), None)
+        .unwrap();
+    let item = inventory
+        .insert_seed("med.bandage", Condition::Intact, 3, at(0))
+        .unwrap();
+    harness
+        .app
+        .insert_resource(UdpInventoryFixture(1, Some(inventory)));
+    peer.input.lobby_sequence = 1;
+    harness.pump(&mut [&mut peer], 600);
+    assert_eq!(
+        harness.app.world().resource::<RaidState>().phase,
+        RaidPhase::Active
+    );
+
+    let drain = |peer: &mut UdpPeer| {
+        std::iter::from_fn(|| peer.peer.network.receive_message(CHANNEL))
+            .map(|bytes| InventoryUpdate::decode(&bytes).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let [begin, update]: [InventoryUpdate; 2] = drain(&mut peer)
+        .into_iter()
+        .filter(|update| update.session.raid_epoch == 1)
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+    let old_session = begin.session;
+    assert_eq!(begin.body, UpdateBody::Begin);
+    assert_eq!(update.session, old_session);
+    let UpdateBody::Snapshot(initial) = update.body else {
+        panic!("expected private snapshot")
+    };
+    assert_eq!(initial.version.id, own);
+    assert_eq!(initial.items.len(), 1);
+    let (source_id, source) = &initial.items[0];
+    assert_eq!(
+        (*source_id, source.quantity, source.placement),
+        (item, 3, at(0).placement)
+    );
+    let request = InventoryRequest::Operate(InventoryOperation {
+        session: old_session,
+        id: 1,
+        expected: [initial.version; 2],
+        action: InventoryAction::Split {
+            item,
+            quantity: 1,
+            destination: at(1),
+        },
+    });
+    peer.peer
+        .network
+        .send_message(CHANNEL, request.encode().unwrap());
+    harness.step(&mut [&mut peer]);
+
+    // The harness sends the server's replies after its tick, and doesn't
+    // receive them at the peer until another step. Disconnect at that boundary.
+    let snapshot = |harness: &Harness| {
+        harness
+            .app
+            .world()
+            .resource::<WorldState>()
+            .inventory
+            .fixture_snapshot(own)
+    };
+    let committed = snapshot(&harness);
+    assert_eq!(committed.version.revision, initial.version.revision + 1);
+    assert_eq!(committed.items.len(), 2);
+    for (id, stack) in &committed.items {
+        let mut expected = source.clone();
+        expected.quantity = if *id == item { 2 } else { 1 };
+        expected.placement = at(u8::from(*id != item)).placement;
+        assert_eq!(stack, &expected);
+    }
+    assert!(committed.items.iter().any(|(id, _)| *id == item));
+    assert!(
+        drain(&mut peer).is_empty(),
+        "old peer has not received its reply"
+    );
+    peer.transport.disconnect();
+    drop(peer);
+    harness.pump(&mut [], 16);
+    assert!(
+        !harness
+            .app
+            .world()
+            .resource::<Lobby>()
+            .players
+            .contains_key(&7)
+    );
+
+    let mut fresh = UdpPeer::new(7, harness.address, harness.now, false);
+    harness.pump(&mut [&mut fresh], 128);
+    assert!(fresh.transport.is_connected());
+    let [begin, update]: [InventoryUpdate; 2] = drain(&mut fresh).try_into().unwrap();
+    let session = begin.session;
+    assert_eq!(begin.body, UpdateBody::Begin);
+    assert_eq!(session.raid_epoch, old_session.raid_epoch);
+    assert!(session.session_epoch > old_session.session_epoch);
+    assert_eq!(update.session, session);
+    assert_eq!(update.body, UpdateBody::Snapshot(snapshot(&harness)));
+
+    fresh.peer.network.send_message(
+        CHANNEL,
+        InventoryRequest::Resync {
+            session,
+            compartment: own,
+        }
+        .encode()
+        .unwrap(),
+    );
+    harness.pump(&mut [&mut fresh], 16);
+    let [update]: [InventoryUpdate; 1] = drain(&mut fresh).try_into().unwrap();
+    assert_eq!(update.session, session);
+    assert_eq!(snapshot(&harness), committed);
+    assert_eq!(update.body, UpdateBody::Snapshot(committed));
+    println!(
+        "TK INVENTORY UDP split committed before disconnect; same-ID reconnect resynced 2+1 units without replay"
+    );
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn inventory_udp_contested_item_converges_under_loss() {
     use super::super::super::inventory::{OpenContainer, UdpInventoryFixture};
     use common::{
