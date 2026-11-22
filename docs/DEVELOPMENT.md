@@ -90,10 +90,12 @@ TK_PLAYTEST_VIEWPORT=1280x720 TK_LOBBY_REVIEW_SCALE=2 \
   cargo run --locked -p client -- --arena-menu-probe=keyboard
 ```
 
-Procure `LOBBY REVIEW PASS`. Essa sonda estática não envia input nem
-captura mídia; verifica o status, os dez botões e rótulos, e o contorno de
-foco em Ready. Use `TK_LOBBY_REVIEW_SCALE=1.25` para comparar. A escala
-transitória não altera o arquivo de preferências.
+Procure `LOBBY REVIEW PASS`. Mantenha a janela focada: a sonda usa Tab
+sintético do Bevy para passar pelos dez botões do lobby desmarcado e voltar
+a Ready, conferindo o contorno de foco e os limites sem enviar comandos
+de lobby. Não captura mídia nem certifica dispositivos físicos. Use
+`TK_LOBBY_REVIEW_SCALE=1.25` para comparar. A escala transitória não altera
+o arquivo de preferências.
 
 Para revisar apenas a tela de Preferências, a variante abaixo abre o menu
 com Tab/Enter sintéticos em um lobby UDP ainda não pronto. Com o servidor
