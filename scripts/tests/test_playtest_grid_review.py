@@ -7,6 +7,30 @@ from scripts.playtest import grid_review_evidence
 
 
 class GridReviewEvidenceTests(unittest.TestCase):
+    def test_inspection_requires_same_target_and_all_ordered_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 1280, 720)
+            def grid(state):
+                (output / f"grid-{state}.png").write_bytes(header)
+                return f"GRID REVIEW {state} 1280x720 ui_scale=1 revision=4 items=2 layout=inside\n"
+
+            log = grid("idle") + grid("hover") + grid("context")
+            log += "GRID POINTER hover/context observed for item=1 revision=4\n"
+            for stage in ("open", "orbit", "zoom", "reset"):
+                (output / f"inspect-{stage}.png").write_bytes(header)
+                log += f"GRID INSPECT {stage} item=1 revision=4 asset=bandage\n"
+            log += "GRID INSPECT closed via Escape; resuming keyboard route\n" + grid("drag-valid")
+
+            def review(text):
+                return grid_review_evidence(output, text, (1280, 720), 1, True, True)
+
+            self.assertEqual(review(log)["findings"], [])
+            self.assertTrue(review(log.replace("zoom item=1", "zoom item=2"))["findings"])
+            self.assertTrue(review(log.replace("GRID INSPECT reset", "GRID INSPECT orbit"))["findings"])
+            (output / "inspect-reset.png").unlink()
+            self.assertIn("inspect-reset.png: expected (1280, 720), got None", review(log)["findings"])
+
     def test_pointer_checkpoint_requires_observed_frames_and_escape_before_drag(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)

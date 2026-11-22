@@ -16,9 +16,14 @@ fn main() {
     let arena_menu_probe = playtest::arena_menu::Probe::requested();
     let grid_pointer =
         std::env::args().any(|argument| argument == "--inventory-grid-pointer-checkpoint");
+    let grid_inspect = std::env::args().any(|argument| argument == "--inventory-grid-inspect");
     let grid_review =
         grid_pointer || std::env::args().any(|argument| argument == "--inventory-grid-review");
     let voxel_grid = playtest && std::env::var_os("TK_PLAYTEST_INVENTORY_GRID").is_some();
+    assert!(
+        !grid_inspect || (grid_pointer && voxel_grid),
+        "grid inspection requires the solo pointer review route"
+    );
     assert!(
         !voxel_grid
             || (std::env::var_os("TK_PLAYTEST_VOXEL_LOOT").is_some()
@@ -98,6 +103,7 @@ fn main() {
         app.add_plugins(input::inventory_panel::GridReview {
             automated: voxel_grid,
             pointer_checkpoint: grid_pointer,
+            inspect: grid_inspect,
         });
     }
     app.run();

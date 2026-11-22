@@ -14,9 +14,12 @@ use bevy::{
 
 use super::*;
 
+mod inspect;
+
 pub(crate) struct GridReview {
     pub automated: bool,
     pub pointer_checkpoint: bool,
+    pub inspect: bool,
 }
 
 impl Plugin for GridReview {
@@ -43,6 +46,7 @@ impl Plugin for GridReview {
         if self.pointer_checkpoint {
             app.insert_resource(PointerRoute {
                 close_context: self.automated,
+                inspect: self.inspect.then_some(inspect::Route::default()),
                 ..default()
             })
             .add_systems(
@@ -73,6 +77,7 @@ pub(crate) struct PointerRoute {
     finished: bool,
     close_context: bool,
     escape_pressed: bool,
+    inspect: Option<inspect::Route>,
     saved_window_state: Option<InternalWindowState>,
 }
 
@@ -116,6 +121,7 @@ fn pointer_checkpoint(
         MessageWriter<MouseButtonInput>,
         MessageWriter<KeyboardInput>,
     ),
+    (mut commands, output, previews): (Commands, Res<Output>, inspect::Previews),
 ) {
     if route.finished {
         return;
@@ -133,10 +139,13 @@ fn pointer_checkpoint(
     if let Some((_, _, _, started)) = route.target {
         assert!(
             now - started < 8.0,
-            "GRID POINTER checkpoint timed out before observing hover and context"
+            "GRID POINTER checkpoint timed out before completing its review"
         );
     }
-    if !window.1.focused || !panel.open || panel.inspection.is_some() || !session.playing(player.0)
+    if !window.1.focused
+        || !panel.open
+        || (route.inspect.is_none() && panel.inspection.is_some())
+        || !session.playing(player.0)
     {
         return;
     }
@@ -149,19 +158,44 @@ fn pointer_checkpoint(
     let Some(key) = inventory.grid_session() else {
         return;
     };
-    let (node, transform, cursor) = *board;
-    if node.size().min_element() <= 0.0 {
-        return;
-    }
     let Some((id, item)) = grid.items.first() else {
         return;
     };
+    let (node, transform, cursor) = *board;
+    if route.target.is_none() && node.size().min_element() <= 0.0 {
+        return;
+    }
     let (old_key, version, target, _) = *route.target.get_or_insert((key, grid.version, *id, now));
     assert_eq!(
         (key, grid.version, *id),
         (old_key, version, target),
         "inventory changed during GRID POINTER checkpoint"
     );
+    let pressed = route.pressed;
+    if observed.0.contains("context")
+        && let Some(inspect) = &mut route.inspect
+    {
+        if inspect.awaiting_activation() {
+            assert!(pressed && observed.0.contains("hover"));
+            info!(
+                "GRID POINTER hover/context observed for item={} revision={} (synthetic Bevy input)",
+                target.0, version.revision
+            );
+        }
+        route.finished = inspect.drive(
+            &mut commands,
+            &output,
+            &mut keyboard,
+            window.0,
+            &panel,
+            (session.raid.raid_id, key, version, target, item),
+            &previews,
+        );
+        return;
+    }
+    if panel.inspection.is_some() || node.size().min_element() <= 0.0 {
+        return;
+    }
     let escape = |state| KeyboardInput {
         key_code: KeyCode::Escape,
         logical_key: Key::Escape,

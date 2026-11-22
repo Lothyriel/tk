@@ -42,6 +42,12 @@ pub(crate) struct Preview {
     arm: [Entity; 3],
 }
 
+impl Preview {
+    pub(crate) fn model_entity(&self) -> Entity {
+        self.model
+    }
+}
+
 fn present(
     mut commands: Commands,
     (session, id, panel, inventory): (Res<ClientSession>, Res<PlayerId>, Res<Panel>, Res<State>),

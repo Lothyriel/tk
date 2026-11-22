@@ -58,7 +58,7 @@ pub(crate) struct VoxelModel {
 }
 
 #[derive(Component)]
-struct VoxelInstance {
+pub(crate) struct VoxelInstance {
     source: VoxelModel,
     content: Entity,
     surfaces: Vec<Entity>,

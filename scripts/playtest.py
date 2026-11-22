@@ -164,7 +164,16 @@ def parse_viewport(value):
     raise argparse.ArgumentTypeError("expected WIDTHxHEIGHT between 600x400 and 3840x2160")
 
 
-def grid_review_evidence(directory, client_log, viewport, scale, pointer_checkpoint=False):
+def png_dimensions(path):
+    if path.is_file():
+        with path.open("rb") as stream:
+            header = stream.read(24)
+        if len(header) == 24 and header[:16] == b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR":
+            return struct.unpack(">II", header[16:24])
+    return None
+
+
+def grid_review_evidence(directory, client_log, viewport, scale, pointer_checkpoint=False, inspect=False):
     states = ("idle", "drag-valid", "drag-invalid", "pending", "hover", "context")
     observed = {}
     findings = []
@@ -181,15 +190,7 @@ def grid_review_evidence(directory, client_log, viewport, scale, pointer_checkpo
             continue
         size = (int(width), int(height))
         path = directory / f"grid-{state}.png"
-        header = b""
-        if path.is_file():
-            with path.open("rb") as stream:
-                header = stream.read(24)
-        png_size = (
-            struct.unpack(">II", header[16:24])
-            if len(header) == 24 and header[:16] == b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-            else None
-        )
+        png_size = png_dimensions(path)
         observed[state] = {
             "viewport": size, "ui_scale": float(actual_scale), "revision": int(revision),
             "items": int(items), "layout": layout, "png_size": png_size,
@@ -201,20 +202,41 @@ def grid_review_evidence(directory, client_log, viewport, scale, pointer_checkpo
                             f"log={size} scale={actual_scale}, PNG={png_size}, layout={layout}")
     missing = [state for state in states if state not in observed]
     required = ("idle", "drag-valid")
-    if pointer_checkpoint:
+    if pointer_checkpoint or inspect:
         required += ("hover", "context")
         order = list(observed)
         if all(state in observed for state in ("idle", "hover", "context", "drag-valid")) and (
             [state for state in order if state in required] != ["idle", "hover", "context", "drag-valid"]
         ):
             findings.append("Pointer review must observe idle, hover, and context before keyboard drag")
-        closed = client_log.find("GRID POINTER context closed via Escape; resuming keyboard route")
+        marker = ("GRID INSPECT closed via Escape" if inspect else "GRID POINTER context closed via Escape")
+        closed = client_log.find(marker + "; resuming keyboard route")
         context = client_log.find("GRID REVIEW context ")
         drag = re.search(r"GRID REVIEW drag-(?:valid|invalid) ", client_log)
         if context < 0 or closed <= context or drag is None or closed >= drag.start():
             findings.append("Missing ordered context → Escape → keyboard drag evidence")
     findings.extend(f"Required state not observed: {state}" for state in required if state in missing)
-    return {"observed": observed, "not_observed": missing, "findings": findings}
+    evidence = {"observed": observed, "not_observed": missing, "findings": findings}
+    if inspect:
+        frames = list(re.finditer(r"GRID INSPECT (open|orbit|zoom|reset) item=(\d+) revision=(\d+) asset=(\S+)", client_log))
+        target = re.search(r"GRID POINTER hover/context observed for item=(\d+) revision=(\d+)", client_log)
+        if ([frame[1] for frame in frames] != ["open", "orbit", "zoom", "reset"]
+                or target is None or not frames
+                or not (context < target.start() < frames[0].start() < frames[-1].start() < closed)
+                or any(frame.group(2, 3) != target.groups() or frame[4] != frames[0][4] for frame in frames)
+                or ("context" in observed and int(target[2]) != observed["context"]["revision"])):
+            findings.append("Missing ordered inspection evidence for the same context target")
+        evidence["inspection"] = []
+        for frame in frames:
+            path = directory / f"inspect-{frame[1]}.png"
+            size = png_dimensions(path)
+            if size != viewport:
+                findings.append(f"{path.name}: expected {viewport}, got {size}")
+            evidence["inspection"].append({
+                "stage": frame[1], "item": int(frame[2]), "revision": int(frame[3]),
+                "asset": frame[4], "png": path.name if size else None, "png_size": size,
+            })
+    return evidence
 
 
 def main():
@@ -241,6 +263,8 @@ def main():
                         help="Enable static grid-only captures at UI scale SCALE (0.75–1.5)")
     parser.add_argument("--inventory-grid-pointer-checkpoint", action="store_true",
                         help="Capture hover and context before keyboard grid operations")
+    parser.add_argument("--inventory-grid-inspect", action="store_true",
+                        help="Inspect from the context menu before keyboard grid operations")
     parser.add_argument("--inventory-telemetry", action="store_true",
                         help="Measure application payloads and Linux process RSS during the solo grid route")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
@@ -298,6 +322,8 @@ def main():
         and not (grid_review or args.inventory_telemetry)
     ):
         parser.error("--inventory-grid-bench requires --inventory-grid --viewport 1280x800 without review or telemetry")
+    if args.inventory_grid_inspect and not args.inventory_grid_pointer_checkpoint:
+        parser.error("--inventory-grid-inspect requires --inventory-grid-pointer-checkpoint")
     if args.inventory_grid_pointer_checkpoint and not grid_review:
         parser.error("--inventory-grid-pointer-checkpoint requires --inventory-grid-review-scale")
     if grid_review and not (args.inventory_grid and args.viewport and not args.inventory_telemetry
@@ -474,6 +500,7 @@ def main():
         "inventory_grid_bench": args.inventory_grid_bench,
         "inventory_grid_review_scale": args.inventory_grid_review_scale,
         "inventory_grid_pointer_checkpoint": args.inventory_grid_pointer_checkpoint,
+        "inventory_grid_inspect": args.inventory_grid_inspect,
         "inventory_telemetry": args.inventory_telemetry,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "clean_art": args.clean_art,
@@ -512,6 +539,8 @@ def main():
                         client_args.append("--inventory-grid-review")
                         if args.inventory_grid_pointer_checkpoint:
                             client_args.append("--inventory-grid-pointer-checkpoint")
+                        if args.inventory_grid_inspect:
+                            client_args.append("--inventory-grid-inspect")
                         client_env.update(TK_GRID_REVIEW_DIR=str(grid_review_dir),
                                           TK_GRID_REVIEW_UI_SCALE=str(args.inventory_grid_review_scale))
                     processes.append(subprocess.Popen(client_args, cwd=root,
@@ -743,10 +772,12 @@ def main():
         if grid_review:
             review = grid_review_evidence(grid_review_dir, client_text, args.viewport,
                                           args.inventory_grid_review_scale,
-                                          pointer_checkpoint=args.inventory_grid_pointer_checkpoint)
+                                          pointer_checkpoint=args.inventory_grid_pointer_checkpoint,
+                                          inspect=args.inventory_grid_inspect)
             evidence["grid_review"] = review
             evidence["captures"] = [
-                f"grid-review/{row['png']}" for row in review["observed"].values() if row["png"]
+                f"grid-review/{row['png']}"
+                for row in [*review["observed"].values(), *review.get("inspection", [])] if row["png"]
             ]
         (output / "evidence.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
         if grid_review:

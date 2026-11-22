@@ -108,6 +108,13 @@ Mantenha o cursor físico fora da grade e a janela em foco. A sonda usa
 Escape via Bevy para fechar apenas o contexto e continuar a rota; o harness
 exige as duas capturas e a ordem observada. Não combine com telemetria.
 
+Para verificar também a inspeção, acrescente `--inventory-grid-inspect`
+à mesma rota. A sonda ativa **Inspect** no menu contextual, verifica a
+prévia montada do mesmo item e usa seta direita, `=` e `R` para orbitar,
+aproximar e restaurar. Registra `inspect-open.png`, `inspect-orbit.png`,
+`inspect-zoom.png` e `inspect-reset.png`; Escape fecha a inspeção e a rota
+retoma a grade. A verificação headless não substitui a revisão dos PNGs.
+
 Após coordenação, use o cliente normal com servidor real e diretório novo:
 
 ```sh
