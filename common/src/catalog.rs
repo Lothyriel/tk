@@ -13,6 +13,7 @@ pub use assembly::*;
 mod mechanics;
 pub use mechanics::*;
 pub mod item_grid;
+pub mod item_inventory;
 pub mod item_manifest;
 
 pub const CATALOG_VERSION: u32 = 2;
@@ -46,6 +47,8 @@ id!(WeaponId, u32);
 id!(DefinitionId, u32);
 id!(WeaponInstanceId, u64, Default);
 id!(MagazineInstanceId, u64);
+id!(ItemInstanceId, u64);
+id!(CompartmentId, u64);
 
 impl Default for WeaponId {
     fn default() -> Self {
