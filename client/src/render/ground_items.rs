@@ -34,12 +34,21 @@ fn reconcile(
     let (items, session) = state.ground();
     let epoch = session.map(|session| session.raid_epoch);
     entities.retain(|&(raid, id), (entity, previous)| {
-        let keep =
-            epoch == Some(raid) && items.iter().any(|item| item.id == id && item == previous);
-        if !keep {
-            commands.entity(*entity).try_despawn();
+        if epoch == Some(raid)
+            && let Some(item) = items
+                .iter()
+                .find(|item| item.id == id && item.seed == previous.seed)
+        {
+            if item.root != previous.root {
+                commands
+                    .entity(*entity)
+                    .insert(Transform::from_translation(item.root.into()));
+                previous.root = item.root;
+            }
+            return true;
         }
-        keep
+        commands.entity(*entity).try_despawn();
+        false
     });
     if let Some(raid) = epoch {
         for item in items {
@@ -134,6 +143,14 @@ mod tests {
             apply(&mut app, key, UpdateBody::Ground(invalid));
         }
         assert_eq!(sample(&mut app), first);
+        let moved = GroundItem {
+            root: [1.0, 0.05, 2.0],
+            ..item.clone()
+        };
+        apply(&mut app, key, UpdateBody::Ground(vec![moved.clone()]));
+        let updated = sample(&mut app);
+        assert_eq!(updated[0].0, first[0].0);
+        assert_eq!(updated[0].2, Vec3::from_array(moved.root));
         apply(&mut app, key, UpdateBody::Ground(vec![]));
         assert!(sample(&mut app).is_empty());
         assert!(app.world().resource::<State>().focused_ground(1).is_none());
