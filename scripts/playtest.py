@@ -88,6 +88,7 @@ def main():
     parser.add_argument("--server-path", type=Path)
     parser.add_argument("--client-path", type=Path)
     parser.add_argument("--video", action="store_true", help="Record native framebuffers and encode timestamped MP4 reviews")
+    parser.add_argument("--voxel-loot", action="store_true", help="Exercise the six voxel loot seeds instead of collecting legacy crates")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
     parser.add_argument("--weapon-kit", choices=("compact", "suppressed", "afg"),
                         help="Seed server-owned M4A1 kit and physical magazines for native acceptance")
@@ -113,6 +114,8 @@ def main():
     parser.add_argument("--audio", action="store_true",
                         help="Enable game audio and verify local and spatial playback sinks")
     args = parser.parse_args()
+    if args.voxel_loot and args.pov:
+        parser.error("--voxel-loot requires the full raid route")
     if args.viewport and not (args.pov or args.clean_art or args.no_capture):
         parser.error("--viewport requires --pov, --clean-art or --no-capture")
     if args.no_capture and (args.video or args.pov or args.weapon_debug):
@@ -156,6 +159,9 @@ def main():
                             "--", "-o", str(output / f"{binary}{suffix}")], cwd=root, check=True)
     suffix = ".exe" if os.name == "nt" else ""
     env = os.environ.copy()
+    env.pop("TK_PLAYTEST_VOXEL_LOOT", None)
+    if args.voxel_loot:
+        env["TK_PLAYTEST_VOXEL_LOOT"] = "1"
     env.pop("TK_PLAYTEST_WEAPON_KIT", None)
     if args.weapon_kit:
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
@@ -357,7 +363,20 @@ def main():
         peer_state = re.search(convergence, peer_text)
         assert leader_state and peer_state, "Missing final converged state logs"
         assert leader_state.groups() == peer_state.groups(), "Clients disagree on persistent victim/organ/wound/piece state"
-    for milestone in ("collected loot", "extracted; secured=1", "debrief"):
+    if args.voxel_loot:
+        loot_logs = [client_text] + ([peer_text] if args.clients == 2 else [])
+        records = re.findall(r"VOXEL LOOT (collected|dropped|retained) seed=(\d+) id=(\d+)", "\n".join(loot_logs))
+        acquired = sorted(int(seed) for action, seed, _ in records if action != "dropped")
+        assert acquired == list(range(6)), f"Missing or duplicate voxel acquisitions: {records}"
+        assert sorted((seed, item) for action, seed, item in records if action == "collected") == sorted(
+            (seed, item) for action, seed, item in records if action == "dropped"
+        ), "Discard did not preserve each acquired instance"
+        assert sum(action == "retained" for action, _, _ in records) == args.clients
+        assert "collected loot" not in server_text, "Voxel route collected a legacy crate"
+    milestones = ("extracted; secured=1", "debrief") if args.voxel_loot else (
+        "collected loot", "extracted; secured=1", "debrief"
+    )
+    for milestone in milestones:
         assert milestone in server_text, f"Missing authoritative milestone: {milestone}"
     if args.no_capture:
         logs = [client_text] + ([peer_text] if args.clients == 2 else [])
@@ -428,7 +447,7 @@ def main():
         f"PASS: {args.clients} native rendered client(s) + real UDP server",
         "Lobby -> countdown -> combat -> loot -> extraction -> debrief -> lobby -> second raid",
         *evidence,
-        "Server milestones: collected loot; extracted; secured=1; debrief",
+        f"Server milestones: {'; '.join(milestones)}",
         "Client assertions and exact positions: client.log",
     ])
     (output / "result.txt").write_text(report + "\n", encoding="utf-8")

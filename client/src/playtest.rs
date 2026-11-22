@@ -10,6 +10,7 @@ mod mechanics;
 mod physical;
 mod pov;
 mod video;
+mod voxel_loot;
 
 pub struct Plugin;
 
@@ -135,6 +136,7 @@ struct Driver {
     next_fight_report: f64,
     asset_captures: u8,
     panel_configured: bool,
+    voxel_loot: voxel_loot::Route,
 }
 
 impl Driver {
@@ -209,6 +211,8 @@ struct PlaytestState<'w> {
     id: Res<'w, PlayerId>,
     input: ResMut<'w, LocalInput>,
     driver: ResMut<'w, Driver>,
+    inventory: Res<'w, crate::sync::inventory::State>,
+    network: ResMut<'w, bevy_renet2::prelude::RenetClient>,
 }
 
 type AcceptedViewModels<'w, 's> = Query<
@@ -252,6 +256,8 @@ fn drive(
         id,
         mut input,
         mut driver,
+        inventory,
+        mut network,
     } = state;
     let now = time.elapsed_secs_f64();
     let lens = |view: bool| {
@@ -305,6 +311,7 @@ fn drive(
     input.aim = false;
     // ADS_PROOF_END
     input.interact = false;
+    input.pickup_focus = None;
     let Some(local) = session.local(id.0) else {
         return;
     };
@@ -874,7 +881,32 @@ fn drive(
             }
         }
         Step::Loot => {
-            if p.carried == 1 {
+            if voxel_loot::enabled() {
+                assert!(
+                    now - driver.since < 55.0 && p.status == RaidStatus::Active,
+                    "voxel loot route failed: {:?}, position={:?}, status={:?}",
+                    driver.voxel_loot,
+                    local.pos,
+                    p.status,
+                );
+                if driver.voxel_loot.tick(
+                    &mut input,
+                    local,
+                    &inventory,
+                    &mut network,
+                    session.raid.raid_id,
+                    peer,
+                ) {
+                    assert!(
+                        session
+                            .raid
+                            .loot_available
+                            .into_iter()
+                            .all(|available| available)
+                    );
+                    driver.advance(Step::Fight, now);
+                }
+            } else if p.carried == 1 {
                 assert!(!session.raid.loot_available[loot_index]);
                 info!("PLAYTEST loot confirmed at {:?}", local.pos);
                 driver.advance(Step::Fight, now);
