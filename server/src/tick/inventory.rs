@@ -5,9 +5,12 @@ use bevy_renet2::prelude::RenetServer;
 use common::{
     Lobby,
     catalog::{
-        CompartmentId,
-        item_grid::Footprint,
-        item_inventory::{InventoryAuthority, OperationSession, SessionKey},
+        CompartmentId, ItemInstanceId,
+        item_grid::{Footprint, Placement, Rotation},
+        item_inventory::{
+            Condition, GridLocation, Inventory, InventoryAuthority, OperationSession, SessionKey,
+        },
+        item_manifest::{S1_SEEDS, item_visuals, planned_items},
     },
     raid::{Participant, RaidPhase, RaidState, RaidStatus},
     replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
@@ -17,6 +20,17 @@ use common::{
 // queue rather than dropping an ordered operation and creating a sequence gap.
 const REQUESTS_PER_WINDOW: u8 = 4;
 const WINDOW_TICKS: u8 = 16;
+const WORLD_SLOT_START: u64 = u64::MAX - S1_SEEDS.len() as u64 + 1;
+
+#[derive(Debug)]
+pub(super) struct WorldItem {
+    pub id: ItemInstanceId,
+    pub source: CompartmentId,
+    /// Static interaction volume. Keep it out of the physics broad phase
+    /// until a dropped item actually needs rigid-body simulation.
+    pub half_extents: Vec3,
+    pub center: Vec3,
+}
 
 /// Granted by authoritative interaction code, never by an inventory packet.
 /// Shared compartments occupy the namespace above player connection IDs.
@@ -42,6 +56,51 @@ pub(super) struct Endpoint {
     session_epoch: u64,
     window_tick: u8,
     peers: BTreeMap<u64, Peer>,
+    world_items: Vec<WorldItem>,
+}
+
+fn seed_world(items: &mut Vec<WorldItem>) -> Inventory {
+    let mut inventory = Inventory::default();
+    for (index, seed) in S1_SEEDS.into_iter().enumerate() {
+        let source = CompartmentId(WORLD_SLOT_START + index as u64);
+        let visual = &item_visuals()[seed];
+        inventory
+            .register_compartment(source, planned_items()[seed].footprint, None)
+            .expect("distinct ground slot");
+        let id = inventory
+            .insert_seed(
+                seed,
+                Condition::Intact,
+                1,
+                GridLocation {
+                    compartment: source,
+                    placement: Placement {
+                        x: 0,
+                        y: 0,
+                        rotation: Rotation::Upright,
+                    },
+                },
+            )
+            .expect("seed fits ground slot");
+        let [x, _, z] = common::map::LOOT_POSITIONS[index / 2];
+        let half_extents = Vec3::from_array(visual.collider_half_extents());
+        let terrain_top = common::map::BLOCKS[0].center[1] + common::map::BLOCKS[0].half_size[1];
+        // Two seeds flank each legacy crate at the authored floor height.
+        let center = Vec3::new(
+            x + if index % 2 == 0 { -0.8 } else { 0.8 },
+            terrain_top + half_extents.y,
+            z,
+        );
+        let item = WorldItem {
+            id,
+            source,
+            half_extents,
+            center,
+        };
+        debug!(item = ?item.id, slot = ?item.source, bounds = ?item.half_extents, center = ?item.center, seed, "placed raid item");
+        items.push(item);
+    }
+    inventory
 }
 
 #[cfg(test)]
@@ -80,7 +139,22 @@ pub(super) fn receive(
         state.authority = Some(InventoryAuthority::new(u64::from(raid.raid_id), inventory));
         state.peers.clear();
     }
+    state.sync_world(&raid);
     process(&mut server, &lobby, &raid, &participants, &mut state);
+}
+
+impl Endpoint {
+    fn sync_world(&mut self, raid: &RaidState) {
+        if self.raid != Some(raid.raid_id) || raid.phase != RaidPhase::Active {
+            self.world_items.clear();
+        }
+        if raid.phase == RaidPhase::Active && self.raid != Some(raid.raid_id) {
+            let inventory = seed_world(&mut self.world_items);
+            self.raid = Some(raid.raid_id);
+            self.authority = Some(InventoryAuthority::new(u64::from(raid.raid_id), inventory));
+            self.peers.clear();
+        }
+    }
 }
 
 fn process(
@@ -162,7 +236,7 @@ fn process(
                     raid.phase == RaidPhase::Active
                         && participant.status == RaidStatus::Active
                         && grant.raid_id == raid.raid_id
-                        && grant.id.0 >= (1_u64 << 63)
+                        && ((1_u64 << 63)..WORLD_SLOT_START).contains(&grant.id.0)
                 })
             });
         let open = grant.map(|grant| grant.id);
@@ -267,10 +341,46 @@ mod tests {
     use common::catalog::{
         item_grid::{Placement, Rotation},
         item_inventory::{
-            Condition, GridLocation, Inventory, InventoryAction, InventoryOperation,
-            OperationResult, VersionedCompartment,
+            InventoryAction, InventoryOperation, OperationResult, VersionedCompartment,
         },
     };
+
+    #[test]
+    fn world_item_seeds_spawn_once_per_raid_and_leave_on_debrief() {
+        let mut endpoint = Endpoint::default();
+        let mut raid = RaidState {
+            raid_id: 1,
+            phase: RaidPhase::Active,
+            ..default()
+        };
+        endpoint.sync_world(&raid);
+        assert_eq!(endpoint.world_items.len(), S1_SEEDS.len());
+        let authority = endpoint.authority.as_ref().unwrap();
+        for (index, item) in endpoint.world_items.iter().enumerate() {
+            assert_eq!(item.source.0, WORLD_SLOT_START + index as u64);
+            assert_eq!(item.id.0, index as u64 + 1);
+            let seed = S1_SEEDS[index];
+            let entry = authority.inventory().get(item.id).unwrap();
+            assert_eq!(entry.definition.id, seed);
+            assert_eq!(entry.location.compartment, item.source);
+            let visual = &item_visuals()[seed];
+            assert!(
+                item.half_extents
+                    .abs_diff_eq(Vec3::from_array(visual.collider_half_extents()), 1e-6)
+            );
+            assert!((item.center.y - item.half_extents.y - 0.1).abs() < 1e-6);
+        }
+        endpoint.sync_world(&raid);
+        assert_eq!(endpoint.world_items.len(), S1_SEEDS.len());
+        raid.phase = RaidPhase::Debrief;
+        endpoint.sync_world(&raid);
+        assert!(endpoint.world_items.is_empty());
+        raid.raid_id = 2;
+        raid.phase = RaidPhase::Active;
+        endpoint.sync_world(&raid);
+        assert_eq!(endpoint.raid, Some(2));
+        assert_eq!(endpoint.world_items.len(), S1_SEEDS.len());
+    }
 
     #[test]
     fn inventory_endpoint_bootstraps_and_commits_only_for_the_owner() {
