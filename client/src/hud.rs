@@ -5,9 +5,11 @@ use bevy::{
 use bevy_renet2::prelude::RenetClient;
 use common::{combat::*, map::*, raid::*, *};
 
-use crate::{ClientSystems, sync::ClientSession};
+use crate::{ClientSystems, input::inventory_panel::GridFont, sync::ClientSession};
 
 mod combat;
+
+const RAID_TEXT_COLOR: Color = Color::srgb(0.9, 0.97, 1.0);
 
 pub struct Plugin;
 
@@ -31,25 +33,35 @@ impl bevy::prelude::Plugin for Plugin {
 pub(crate) struct RaidHud;
 
 #[derive(Component)]
+struct CatalogRows;
+
+#[derive(Component)]
 struct MetricsHud;
 
 fn setup(mut commands: Commands) {
-    commands.spawn((
-        RaidHud,
-        Text::new("TK / EXTRACTION ALPHA\nConnecting to server..."),
-        TextFont::from_font_size(16.0),
-        TextColor(Color::srgb(0.9, 0.97, 1.0)),
-        BackgroundColor(Color::srgba(0.015, 0.025, 0.04, 0.88)),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(18.0),
-            left: Val::Px(18.0),
-            max_width: Val::Px(320.0),
-            padding: UiRect::all(Val::Px(12.0)),
-            ..default()
-        },
-        GlobalZIndex(200),
-    ));
+    commands
+        .spawn((
+            RaidHud,
+            Text::new("TK / EXTRACTION ALPHA\nConnecting to server..."),
+            TextFont::from_font_size(16.0),
+            TextColor(RAID_TEXT_COLOR),
+            BackgroundColor(Color::srgba(0.015, 0.025, 0.04, 0.88)),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(18.0),
+                left: Val::Px(18.0),
+                max_width: Val::Px(320.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                ..default()
+            },
+            GlobalZIndex(200),
+        ))
+        .with_child((
+            CatalogRows,
+            TextSpan::default(),
+            TextFont::from_font_size(16.0),
+            TextColor(RAID_TEXT_COLOR),
+        ));
     commands.spawn((
         MetricsHud,
         Text::new("FPS --\nFRAME -- ms"),
@@ -89,6 +101,9 @@ fn metrics_text(fps: Option<f64>, frame_time_ms: Option<f64>) -> String {
     }
 }
 
+type CatalogText<'w, 's> =
+    Single<'w, 's, (&'static mut TextSpan, &'static mut TextFont), With<CatalogRows>>;
+
 fn update(
     time: Res<Time<Real>>,
     session: Res<ClientSession>,
@@ -100,10 +115,14 @@ fn update(
         Res<crate::input::inventory_panel::Panel>,
         Res<crate::menu::Menu>,
     ),
-    mut hud: Single<&mut Text, With<RaidHud>>,
+    (mut hud, font, rows): (Single<&mut Text, With<RaidHud>>, Res<GridFont>, CatalogText),
 ) {
+    let (mut rows, mut row_font) = rows.into_inner();
     if menu.replaces_hud() {
         ***hud = String::new();
+        if !rows.is_empty() {
+            rows.clear();
+        }
         return;
     }
     let connection = if client.is_disconnected() {
@@ -119,6 +138,7 @@ fn update(
         String::new()
     };
     let mut text = describe(&session, &input.loadout, id.0, &connection, input.aim);
+    let mut catalog_rows = String::new();
     if connection.is_empty() && panel.open {
         use common::catalog::item_manifest::planned_items;
         text = if panel.inspection.is_some() {
@@ -146,7 +166,7 @@ fn update(
                     let name = planned_items()
                         .get(item.definition.as_str())
                         .map_or(item.definition.as_str(), |entry| entry.name);
-                    text.push_str(&format!("\n{marker} {name} ×{}", item.quantity));
+                    catalog_rows.push_str(&format!("\n{marker} {name} ×{}", item.quantity));
                 }
             }
             None => text.push_str("\nWaiting for inventory"),
@@ -163,6 +183,12 @@ fn update(
         text.push_str(&format!("\nGround item: {name} [F]"));
     }
     ***hud = text;
+    if rows.as_str() != catalog_rows {
+        **rows = catalog_rows;
+        if !rows.is_empty() {
+            *row_font = font.sized(16.0);
+        }
+    }
 }
 
 fn describe(

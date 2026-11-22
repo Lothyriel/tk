@@ -611,10 +611,10 @@ pub(super) fn interact(
 const GRID_FONT_BYTES: &[u8] = include_bytes!("../../../../assets/fonts/FiraMono-Medium.ttf");
 
 #[derive(Resource)]
-pub(in crate::input) struct GridFont(Handle<Font>);
+pub(crate) struct GridFont(Handle<Font>);
 
 impl GridFont {
-    fn sized(&self, size: f32) -> TextFont {
+    pub(crate) fn sized(&self, size: f32) -> TextFont {
         TextFont::from_font_size(size).with_font(self.0.clone())
     }
 }
