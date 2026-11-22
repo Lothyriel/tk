@@ -110,6 +110,21 @@ impl Plugin for Probe {
             return;
         }
         let mut route = Route::default();
+        if std::env::var_os("TK_COUNTDOWN_CANCEL_PROBE").is_some() {
+            assert_eq!(*self, Self::Keyboard);
+            for flag in [
+                "TK_PREFERENCES_FLOW",
+                "TK_PREFERENCES_SCREENSHOT",
+                "TK_PREFERENCES_REVIEW_SCALE",
+            ] {
+                assert!(
+                    std::env::var_os(flag).is_none(),
+                    "incompatible flag: {flag}"
+                );
+            }
+            route.countdown_check = true;
+            route.step = Step::Ready;
+        }
         let review_scale = std::env::var("TK_PREFERENCES_REVIEW_SCALE").ok();
         if let Ok(mode) = std::env::var("TK_PREFERENCES_FLOW") {
             assert_eq!(*self, Self::Keyboard);
@@ -179,6 +194,8 @@ enum Step {
     CloseBench,
     Ready,
     Cancel,
+    CountdownShortcut,
+    CountdownCancelled,
     ReadyAgain,
     Leave,
     BenchAgain,
@@ -237,7 +254,11 @@ impl Step {
             Self::ReloadPreferences(false) => "Preferences",
             Self::ReloadPreferences(true) => return None,
             Self::RepairPreferences(index) => return REPAIR_ACTIONS[index],
-            Self::Done | Self::CapturePreferences | Self::PreferencesPause => return None,
+            Self::Done
+            | Self::CapturePreferences
+            | Self::PreferencesPause
+            | Self::CountdownShortcut
+            | Self::CountdownCancelled => return None,
         })
     }
 
@@ -249,6 +270,8 @@ impl Step {
             CloseBench => Ready,
             Ready => Cancel,
             Cancel => ReadyAgain,
+            CountdownShortcut => Cancel,
+            CountdownCancelled => CountdownCancelled,
             ReadyAgain => Leave,
             Leave => BenchAgain,
             BenchAgain => CloseAgain,
@@ -269,8 +292,8 @@ impl Step {
                 0
             }
             Self::PreferencesPause => 1,
-            Self::Cancel => 1,
-            Self::ReadyAgain => 2,
+            Self::Cancel | Self::CountdownShortcut => 1,
+            Self::ReadyAgain | Self::CountdownCancelled => 2,
             Self::Leave => 3,
             Self::BenchAgain | Self::CloseAgain | Self::Reenter => 4,
             Self::Done => 5,
@@ -285,6 +308,7 @@ impl Step {
 
 #[derive(Resource, Default)]
 struct Route {
+    countdown_check: bool,
     step: Step,
     since: f64,
     release: Option<KeyCode>,
@@ -532,6 +556,62 @@ fn drive(
         presented_button(&widgets, &text, prefix)
             .and_then(|(entity, _, laid_out)| laid_out.then_some(entity))
     };
+    if route.countdown_check {
+        match step {
+            Ready => {
+                assert_eq!(session.raid.mode, common::raid::MatchMode::Raid);
+            }
+            CountdownShortcut => {
+                if session.raid.phase != RaidPhase::Countdown
+                    || !actor.participant.ready
+                    || actor.participant.last_command != 1
+                {
+                    return;
+                }
+                if button("Cancel ready").is_none() {
+                    return;
+                }
+                assert!(!editor.visible);
+                info!(
+                    "COUNTDOWN CANCEL confirmed: focused={}, ready=true, command=1, seconds_left={:.3}; trying V",
+                    window.focused, session.raid.seconds_left
+                );
+                keyboard.write(key_event(window_id, KeyCode::KeyV, ButtonState::Pressed));
+                route.release = Some(KeyCode::KeyV);
+                route.step = step.next();
+                route.since = now;
+                return;
+            }
+            Cancel => {
+                assert_eq!(session.raid.phase, RaidPhase::Countdown);
+                assert!(actor.participant.ready && actor.participant.last_command == 1);
+                assert!(!editor.visible, "V reopened the workbench during countdown");
+                let cancel =
+                    button("Cancel ready").expect("Cancel ready remained laid out after V");
+                assert_eq!(menu.focused_widget(), Some(cancel));
+                info!(
+                    "COUNTDOWN CANCEL V blocked; Cancel ready focused at {:.3}s",
+                    session.raid.seconds_left
+                );
+            }
+            CountdownCancelled => {
+                assert_ne!(session.raid.phase, RaidPhase::Active, "countdown elapsed");
+                if session.raid.phase == RaidPhase::Lobby
+                    && !actor.participant.ready
+                    && actor.participant.last_command == 2
+                    && button("Ready / deploy").is_some()
+                {
+                    info!(
+                        "COUNTDOWN CANCEL PASS: focused={}, Lobby ready=false confirmed command=2",
+                        window.focused
+                    );
+                    exit.write(AppExit::Success);
+                }
+                return;
+            }
+            _ => unreachable!(),
+        }
+    }
     if step == PreferencesPause {
         if session.raid.phase != RaidPhase::Active || !session.playing(player.0) {
             return;
@@ -692,10 +772,12 @@ fn drive(
         }
         _ => (),
     }
-    if matches!(
-        step,
-        Bench | Ready | ReadyAgain | BenchAgain | Reenter | Cancel
-    ) {
+    if !route.countdown_check
+        && matches!(
+            step,
+            Bench | Ready | ReadyAgain | BenchAgain | Reenter | Cancel
+        )
+    {
         // Present changes display and text in Update. On the first frame
         // back from Arena, PostUpdate layout hasn't sized the buttons yet.
         let Some((_, label, laid_out)) = presented_button(&widgets, &text, "Mode: ") else {
@@ -709,7 +791,7 @@ fn drive(
             return;
         }
     }
-    if matches!(step, Ready | Reenter) {
+    if !route.countdown_check && matches!(step, Ready | Reenter) {
         let Some(bench) = button("Weapon workbench") else {
             return;
         };
@@ -783,7 +865,11 @@ fn drive(
         "ARENA MENU PROBE {probe:?} {step:?} sequence={}",
         step.sequence()
     );
-    route.step = step.next();
+    route.step = match (route.countdown_check, step) {
+        (true, Ready) => CountdownShortcut,
+        (true, Cancel) => CountdownCancelled,
+        _ => step.next(),
+    };
     route.since = now;
     route.checked_return_focus = false;
 }

@@ -148,6 +148,13 @@ A rota solo chega à extração real, mede o painel de debrief a 200% e ativa
 o botão de retorno com Enter sintético do Bevy. Procure `DEBRIEF REVIEW PASS`
 no log do cliente; sem mídia ou alegação de teclado físico.
 
+Para verificar o cancelamento durante o countdown normal, use um servidor
+local novo e um cliente em foco com `TK_COUNTDOWN_CANCEL_PROBE=1`,
+`TK_PREFERENCES_PATH` isolado e `--arena-menu-probe=keyboard`. A sonda usa
+Tab/Enter nos widgets de prontidão, tenta V após confirmação do countdown e
+aguarda a confirmação do cancelamento no lobby. Procure
+`COUNTDOWN CANCEL PASS`. Sem captura, input físico ou ajuste do countdown.
+
 ## Revisão estática da grade
 
 Para automatizar o subconjunto de teclado após integração e coordenação:
