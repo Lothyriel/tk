@@ -582,17 +582,23 @@ pub(super) fn advance(
         action.bolt += (target.bolt - action.bolt) * alpha;
         action.control += (target.control - action.control) * alpha;
         action.latch += (target.latch - action.latch) * alpha;
-        if w == WeaponKind::Rifle && mechanics.reloading() {
+        if w == WeaponKind::Rifle {
             use common::catalog::ManipulationPhase;
             // The authored seat dwell lets the filter settle before insertion;
             // a committed mechanical location must never lag behind on screen.
-            if matches!(
-                mechanics.phase,
-                Some(ManipulationPhase::Feed | ManipulationPhase::Finish)
-            ) {
+            // A cancellation snapshot may be the first one showing the seat.
+            if mechanics.magazine_inserted
+                && (!mechanics.reloading()
+                    || matches!(
+                        mechanics.phase,
+                        Some(ManipulationPhase::Feed | ManipulationPhase::Finish)
+                    ))
+            {
                 action.magazine = target.magazine;
             }
-            action.bolt = if mechanics.bolt_open { 1.0 } else { 0.0 };
+            if mechanics.reloading() {
+                action.bolt = if mechanics.bolt_open { 1.0 } else { 0.0 };
+            }
         }
         let local = local_id.as_ref().is_some_and(|id| id.0 == player.id);
         let camera = if local {

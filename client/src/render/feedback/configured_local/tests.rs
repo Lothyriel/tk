@@ -540,6 +540,120 @@ fn configured_local_mixed_reload_uses_owned_incoming_mesh_before_insertion_witho
 }
 
 #[test]
+fn configured_local_reload_skipped_commit_and_resume_keep_the_magazine_seated() {
+    use common::catalog::{DefinitionId, EquippedWeapon, ManipulationPhase, WeaponKit};
+    use common::replication::ConfigurationPublisher;
+    for fps in [30, 60, 165] {
+        let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
+        f.app
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_secs_f64(1.0 / f64::from(fps)),
+            ));
+        let mut kit = WeaponKit::from_configuration(
+            catalog(),
+            catalog().configuration(common::WeaponId::M4A1).unwrap(),
+        )
+        .unwrap();
+        kit.reserves = vec![DefinitionId(120)];
+        let mut weapon = EquippedWeapon::from_kit(catalog(), WeaponInstanceId(77), &kit).unwrap();
+        for _ in 0..weapon.rounds() {
+            assert!(weapon.fire());
+        }
+        let total = weapon.mechanics().total_rounds();
+        let incoming = weapon.mechanics().magazines()[1].id;
+        let fingerprint = catalog_fingerprint(common::catalog::CATALOG_SOURCE);
+        let mut publisher = ConfigurationPublisher::new(2, fingerprint).unwrap();
+        f.app
+            .world_mut()
+            .resource_mut::<ClientSession>()
+            .configurations
+            .cache
+            .begin_epoch(2)
+            .unwrap();
+        let mut deliver = |f: &mut Fixture, weapon: &EquippedWeapon| {
+            let handle = publisher
+                .register(7, EquipmentSlot::Primary, weapon.instance())
+                .unwrap();
+            let packet = publisher.entries()[(handle - 1) as usize].clone();
+            let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+            session
+                .configurations
+                .cache
+                .apply(catalog(), fingerprint, packet)
+                .unwrap();
+            let player = &mut session.players[0];
+            player.weapon_instance = weapon.instance().id;
+            player.configuration = handle;
+            player.mechanics = weapon.mechanics().snapshot();
+            f.step();
+            f.assert_contacts();
+        };
+        deliver(&mut f, &weapon);
+        assert!(weapon.mechanics_mut().start_reload(2.4));
+        while weapon.mechanics().snapshot().fraction < 0.53 {
+            weapon.advance(0.7 / fps as f32);
+            deliver(&mut f, &weapon);
+        }
+        let before = weapon.mechanics().snapshot();
+        assert_eq!(before.phase, Some(ManipulationPhase::Insert));
+        assert!(!before.magazine_inserted);
+        let part = named(&f.app, f.root, "magazine");
+        let unseated = *f.app.world().get::<Transform>(part).unwrap();
+        // Lose every update around the commit. The next delivered state is
+        // already canceled, so presentation never sees Feed for this action.
+        while weapon.mechanics().snapshot().phase != Some(ManipulationPhase::Feed) {
+            weapon.advance(0.005);
+        }
+        weapon.mechanics_mut().cancel();
+        let assert_seated = |f: &Fixture| {
+            let world = f.app.world();
+            let part = named(&f.app, f.root, "magazine");
+            let pose = *world.get::<Transform>(part).unwrap();
+            assert!(world.get::<InheritedVisibility>(part).unwrap().get());
+            assert_eq!(
+                world.get::<ConfiguredWeapon>(f.root).unwrap().magazine,
+                Some(incoming)
+            );
+            let magazines: Vec<_> = descendants(world, f.root)
+                .into_iter()
+                .filter_map(|entity| world.get::<ConfiguredPiece>(entity))
+                .filter(|piece| [101, 120].contains(&piece.definition))
+                .collect();
+            assert_eq!(magazines.len(), 1);
+            assert_eq!(magazines[0].definition, 120);
+            pose
+        };
+        deliver(&mut f, &weapon);
+        let first = assert_seated(&f);
+        for _ in 0..fps {
+            f.step();
+        }
+        let settled = assert_seated(&f);
+        assert!(unseated.translation.distance(settled.translation) > 0.03);
+        assert!(
+            first.translation.distance(settled.translation) < 0.001,
+            "{fps} Hz first={first:?}, seated={settled:?}"
+        );
+
+        assert!(!weapon.mechanics().snapshot().chambered);
+        assert!(weapon.mechanics_mut().start_reload(2.4));
+        assert_eq!(
+            weapon.mechanics().snapshot().phase,
+            Some(ManipulationPhase::Feed)
+        );
+        while weapon.mechanics().snapshot().reloading() {
+            deliver(&mut f, &weapon);
+            let resumed = assert_seated(&f);
+            assert!(resumed.translation.distance(settled.translation) < 0.001);
+            weapon.advance(0.7 / fps as f32);
+        }
+        deliver(&mut f, &weapon);
+        assert!(weapon.mechanics().snapshot().chambered);
+        assert_eq!(weapon.mechanics().total_rounds(), total);
+    }
+}
+
+#[test]
 fn configured_local_switch_during_reload_keeps_outgoing_magazine_location() {
     use common::catalog::{DefinitionId, EquippedWeapon, WeaponInstanceId, WeaponKit};
     use common::replication::ConfigurationPublisher;
