@@ -316,6 +316,15 @@ pub(super) fn physical_tick(
             .exclude_collider(entity)
             .exclude_sensors()
             .predicate(&predicate);
+        // The grounded capsule can rise by a full autostep while both
+        // balance probes still sit over the lower tread. Allow that drop
+        // only for the grounded upright controller, not for airborne poses.
+        let support_reach = 0.60
+            + if movement.grounded && !pose.prone {
+                PLAYER_STEP_HEIGHT
+            } else {
+                0.0
+            };
         let mut supports = [0.0; 2];
         for (i, x) in [-0.13, 0.13].into_iter().enumerate() {
             let origin = t.translation
@@ -330,7 +339,7 @@ pub(super) fn physical_tick(
                         0.0,
                     );
             if let Some((_, hit)) =
-                context.cast_ray_and_get_normal(origin, -Vec3::Y, 0.60, true, filter)
+                context.cast_ray_and_get_normal(origin, -Vec3::Y, support_reach, true, filter)
             {
                 supports[i] = hit.normal.y.max(0.0) * if i == 0 { l } else { r };
             }

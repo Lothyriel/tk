@@ -1751,6 +1751,74 @@ fn walking_onto_a_low_step_acquires_a_supported_foot() {
 }
 
 #[test]
+fn walking_onto_the_west_training_step_moves_loaded_support_to_the_top() {
+    use common::humanoid::{PhysicalMode, PoseState, Segment, evaluate_pose};
+
+    // Use the collider installed by the normal map startup, not a test box.
+    let step = common::map::BLOCKS
+        .iter()
+        .find(|block| block.center[0] == -14.0 && block.center[2] == 2.0)
+        .expect("west training step");
+    let [x, y, z] = step.center;
+    let [half_x, half_y, half_z] = step.half_size;
+    let (mut app, _, _) = physical_fixture();
+    // The new actor starts after bot removal and has no prior locomotion history.
+    let player = add_player(&mut app, 9, Loadout::default());
+    app.world_mut()
+        .get_mut::<Participant>(player)
+        .unwrap()
+        .begin();
+    app.world_mut()
+        .get_mut::<Transform>(player)
+        .unwrap()
+        .translation = Vec3::new(x, 1.05, z + half_z + 1.15);
+    steps(&mut app, 30);
+    app.world_mut()
+        .get_mut::<ClientInput>(player)
+        .unwrap()
+        .forward = true;
+
+    let mut floor = [false; 2];
+    let mut top = [false; 2];
+    for tick in 0..128 {
+        held_steps(&mut app, player, 1);
+        let root = app.world().get::<Transform>(player).unwrap();
+        let pose = app.world().get::<PoseState>(player).unwrap();
+        assert_eq!(
+            pose.mode,
+            PhysicalMode::Standing,
+            "tick={tick} root={:?} grounded={} support={:?} impulse={:?} top={top:?}",
+            root.translation,
+            pose.grounded,
+            [pose.left_support, pose.right_support],
+            pose.impulse,
+        );
+        let rig = evaluate_pose(pose, 1.0, 1.0);
+        for (i, segment) in [Segment::LeftFoot, Segment::RightFoot]
+            .into_iter()
+            .enumerate()
+        {
+            if !pose.grounded || pose.foot_weight[i] <= 0.95 {
+                continue;
+            }
+            let foot = root.transform_point(rig[segment.index()].position.into());
+            let anchor = root.transform_point(pose.feet[i].into());
+            floor[i] |= anchor.z > z + half_z && (anchor.y - 0.155).abs() < 0.02;
+            let on_top = |point: Vec3| {
+                (point.x - x).abs() < half_x
+                    && (point.z - z).abs() < half_z
+                    && (point.y - (y + half_y + 0.055)).abs() < 0.02
+            };
+            top[i] |= floor[i] && on_top(anchor) && on_top(foot);
+        }
+    }
+    assert!(
+        top.into_iter().any(|supported| supported),
+        "no loaded foot moved from the floor to the published step top"
+    );
+}
+
+#[test]
 fn walk_sprint_walk_keeps_loaded_feet_stable() {
     use common::humanoid::{PoseState, Segment, evaluate_pose};
     let (mut app, player, peer) = physical_fixture();
