@@ -241,6 +241,7 @@ struct PlaytestState<'w> {
     inventory: Res<'w, crate::sync::inventory::State>,
     network: ResMut<'w, bevy_renet2::prelude::RenetClient>,
     inventory_panel: ResMut<'w, crate::input::inventory_panel::Panel>,
+    grid_probe: Option<ResMut<'w, inventory_grid::Probe>>,
 }
 
 type AcceptedViewModels<'w, 's> = Query<
@@ -296,6 +297,7 @@ fn drive(
         inventory,
         mut network,
         mut inventory_panel,
+        mut grid_probe,
     } = state;
     let now = time.elapsed_secs_f64();
     let lens = |view: bool| {
@@ -998,7 +1000,11 @@ fn drive(
         Step::Loot => {
             if voxel_loot::enabled() {
                 let inspect = voxel_loot::inspection_enabled();
-                let timeout = if inspect { 75.0 } else { 55.0 };
+                let timeout = if inspect || grid_probe.is_some() {
+                    75.0
+                } else {
+                    55.0
+                };
                 assert!(
                     now - driver.since < timeout && p.status == RaidStatus::Active,
                     "voxel loot route failed: {:?}, position={:?}, status={:?}",
@@ -1011,7 +1017,7 @@ fn drive(
                     local,
                     &inventory,
                     &mut network,
-                    (session.raid.raid_id, peer, now),
+                    (session.raid.raid_id, peer, now, grid_probe.as_deref_mut()),
                     inspect.then(|| {
                         let shown = projections.inspected.iter().find_map(|(view, visible)| {
                             (visible.get() && projections.inspection_mesh.get(view.model).is_ok())

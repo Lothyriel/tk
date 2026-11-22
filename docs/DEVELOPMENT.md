@@ -17,6 +17,13 @@ como não exercitados. A sonda não semeia itens, não simula confirmação e
 não faz capturas. Não certifica mouse, teclado físico, legibilidade nem perda
 de pacotes.
 
+Com a pilha de duas bandagens, rode
+`python scripts/playtest.py --voxel-loot --inventory-grid --no-capture`
+com um cliente. A rota coleta as bandagens e a água no servidor, abre a grade
+com Tab, confirma rotação/movimento e split/merge, fecha com Tab, descarta os
+dois IDs originais e segue até a segunda raid. Sem a pilha real ou sem
+confirmação da grade, a rota falha.
+
 ## Sonda opt-in do menu Arena
 
 Na revisão integrada com Arena, inicie um servidor local novo, sem outros

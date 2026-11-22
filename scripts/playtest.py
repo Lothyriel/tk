@@ -130,6 +130,8 @@ def main():
     parser.add_argument("--loot-inspect", action="store_true", help="With --voxel-loot, capture three static in-hand views of each confirmed item")
     parser.add_argument("--pet-probe", choices=("unlit-blend", "lit-opaque"),
                         help="Diagnose only the held bottle's translucent surfaces")
+    parser.add_argument("--inventory-grid", action="store_true",
+                        help="Run the confirmed grid checkpoint during solo voxel loot")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
     parser.add_argument("--weapon-kit", choices=("compact", "suppressed", "afg"),
                         help="Seed server-owned M4A1 kit and physical magazines for native acceptance")
@@ -172,6 +174,8 @@ def main():
         parser.error("--loot-inspect requires --voxel-loot and static captures (no --no-capture or --video)")
     if args.bench_draft and (not args.configure_weapons or args.no_capture or args.video):
         parser.error("--bench-draft requires --configure-weapons and static captures only")
+    if args.inventory_grid and not (args.voxel_loot and args.clients == 1 and args.no_capture and not args.video):
+        parser.error("--inventory-grid requires --voxel-loot --no-capture with one client and no video")
     if args.voxel_loot and args.pov:
         parser.error("--voxel-loot requires the full raid route")
     if args.viewport and not (args.pov or arena or args.clean_art or args.no_capture):
@@ -244,6 +248,9 @@ def main():
     env.pop("TK_PLAYTEST_PET_PROBE", None)
     if args.pet_probe:
         env["TK_PLAYTEST_PET_PROBE"] = args.pet_probe
+    env.pop("TK_PLAYTEST_INVENTORY_GRID", None)
+    if args.inventory_grid:
+        env["TK_PLAYTEST_INVENTORY_GRID"] = "1"
     env.pop("TK_PLAYTEST_WEAPON_KIT", None)
     if args.weapon_kit:
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
@@ -313,6 +320,7 @@ def main():
         "no_capture": args.no_capture, "audio": args.audio,
         "loot_inspect": args.loot_inspect,
         "pet_probe": args.pet_probe,
+        "inventory_grid": args.inventory_grid,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "clean_art": args.clean_art,
         "art_lighting": "neutral white, cast shadows disabled" if args.neutral_art else "raid",
@@ -519,6 +527,8 @@ def main():
         assert leader_state.groups() == peer_state.groups(), "Clients disagree on persistent victim/organ/wound/piece state"
     if args.voxel_loot:
         loot_logs = [client_text] + ([peer_text] if args.clients == 2 else [])
+        if args.inventory_grid:
+            assert "GRID PROBE PASS move/rotate and split/merge" in client_text, "Missing confirmed grid checkpoint"
         records = re.findall(r"VOXEL LOOT (collected|dropped|retained) seed=(\d+) id=(\d+)", "\n".join(loot_logs))
         acquired = sorted(int(seed) for action, seed, _ in records if action != "dropped")
         assert acquired == list(range(6)), f"Missing or duplicate voxel acquisitions: {records}"

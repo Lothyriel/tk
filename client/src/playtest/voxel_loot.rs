@@ -15,6 +15,8 @@ use crate::{
     sync::inventory::State,
 };
 
+use super::inventory_grid::Probe;
+
 pub(super) fn enabled() -> bool {
     std::env::var_os("TK_PLAYTEST_VOXEL_LOOT").is_some()
 }
@@ -38,6 +40,8 @@ pub(super) struct Route {
     inspection_view: usize,
     inspection_until: f64,
     inspection_capture: Option<String>,
+    held_bandage: Option<ItemInstanceId>,
+    bandage_drop_sent: bool,
 }
 
 impl Route {
@@ -99,10 +103,14 @@ impl Route {
         actor: &ClientData,
         inventory: &State,
         network: &mut RenetClient,
-        (raid, peer, now): (u32, bool, f64),
+        (raid, peer, now, grid_probe): (u32, bool, f64, Option<&mut Probe>),
         inspection: Option<(&mut Panel, Option<Shown>)>,
     ) -> bool {
         let dual = std::env::var("TK_PLAYTEST_CLIENTS").is_ok_and(|n| n == "2");
+        assert!(
+            !dual || grid_probe.is_none(),
+            "grid checkpoint requires the solo loot route"
+        );
         let order: &[usize] = match (dual, peer) {
             (false, _) => &[0, 1, 2, 3, 5, 4],
             (true, false) => &[0, 1, 4],
@@ -129,7 +137,7 @@ impl Route {
         }
         let seed = order[self.index];
         let definition = S1_SEEDS[seed];
-        if let Some((id, _)) = grid
+        if let Some((id, owned)) = grid
             .items
             .iter()
             .find(|(_, item)| item.definition == definition)
@@ -138,6 +146,48 @@ impl Route {
                 && !self.inspect(panel, shown, raid, seed, *id, now)
             {
                 return false;
+            }
+            if let Some(probe) = grid_probe {
+                match seed {
+                    0 => {
+                        assert!(
+                            owned.quantity >= 2,
+                            "grid checkpoint needs the integrated two-bandage seed"
+                        );
+                        self.held_bandage = Some(*id);
+                        info!("VOXEL LOOT collected seed={seed} id={}", id.0);
+                        self.advance_seed();
+                        return false;
+                    }
+                    2 if self.held_bandage.is_some() => {
+                        if !probe.ready_to_resume() {
+                            return false;
+                        }
+                        let bandage = self.held_bandage.unwrap();
+                        if !self.bandage_drop_sent {
+                            if let Some(request) = inventory.drop_request(raid, actor.id, bandage)
+                                && let Ok(bytes) = request.encode()
+                                && network.can_send_message(CHANNEL, bytes.len())
+                            {
+                                network.send_message(CHANNEL, bytes);
+                                self.bandage_drop_sent = true;
+                            }
+                            return false;
+                        }
+                        if grid.items.iter().any(|(id, _)| *id == bandage)
+                            || !inventory
+                                .ground()
+                                .0
+                                .iter()
+                                .any(|item| item.id == bandage && item.seed == 0)
+                        {
+                            return false;
+                        }
+                        info!("VOXEL LOOT dropped seed=0 id={}", bandage.0);
+                        self.held_bandage = None;
+                    }
+                    _ => (),
+                }
             }
             if self.index + 1 == order.len() {
                 if actor.participant.carried == 1 {
@@ -167,12 +217,7 @@ impl Route {
             + Vec3::from_array(item_visuals()[definition].collider_center());
         if self.dropped {
             info!("VOXEL LOOT dropped seed={seed} id={}", item.id.0);
-            self.index += 1;
-            self.dropped = false;
-            self.approach = 0;
-            self.capture_until = 0.0;
-            self.pickup_id = None;
-            self.inspection_view = 0;
+            self.advance_seed();
             return false;
         }
         if seed == 2 && self.approach == 0 {
@@ -226,6 +271,15 @@ impl Route {
             self.pickup_id = Some(item.id);
         }
         false
+    }
+
+    fn advance_seed(&mut self) {
+        self.index += 1;
+        self.dropped = false;
+        self.approach = 0;
+        self.capture_until = 0.0;
+        self.pickup_id = None;
+        self.inspection_view = 0;
     }
 }
 

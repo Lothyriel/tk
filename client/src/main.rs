@@ -14,6 +14,14 @@ fn main() {
     let playtest = std::env::args().any(|argument| argument == "--playtest");
     let grid_probe = std::env::args().any(|argument| argument == "--inventory-grid-probe");
     let arena_menu_probe = playtest::arena_menu::Probe::requested();
+    let voxel_grid = playtest && std::env::var_os("TK_PLAYTEST_INVENTORY_GRID").is_some();
+    assert!(
+        !voxel_grid
+            || (std::env::var_os("TK_PLAYTEST_VOXEL_LOOT").is_some()
+                && std::env::var_os("TK_PLAYTEST_NO_CAPTURE").is_some()
+                && std::env::var_os("TK_PLAYTEST_VIDEO").is_none()),
+        "the combined grid route requires voxel loot with capture and video disabled"
+    );
     assert!(
         !(playtest && arena_menu_probe.is_some()),
         "run the Arena menu probe without --playtest"
@@ -66,8 +74,10 @@ fn main() {
     if playtest {
         app.add_plugins(playtest::Plugin);
     }
-    if grid_probe {
-        app.add_plugins(playtest::inventory_grid::Plugin);
+    if grid_probe || voxel_grid {
+        app.add_plugins(playtest::inventory_grid::Plugin {
+            integrated: voxel_grid,
+        });
     }
     if let Some(probe) = arena_menu_probe {
         app.add_plugins(probe);

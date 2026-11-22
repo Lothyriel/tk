@@ -1,5 +1,5 @@
 //! Native client probe, driven by synthetic keyboard events. Never writes an
-//! inventory intent or replica. The operator collects loot and opens the grid.
+//! inventory intent or replica.
 use std::collections::{BTreeMap, VecDeque};
 
 use bevy::{
@@ -26,15 +26,22 @@ use crate::{
     sync::{ClientSession, inventory::State},
 };
 
-pub(crate) struct Plugin;
+pub(crate) struct Plugin {
+    pub integrated: bool,
+}
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Probe>()
-            .add_systems(Startup, || {
+        app.insert_resource(Probe {
+            integrated: self.integrated,
+            ..default()
+        })
+        .add_systems(Update, drive.after(ClientSystems::Present));
+        if !self.integrated {
+            app.add_systems(Startup, || {
                 info!("GRID PROBE: collect a 1x2 item, then open the backpack grid with Tab");
-            })
-            .add_systems(Update, drive.after(ClientSystems::Present));
+            });
+        }
     }
 }
 
@@ -75,7 +82,11 @@ struct Check {
 }
 
 #[derive(Resource, Default)]
-struct Probe {
+pub(super) struct Probe {
+    integrated: bool,
+    requested: bool,
+    opening: bool,
+    closing: bool,
     run: Option<(SessionKey, f64, [u32; 2])>,
     keys: VecDeque<Vec<KeyCode>>,
     release: Vec<KeyCode>,
@@ -84,6 +95,12 @@ struct Probe {
 }
 
 impl Probe {
+    /// The loot driver must remain paused until Tab has closed the panel.
+    pub(super) fn ready_to_resume(&mut self) -> bool {
+        self.requested = true;
+        self.finished
+    }
+
     fn route(
         &mut self,
         grid: &InventorySnapshot,
@@ -157,10 +174,39 @@ fn drive(
     mut keyboard: MessageWriter<KeyboardInput>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if probe.finished {
+    if probe.finished || (probe.integrated && !probe.requested) {
         return;
     }
     let (window_id, window) = *window;
+    let emit = |key_code, state| KeyboardInput {
+        key_code,
+        window: window_id,
+        state,
+        repeat: false,
+        text: None,
+        logical_key: Key::Unidentified(NativeKey::Unidentified),
+    };
+    if !probe.release.is_empty() {
+        for key in probe.release.drain(..) {
+            keyboard.write(emit(key, ButtonState::Released));
+        }
+        return;
+    }
+    if probe.closing {
+        assert!(
+            !panel.open,
+            "GRID PROBE closing Tab did not close the panel"
+        );
+        probe.finished = true;
+        return;
+    }
+    if probe.integrated && !probe.opening && window.focused && session.playing(player.0) {
+        assert!(!panel.open, "GRID PROBE expected a closed backpack");
+        keyboard.write(emit(KeyCode::Tab, ButtonState::Pressed));
+        probe.release.push(KeyCode::Tab);
+        probe.opening = true;
+        return;
+    }
     let sequences = [input.fire_pressed_sequence, input.reload_sequence];
     if let Some((key, start, before)) = probe.run {
         assert!(
@@ -189,20 +235,6 @@ fn drive(
     ) else {
         return;
     };
-    let emit = |key_code, state| KeyboardInput {
-        key_code,
-        window: window_id,
-        state,
-        repeat: false,
-        text: None,
-        logical_key: Key::Unidentified(NativeKey::Unidentified),
-    };
-    if !probe.release.is_empty() {
-        for key in probe.release.drain(..) {
-            keyboard.write(emit(key, ButtonState::Released));
-        }
-        return;
-    }
     if let Some(keys) = probe.keys.pop_front() {
         assert_eq!(
             grid.version.revision + 1,
@@ -260,6 +292,10 @@ fn drive(
                     );
                     return;
                 }
+                assert!(
+                    !probe.integrated,
+                    "combined route needs a confirmed bandage stack with quantity >= 2"
+                );
                 info!("GRID PROBE SKIP split/merge: no confirmed bandage stack with quantity >= 2");
                 info!("GRID PROBE PASS move/rotate only");
             }
@@ -282,11 +318,20 @@ fn drive(
                 info!("GRID PROBE PASS move/rotate and split/merge");
             }
         }
-        probe.finished = true;
-        exit.write(AppExit::Success);
+        if probe.integrated {
+            keyboard.write(emit(KeyCode::Tab, ButtonState::Pressed));
+            probe.release.push(KeyCode::Tab);
+            probe.closing = true;
+        } else {
+            probe.finished = true;
+            exit.write(AppExit::Success);
+        }
         return;
     }
     let Some((id, target)) = grid.items.iter().find_map(|(id, item)| {
+        if probe.integrated && item.definition != "food.water500" {
+            return None;
+        }
         let footprint = planned_items().get(item.definition.as_str())?.footprint;
         if footprint.dimensions() != [1, 2] {
             return None;
@@ -315,6 +360,68 @@ mod tests {
         CompartmentId,
         item_inventory::{Condition, ItemContents, VersionedCompartment},
     };
+
+    #[test]
+    fn inventory_grid_probe_handoff_waits_until_tab_has_closed_the_panel() {
+        let mut app = App::new();
+        app.add_message::<AppExit>()
+            .add_message::<KeyboardInput>()
+            .init_resource::<State>()
+            .init_resource::<Panel>()
+            .init_resource::<LocalInput>()
+            .init_resource::<Time<Real>>()
+            .insert_resource(PlayerId(7))
+            .insert_resource(ClientSession {
+                raid: common::raid::RaidState {
+                    phase: common::raid::RaidPhase::Active,
+                    ..default()
+                },
+                players: vec![common::ClientData {
+                    id: 7,
+                    participant: common::raid::Participant {
+                        status: common::raid::RaidStatus::Active,
+                        ..default()
+                    },
+                    ..default()
+                }],
+                ..default()
+            })
+            .add_plugins(Plugin { integrated: true });
+        app.world_mut().spawn((
+            Window {
+                focused: true,
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        let emitted = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<Messages<KeyboardInput>>()
+                .drain()
+                .map(|key| (key.key_code, key.state))
+                .collect::<Vec<_>>()
+        };
+        app.update();
+        assert!(
+            emitted(&mut app).is_empty(),
+            "loot must request the grid first"
+        );
+        assert!(!app.world_mut().resource_mut::<Probe>().ready_to_resume());
+        app.update();
+        assert_eq!(emitted(&mut app), [(KeyCode::Tab, ButtonState::Pressed)]);
+        {
+            // Isolate the handoff from transactions (already covered by
+            // inventory_grid tests): model the frame after Merge confirmation.
+            let mut probe = app.world_mut().resource_mut::<Probe>();
+            probe.closing = true;
+        }
+        app.update();
+        assert_eq!(emitted(&mut app), [(KeyCode::Tab, ButtonState::Released)]);
+        assert!(!app.world_mut().resource_mut::<Probe>().ready_to_resume());
+        app.update();
+        assert!(app.world_mut().resource_mut::<Probe>().ready_to_resume());
+        assert!(app.world().resource::<Messages<AppExit>>().is_empty());
+    }
 
     #[test]
     fn inventory_grid_probe_plans_rotated_move_around_occupied_cells() {
