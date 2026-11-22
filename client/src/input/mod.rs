@@ -76,6 +76,7 @@ struct InputOverlays<'w> {
 struct GameplayPress {
     fire_blocked: bool,
     aim_blocked: bool,
+    jump_blocked: bool,
 }
 
 fn gameplay_allowed(
@@ -169,7 +170,9 @@ fn keyboard(
     {
         input.prone_sequence = input.prone_sequence.wrapping_add(1);
     }
-    input.jump = active && keys.pressed(KeyCode::Space);
+    let jump = keys.pressed(KeyCode::Space);
+    presses.jump_blocked = jump && (!active || presses.jump_blocked);
+    input.jump = active && jump && !presses.jump_blocked;
     capture_pickup(
         &mut input,
         inventory.as_deref(),

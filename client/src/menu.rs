@@ -482,7 +482,10 @@ fn route(
         menu.selected = if old == Surface::Bench && menu.surface == Surface::Lobby {
             menu.lobby_focus.take()
         } else if old == Surface::Settings
-            && matches!(menu.surface, Surface::Lobby | Surface::Pause)
+            && matches!(
+                menu.surface,
+                Surface::Lobby | Surface::Pause | Surface::ArenaPause
+            )
         {
             menu.settings_focus.take()
         } else {
@@ -631,6 +634,8 @@ fn route(
             menu.settings = None;
             menu.surface = if lobby {
                 Surface::Lobby
+            } else if arena_active {
+                Surface::ArenaPause
             } else {
                 Surface::Pause
             };
@@ -1382,6 +1387,74 @@ mod tests {
         let input = app.world().resource::<LocalInput>();
         assert!(!input.fire && !input.aim);
         assert_eq!((input.fire_pressed_sequence, input.lobby_sequence), (0, 0));
+    }
+
+    #[test]
+    fn arena_preferences_return_focus_to_the_invoking_control() {
+        for escape in [false, true] {
+            let mut app = fixture();
+            {
+                let mut session = app.world_mut().resource_mut::<ClientSession>();
+                session.raid.phase = RaidPhase::Active;
+                session.raid.mode = MatchMode::ArenaSolo;
+                session.players[0].participant.begin();
+            }
+            let settings = button(&mut app, Action::Settings);
+            let back = button(&mut app, Action::BackSettings);
+            key(&mut app, KeyCode::Escape);
+            assert_eq!(app.world().resource::<Menu>().surface, Surface::ArenaPause);
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            click(&mut app, settings);
+            app.update();
+            assert_eq!(app.world().resource::<Menu>().surface, Surface::Settings);
+            if escape {
+                key(&mut app, KeyCode::Escape);
+            } else {
+                click(&mut app, back);
+                app.update();
+            }
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            for _ in 0..2 {
+                let menu = app.world().resource::<Menu>();
+                assert_eq!(menu.surface, Surface::ArenaPause);
+                assert!(menu.settings.is_none());
+                focus(&app, settings);
+                assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 0);
+                app.update();
+            }
+        }
+    }
+
+    #[test]
+    fn menu_resume_space_does_not_jump_until_released_and_pressed_again() {
+        let mut app = fixture();
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+        key(&mut app, KeyCode::Escape);
+        let resume = button(&mut app, Action::Resume);
+        focus(&app, resume);
+        key(&mut app, KeyCode::Space);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear_just_pressed(KeyCode::Space);
+        for _ in 0..4 {
+            app.update();
+            assert!(!app.world().resource::<LocalInput>().jump);
+        }
+        assert_eq!(app.world().resource::<Menu>().surface, Surface::Playing);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::Space);
+        app.update();
+        key(&mut app, KeyCode::Space);
+        assert!(app.world().resource::<LocalInput>().jump);
     }
 
     #[test]
