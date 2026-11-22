@@ -313,6 +313,44 @@ de frame time nem valida naturalidade em movimento.
 
 `docs/GAME_STATE.md` é o guia do jogador: só muda quando execução, controles, gameplay ou limitações relevantes mudam.
 
+### Inversão lateral em pé — contrato de telemetria (TAR-97)
+
+`python scripts/strafe_reversal.py "$OUT/peer/strafe-reversal.csv"` analisa
+um CSV normalizado; não executa a rota. A produção desse CSV ainda precisa
+ser ligada na bancada pelo integrador. Usar pista plana livre, yaw fixo, e
+um único strafe direita→esquerda; registrar uma linha por quadro apresentado
+do mesmo ator remoto, começando antes da inversão e incluindo o apoio
+posterior. Não filtrar quadros sem apoio ou fora da postura: eles quebram a
+continuidade. Se o produtor também registrar a borda do input no líder,
+mantê-la separada; o intervalo medido vem do estado confirmado.
+
+Colunas obrigatórias (extras são ignoradas):
+
+| Colunas | Origem e unidade |
+| --- | --- |
+| `seconds`, `snapshot`, `actor_id` | Relógio monotônico do observador em segundos, sequência inteira do snapshot aceito e ID inteiro do ator. Sequências repetidas e saltos são permitidos. |
+| `lateral_velocity`, `yaw` | Velocidade **confirmada** em m/s, projetada no eixo direito do yaw fixo (direita positiva), e yaw confirmado em radianos. Reutilizar os valores confirmados se o snapshot se repetir. |
+| `standing`, `grounded`, `crouched` | Flags confirmadas `0`/`1`; `standing=1` significa modo físico `Standing`, não ausência de agachamento. |
+| `left_weight`, `right_weight` | Pesos de apoio apresentados em `[0,1]`. |
+| `left_{x,y,z}`, `right_{x,y,z}` | Pés apresentados, coordenadas mundiais em metros. |
+| `left_anchor_{x,y,z}`, `right_anchor_{x,y,z}` | Âncoras apresentadas, coordenadas mundiais em metros. |
+| `left_confirmed_{x,y,z}`, `right_confirmed_{x,y,z}` | Âncoras do snapshot aceito, transformadas para o mesmo espaço mundial. |
+| `chest_qx`, `chest_qy`, `chest_qz`, `chest_qw` | Quaternion unitário do tórax apresentado em espaço mundial. |
+
+O JSON delimita a reversão pela última amostra positiva antes da primeira
+negativa; zero pode ser observado ou pulado. A janela exige snapshot novo,
+yaw fixo (tolerância de 0,001 rad), Standing, grounded, sem crouch e sem
+intervalos entre quadros de 50 ms ou mais. Saltos de sequência são
+diagnosticados separadamente: não implicam lacuna no relógio de apresentação.
+Para cada pé com peso >0,95 em toda a janela, o intervalo se estende até a
+primeira quebra de apoio, postura, cadência ou fim do CSV em cada direção.
+No pico de excursão do pé, as duas âncoras são comparadas com os mesmos
+extremos temporais. A continuidade do tórax é o maior ângulo entre quadros
+da janela, insensível à troca de sinal do quaternion. Saída `0` significa
+cobertura medida, não aceite visual; `1` indica cobertura insuficiente;
+`2` indica erro de leitura/contrato. Não aplicar tolerância por tick de
+simulação diretamente aos quadros do observador.
+
 ## Referências dos harnesses
 
 - [Skills OpenCode](https://opencode.ai/docs/skills)
