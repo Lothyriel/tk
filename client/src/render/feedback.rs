@@ -374,7 +374,6 @@ pub(super) struct Response {
     look_rate: Vec2,
     travel: Vec3,
     inertia: Vec3,
-    motion_phase: f32,
     landing: f32,
     pub(super) ads: f32,
     was_alive: bool,
@@ -479,18 +478,14 @@ fn locomotion_offset(phase: f32, speed: f32, ads: f32) -> Vec3 {
         * (1.0 - ads.clamp(0.0, 1.0) * 0.92)
 }
 
-fn carry_motion(elapsed: f32, speed: f32, ads: f32, ready: bool) -> (Vec3, f32) {
+fn idle_breath(elapsed: f32, speed: f32, ads: f32, ready: bool) -> Vec3 {
     if !ready {
-        return (Vec3::ZERO, 0.0);
+        return Vec3::ZERO;
     }
-    let sprint = common::weapon_animation::ease(
-        (speed - common::PLAYER_WALK_SPEED)
-            / (common::PLAYER_RUN_SPEED - common::PLAYER_WALK_SPEED),
-    ) * (1.0 - ads);
     let breath = (elapsed * (0.27 * std::f32::consts::TAU)).sin()
         * (1.0 - common::weapon_animation::ease(speed / common::PLAYER_WALK_SPEED))
         * (1.0 - ads);
-    (Vec3::Y * (0.002 * breath - 0.035 * sprint), 0.16 * sprint)
+    Vec3::Y * (0.002 * breath)
 }
 
 pub(super) fn advance(
@@ -637,9 +632,6 @@ pub(super) fn advance(
             .inertia
             .lerp(inertia, 1.0 - (-time.delta_secs() * 10.0).exp());
         let speed = Vec2::new(response.travel.x, response.travel.z).length();
-        let rate = common::humanoid::stride_phase_rate(speed, player.pose.crouch);
-        response.motion_phase =
-            (response.motion_phase + rate * time.delta_secs()) % std::f32::consts::TAU;
         response.landing +=
             (player.pose.landing - response.landing) * (1.0 - (-time.delta_secs() * 8.0).exp());
         let requested = if local {
@@ -701,6 +693,7 @@ pub(super) fn advance(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct LocalAnimationState<'w> {
     time: Res<'w, Time>,
+    real_time: Option<Res<'w, Time<Real>>>,
     id: Res<'w, PlayerId>,
     session: Res<'w, ClientSession>,
     feedback: Res<'w, Feedback>,
@@ -742,6 +735,7 @@ pub(super) fn animate_local(
 ) {
     let LocalAnimationState {
         time,
+        real_time,
         id,
         session,
         feedback,
@@ -753,13 +747,44 @@ pub(super) fn animate_local(
     let Some(response) = feedback.responses.get(&id.0) else {
         return;
     };
-    let speed = Vec2::new(response.travel.x, response.travel.z).length();
-    let phase = response.motion_phase;
+    let mut stride = common::humanoid::PoseState {
+        phase: p.pose.phase,
+        velocity: response.travel.into(),
+        acceleration: p.pose.acceleration,
+        turn_rate: p.pose.turn_rate,
+        mode: p.pose.mode,
+        ads: response.ads,
+        ..default()
+    };
+    if let Some(motion) =
+        real_time.and_then(|time| session.local_motion.sample(time.elapsed_secs_f64()))
+    {
+        stride.phase = motion.stride_phase;
+        stride.velocity = motion.velocity.into();
+        stride.acceleration = motion.acceleration.into();
+        stride.turn_rate = motion.turn_rate;
+    }
+    let speed = stride.velocity[0].hypot(stride.velocity[2]);
+    let phase = stride.phase;
     let motion_weight = 1.0 - response.ads * 0.92;
     let displayed = response.displayed.unwrap_or(p.weapon);
     let action = response
         .action
         .unwrap_or_else(|| reload_action(displayed, 0.0, false));
+    let spec = session
+        .configurations
+        .cache
+        .get(session.configurations.cache.epoch(), p.configuration)
+        .map_or_else(|| displayed.spec(), |entry| &entry.resolved);
+    use common::catalog::AnchorKind;
+    let carry = spec
+        .assembly
+        .anchors
+        .get(&AnchorKind::SupportGrip)
+        .filter(|_| p.alive && p.pose.physical.is_none())
+        .map_or_else(common::humanoid::armed_stride::Carry::default, |support| {
+            common::humanoid::armed_stride::sample(&stride, *support, action)
+        });
     let physical_drop = if matches!(p.pose.mode, PhysicalMode::Fallen | PhysicalMode::Recovering) {
         if p.pose.mode == PhysicalMode::Recovering {
             1.0 - common::weapon_animation::ease((p.pose.mode_time - 0.75) / 0.25)
@@ -774,24 +799,29 @@ pub(super) fn animate_local(
             continue;
         }
         let base = *t;
-        let (carry_offset, carry_pitch) = carry_motion(
-            time.elapsed_secs(),
-            speed,
-            response.ads,
-            p.alive && p.pose.mode == PhysicalMode::Standing,
-        );
-        t.translation += locomotion_offset(phase, speed, response.ads)
-            + carry_offset
+        t.translation += locomotion_offset(phase, speed, response.ads) * (1.0 - carry.weight)
+            + carry.translation
+            + idle_breath(
+                time.elapsed_secs(),
+                speed,
+                response.ads,
+                p.alive && p.pose.mode == PhysicalMode::Standing,
+            )
             + action.root.translation
-            + Vec3::new(response.sway.x * 0.2, 0.0, response.recoil);
-        t.translation += response.inertia;
+            + Vec3::new(
+                response.sway.x * 0.2 * (1.0 - carry.weight),
+                0.0,
+                response.recoil,
+            );
+        t.translation += response.inertia * (1.0 - carry.weight);
         t.translation.y -= response.landing * 0.025 * motion_weight;
         t.rotation *=
             Quat::from_rotation_x((response.travel.y * 0.008).clamp(-0.05, 0.05) * motion_weight);
         let injury = (1.0 - p.body.anatomy.handling()) * (time.elapsed_secs() * 3.7).sin() * 0.035;
-        t.rotation *= Quat::from_rotation_x(response.sway.y * motion_weight + carry_pitch);
-        t.rotation *= Quat::from_rotation_y(response.sway.x * motion_weight);
-        t.rotation *= Quat::from_rotation_z((injury - response.sway.x * 0.5) * motion_weight);
+        let sway = response.sway * (1.0 - carry.weight);
+        t.rotation *= Quat::from_rotation_x(sway.y * motion_weight);
+        t.rotation *= Quat::from_rotation_y(sway.x * motion_weight);
+        t.rotation *= Quat::from_rotation_z((injury - sway.x * 0.5) * motion_weight);
         {
             let aspect = if let Projection::Perspective(p) = &**projection {
                 p.aspect_ratio
@@ -803,20 +833,27 @@ pub(super) fn animate_local(
                 common::weapon_animation::ease(response.ads),
             );
             if displayed != WeaponKind::Pistol {
-                let spec = session
-                    .configurations
-                    .cache
-                    .get(session.configurations.cache.epoch(), p.configuration)
-                    .map_or_else(|| displayed.spec(), |entry| &entry.resolved);
                 offset = spec.assembly.hip_from_root.translation.lerp(
                     spec.assembly.ads_from_root.translation,
                     common::weapon_animation::ease(response.ads),
                 );
             }
+            // The view rig starts at the eye. Apply the same trigger-pivoted
+            // carry as the world rig, without forwarding it to either camera.
+            let carry_rotation = carry.rotation();
+            let pivot = offset
+                + spec
+                    .assembly
+                    .anchors
+                    .get(&AnchorKind::TriggerGrip)
+                    .map_or(Vec3::ZERO, |anchor| anchor.translation);
+            let carry_correction = t.rotation * (pivot - carry_rotation * pivot);
+            t.rotation *= carry_rotation;
             // Cant about the receiver, not the eye. The complete configured
             // hierarchy follows this rigid layer, including both grip contacts.
             t.translation = base.translation
                 + base.rotation * (t.translation - base.translation)
+                + carry_correction
                 + t.rotation * (offset - action.root.rotation * offset);
         }
         t.rotation *= action.root.rotation;
@@ -1170,29 +1207,13 @@ fn pistol_frame_correction(points: &[Vec3], projection: &PerspectiveProjection, 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn carry_pose_tracks_speed_and_keeps_idle_breathing_subtle() {
+    fn idle_breathing_is_subtle_and_quiet_during_motion_or_ads() {
         use super::*;
-        let (idle, pitch) = carry_motion(1.0 / (4.0 * 0.27), 0.0, 0.0, true);
+        let idle = idle_breath(1.0 / (4.0 * 0.27), 0.0, 0.0, true);
         assert!((idle.y - 0.002).abs() < 1e-6);
-        assert_eq!(pitch, 0.0);
-        let walk = carry_motion(1.0, common::PLAYER_WALK_SPEED, 0.0, true);
-        let jog = carry_motion(
-            1.0,
-            (common::PLAYER_WALK_SPEED + common::PLAYER_RUN_SPEED) * 0.5,
-            0.0,
-            true,
-        );
-        let sprint = carry_motion(1.0, common::PLAYER_RUN_SPEED, 0.0, true);
-        assert!(sprint.0.y < jog.0.y && jog.0.y < walk.0.y);
-        assert!(sprint.1 > jog.1 && jog.1 > walk.1);
-        assert_eq!(
-            carry_motion(1.0, common::PLAYER_RUN_SPEED, 1.0, true),
-            (Vec3::ZERO, 0.0)
-        );
-        assert_eq!(
-            carry_motion(1.0, common::PLAYER_RUN_SPEED, 0.0, false),
-            (Vec3::ZERO, 0.0)
-        );
+        assert_eq!(idle_breath(1.0, PLAYER_WALK_SPEED, 0.0, true), Vec3::ZERO);
+        assert_eq!(idle_breath(1.0, 0.0, 1.0, true), Vec3::ZERO);
+        assert_eq!(idle_breath(1.0, 0.0, 0.0, false), Vec3::ZERO);
     }
 
     fn reload_snapshot(

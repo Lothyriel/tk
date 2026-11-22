@@ -968,6 +968,7 @@ mod view_tests {
                 stride_speed: 0.0,
                 ads: 0.0,
                 roll: 0.22,
+                ..default()
             },
             0.0,
             false,

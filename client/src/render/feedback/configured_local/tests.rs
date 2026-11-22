@@ -1011,17 +1011,182 @@ impl Fixture {
 }
 
 #[test]
-fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_reload() {
-    use common::catalog::{Attachment, DefinitionId};
-    for (short, suppressed, grip, position) in [
-        (true, false, 0, 0),
-        (false, true, 134, 0),
-        (false, true, 134, 9),
-        (false, false, 135, 0),
-        (false, false, 135, 2),
-    ] {
-        let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
-        let mut packet = f
+fn armed_sprint_replays_two_kits_through_snapshot_gaps_and_ads() {
+    use common::{catalog::AnchorKind, humanoid::stride_phase_rate};
+    for fps in [30, 165] {
+        for suppressed in [false, true] {
+            let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
+            f.use_m4a1_kit(
+                !suppressed,
+                suppressed,
+                if suppressed { 134 } else { 0 },
+                if suppressed { 9 } else { 0 },
+            );
+            f.app
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    std::time::Duration::from_secs_f64(1.0 / f64::from(fps)),
+                ));
+            f.app.world_mut().resource_mut::<LocalInput>().aim = true;
+            for _ in 0..fps {
+                f.step();
+            }
+            assert!(f.app.world().resource::<Feedback>().responses[&7].ads > 0.98);
+            let hand = named(&f.app, f.root, "configured-trigger-palm");
+            let mut previous = f
+                .app
+                .world()
+                .get::<GlobalTransform>(hand)
+                .unwrap()
+                .translation();
+            let initial_eye = *f.app.world().get::<Transform>(f.camera).unwrap();
+            let initial_world_camera = *f.app.world().get::<Transform>(f.world_camera).unwrap();
+            {
+                let session = f.app.world().resource::<ClientSession>();
+                let spec = &session.configurations.cache.get(1, 2).unwrap().resolved;
+                let carry = common::humanoid::armed_stride::sample(
+                    &common::humanoid::PoseState {
+                        velocity: [0.0, 0.0, -PLAYER_RUN_SPEED],
+                        phase: std::f32::consts::FRAC_PI_4, // neutral vertical stride term
+                        ..default()
+                    },
+                    spec.assembly.anchors[&AnchorKind::SupportGrip],
+                    reload_action(WeaponKind::Rifle, 0.0, false),
+                );
+                let (height, pitch) = if suppressed {
+                    (-0.027, 0.11)
+                } else {
+                    (-0.040, 0.16)
+                };
+                assert!(
+                    (carry.translation.y - height).abs() < 0.001,
+                    "RVG={suppressed}, socket={:?}, weight={}, carry_y={}",
+                    spec.assembly.anchors[&AnchorKind::SupportGrip].translation,
+                    carry.weight,
+                    carry.translation.y,
+                );
+                assert!((carry.angles.x - pitch).abs() < 0.004);
+            }
+            let mut phase = 5.8;
+            let mut next_tick = 0;
+            let mut z = 0.0;
+            let mut previous_world: Option<Transform> = None;
+            for frame in 0..=3 * fps {
+                let time = f.app.world().resource::<Time<Real>>().elapsed_secs_f64();
+                let route_time = f64::from(frame) / f64::from(fps);
+                let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+                while f64::from(next_tick) / 60.0 <= route_time {
+                    let t = next_tick as f32 / 60.0;
+                    let speed = PLAYER_WALK_SPEED * (t / 0.35).min(1.0)
+                        + (PLAYER_RUN_SPEED - PLAYER_WALK_SPEED)
+                            * ((t - 0.45) / 0.45).clamp(0.0, 1.0)
+                        - PLAYER_RUN_SPEED * ((t - 1.50) / 0.36).clamp(0.0, 1.0);
+                    let turn =
+                        (std::f32::consts::PI * ((t - 0.95) / 0.45).clamp(0.0, 1.0)).sin() * 4.0;
+                    let push = if t < 1.45 { -5.0 } else { 7.0 };
+                    phase = (phase + stride_phase_rate(speed, 0.0) / 60.0) % std::f32::consts::TAU;
+                    z -= speed / 60.0;
+                    let stamp = time - (route_time - f64::from(t));
+                    if next_tick == 0 || next_tick % 3 != 0 {
+                        let motion = crate::sync::LocalMotionPose {
+                            position: Vec3::Z * z,
+                            stride_phase: phase,
+                            stride_speed: speed,
+                            velocity: Vec3::NEG_Z * speed,
+                            acceleration: Vec2::new(turn, push),
+                            turn_rate: turn,
+                            ..default()
+                        };
+                        let pose = &mut session.players[0].pose;
+                        pose.phase = phase;
+                        pose.velocity = motion.velocity.into();
+                        pose.acceleration = motion.acceleration.into();
+                        pose.turn_rate = turn;
+                        pose.grounded = true;
+                        session.local_motion.record(t, motion, stamp, false);
+                    }
+                    next_tick += 1;
+                }
+                f.app.world_mut().resource_mut::<LocalInput>().run =
+                    (0.45..1.50).contains(&route_time);
+                f.step();
+                f.assert_contacts();
+                let world = f.app.world();
+                let current = world.get::<GlobalTransform>(hand).unwrap().translation();
+                assert!(
+                    current.distance(previous) < 2.5 / fps as f32 + 0.001,
+                    "{fps} Hz RVG={suppressed} frame={frame}: palm jump {}",
+                    current.distance(previous)
+                );
+                previous = current;
+                assert_eq!(*world.get::<Transform>(f.camera).unwrap(), initial_eye);
+                assert_eq!(
+                    *world.get::<Transform>(f.world_camera).unwrap(),
+                    initial_world_camera
+                );
+                let ads = world.resource::<Feedback>().responses[&7].ads;
+                if (1.1..1.5).contains(&route_time) {
+                    assert!(ads < 0.01, "sprint blocks held ADS: {ads}");
+                    let forward = world.get::<Transform>(f.view).unwrap().rotation * Vec3::NEG_Z;
+                    assert!(forward.y > 0.07, "POV should show the sprint carry pitch");
+                }
+                if route_time > 2.7 {
+                    assert!(ads > 0.98, "ADS must resume after braking");
+                }
+                let session = world.resource::<ClientSession>();
+                let player = &session.players[0];
+                let spec = &session.configurations.cache.get(1, 2).unwrap().resolved;
+                let motion = session.local_motion.sample(time).unwrap();
+                let pose = common::humanoid::PoseState {
+                    ads,
+                    phase: motion.stride_phase,
+                    velocity: motion.velocity.into(),
+                    acceleration: motion.acceleration.into(),
+                    turn_rate: motion.turn_rate,
+                    ..player.pose.clone()
+                };
+                let rig = common::humanoid::configured::evaluate_with_carry(
+                    &pose,
+                    [1.0; 2],
+                    spec,
+                    &player.mechanics,
+                    None,
+                    Some(0.058),
+                )
+                .unwrap();
+                let root = rig.weapon.unwrap().root;
+                if (1.1..1.5).contains(&route_time) {
+                    assert!((root.rotation * Vec3::NEG_Z).y > 0.07);
+                }
+                for (segment, socket) in [
+                    (common::humanoid::Segment::LeftHand, AnchorKind::SupportGrip),
+                    (
+                        common::humanoid::Segment::RightHand,
+                        AnchorKind::TriggerGrip,
+                    ),
+                ] {
+                    let palm = rig.segments[segment.index()].transform();
+                    let contact = root.mul_transform(spec.assembly.anchors[&socket]);
+                    assert!(palm.translation.distance(contact.translation) < 2e-6);
+                    assert!(palm.rotation.angle_between(contact.rotation) < 0.002);
+                }
+                if let Some(previous) = previous_world {
+                    assert!(
+                        root.translation.distance(previous.translation) < 2.5 / fps as f32 + 0.001
+                            && root.rotation.angle_between(previous.rotation)
+                                < 6.0 / fps as f32 + 0.002,
+                        "{fps} Hz RVG={suppressed} frame={frame}: world rig jump"
+                    );
+                }
+                previous_world = Some(root);
+            }
+        }
+    }
+}
+
+impl Fixture {
+    fn use_m4a1_kit(&mut self, short: bool, suppressed: bool, grip: u32, position: u16) {
+        use common::catalog::{Attachment, DefinitionId};
+        let mut packet = self
             .app
             .world()
             .resource::<ClientSession>()
@@ -1072,7 +1237,7 @@ fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_rel
                 .push(attachment(11, grip, Some(3), "bottom", position));
         }
         {
-            let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+            let mut session = self.app.world_mut().resource_mut::<ClientSession>();
             session
                 .configurations
                 .cache
@@ -1080,6 +1245,20 @@ fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_rel
                 .unwrap();
             session.players[0].configuration = 2;
         }
+    }
+}
+
+#[test]
+fn configured_local_m4a1_kit_extremes_keep_rendered_contacts_through_ads_and_reload() {
+    for (short, suppressed, grip, position) in [
+        (true, false, 0, 0),
+        (false, true, 134, 0),
+        (false, true, 134, 9),
+        (false, false, 135, 0),
+        (false, false, 135, 2),
+    ] {
+        let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
+        f.use_m4a1_kit(short, suppressed, grip, position);
         for _ in 0..90 {
             f.step();
         }

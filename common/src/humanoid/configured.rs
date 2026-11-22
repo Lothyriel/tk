@@ -52,12 +52,13 @@ pub struct Posture {
 /// A bladed upper-body stance lets the support shoulder advance toward the
 /// foregrip. ADS closes the stock onto a chest-local pocket; the whole rigid
 /// weapon moves, never either grip independently. Reload/hip poses release it.
-pub fn posture(
+fn posture(
     state: &PoseState,
     segments: &mut [SegmentPose; SEGMENT_COUNT],
     contacts: handling::WeaponContacts,
     action: WeaponAction,
     cover: Option<f32>,
+    carry: armed_stride::Carry,
 ) -> Result<Posture, HandlingError> {
     let chest = Vec3::from(segments[Segment::Thorax.index()].position);
     let mut preferred_root = preferred_root(state, chest, contacts.trigger, action);
@@ -80,11 +81,20 @@ pub fn posture(
             - preferred_root.rotation * stock_from_trigger)
             * (1.0 - ads);
     }
-    let thorax = segments[Segment::Thorax.index()].transform();
+    let mut thorax = segments[Segment::Thorax.index()].transform();
+    if carry.weight > 0.0 {
+        let aim = Quat::from_rotation_x(state.aim_pitch);
+        let trigger_pivot = preferred_root.transform_point(contacts.trigger.translation);
+        preferred_root.rotation = aim * carry.rotation() * aim.inverse() * preferred_root.rotation;
+        preferred_root.translation = trigger_pivot + aim * carry.translation
+            - preferred_root.rotation * contacts.trigger.translation;
+        thorax.rotation *= carry.torso;
+        segments[Segment::Thorax.index()].rotation = thorax.rotation.to_array();
+    }
     let target_rotation = Quat::from_rotation_x(state.aim_pitch)
         * thorax.rotation
         * Quat::from_rotation_y(BLADED_YAW);
-    let shoulder_rotation = Quat::IDENTITY.slerp(target_rotation, turn);
+    let shoulder_rotation = carry.torso.slerp(target_rotation, turn);
     if turn > 0.0 {
         segments[Segment::Thorax.index()].rotation =
             thorax.rotation.slerp(target_rotation, turn).to_array();
@@ -149,6 +159,31 @@ pub fn evaluate(
     action: Option<WeaponAction>,
     cover: Option<f32>,
 ) -> Result<ConfiguredRig, HandlingError> {
+    evaluate_rig(state, legs, spec, mechanics, action, cover, false)
+}
+
+/// Presentation adds the armed carry to the confirmed gait without changing
+/// the authoritative hit rig or the initial conditions of the ragdoll handoff.
+pub fn evaluate_with_carry(
+    state: &PoseState,
+    legs: [f32; 2],
+    spec: &ResolvedWeapon,
+    mechanics: &MechanicalSnapshot,
+    action: Option<WeaponAction>,
+    cover: Option<f32>,
+) -> Result<ConfiguredRig, HandlingError> {
+    evaluate_rig(state, legs, spec, mechanics, action, cover, true)
+}
+
+fn evaluate_rig(
+    state: &PoseState,
+    legs: [f32; 2],
+    spec: &ResolvedWeapon,
+    mechanics: &MechanicalSnapshot,
+    action: Option<WeaponAction>,
+    cover: Option<f32>,
+    present_carry: bool,
+) -> Result<ConfiguredRig, HandlingError> {
     if cover.is_some_and(|v| !v.is_finite() || !(0.0..=0.10).contains(&v)) {
         return Err(HandlingError::InvalidInput);
     }
@@ -165,7 +200,12 @@ pub fn evaluate(
         });
     }
     let contacts = handling::configured_contacts(spec, action, 0.0, mechanics)?;
-    let posture = posture(state, &mut segments, contacts, action, cover)?;
+    let carry = if present_carry {
+        armed_stride::sample(state, contacts.support, action)
+    } else {
+        armed_stride::Carry::default()
+    };
+    let posture = posture(state, &mut segments, contacts, action, cover, carry)?;
     let shoulders = posture.shoulders;
     let solved = handling::fit_weapon(
         posture.preferred_root,

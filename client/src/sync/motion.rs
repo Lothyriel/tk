@@ -13,7 +13,7 @@ struct Sample {
     pose: LocalMotionPose,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct LocalMotionPose {
     pub position: Vec3,
     pub crouch: f32,
@@ -21,6 +21,9 @@ pub(crate) struct LocalMotionPose {
     pub stride_speed: f32,
     pub ads: f32,
     pub roll: f32,
+    pub velocity: Vec3,
+    pub acceleration: Vec2,
+    pub turn_rate: f32,
 }
 
 /// Presentation history only. Gameplay/HUD retain the newest authoritative session.
@@ -74,6 +77,12 @@ impl LocalMotion {
                         .lerp(next.pose.stride_speed, alpha),
                     ads: previous.pose.ads.lerp(next.pose.ads, alpha),
                     roll: previous.pose.roll.lerp(next.pose.roll, alpha),
+                    velocity: previous.pose.velocity.lerp(next.pose.velocity, alpha),
+                    acceleration: previous
+                        .pose
+                        .acceleration
+                        .lerp(next.pose.acceleration, alpha),
+                    turn_rate: previous.pose.turn_rate.lerp(next.pose.turn_rate, alpha),
                 });
             }
             previous = next;
@@ -326,6 +335,7 @@ mod tests {
                             stride_speed: 0.0,
                             ads: 0.0,
                             roll,
+                            ..default()
                         },
                         stamp,
                         false,
@@ -356,6 +366,9 @@ mod tests {
             stride_speed: 3.0,
             ads: 0.0,
             roll: -0.2,
+            velocity: Vec3::NEG_Z * 3.0,
+            acceleration: Vec2::new(0.0, -8.0),
+            turn_rate: -2.0,
         };
         let crouched = LocalMotionPose {
             position: Vec3::new(2.0, 0.7, -1.0),
@@ -364,6 +377,9 @@ mod tests {
             stride_speed: 0.0,
             ads: 1.0,
             roll: 0.2,
+            velocity: Vec3::ZERO,
+            acceleration: Vec2::new(0.0, 4.0),
+            turn_rate: 4.0,
         };
         motion.record(1.0, standing, 10.0, false);
         motion.record(1.04, crouched, 10.04, false);
@@ -380,6 +396,9 @@ mod tests {
         assert!((middle.stride_speed - 1.5).abs() < 0.00001);
         assert!((middle.ads - 0.5).abs() < 0.00001);
         assert!(middle.roll.abs() < 0.00001);
+        assert!(middle.velocity.distance(Vec3::NEG_Z * 1.5) < 0.00001);
+        assert!(middle.acceleration.distance(Vec2::new(0.0, -2.0)) < 0.00001);
+        assert!((middle.turn_rate - 1.0).abs() < 0.00001);
         assert!(eye(10.07).distance(eye(10.0).lerp(eye(20.0), 0.5)) < 0.00001);
         assert_eq!(motion.sample(10.0).unwrap().position, standing.position);
         assert_eq!(motion.sample(20.0).unwrap().position, crouched.position);

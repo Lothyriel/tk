@@ -899,7 +899,9 @@ fn animate(
         state.fall_phase = p.pose.fall_phase;
         state.fall_velocity = p.pose.fall_velocity;
         state.physical = p.pose.physical.clone();
-        state.acceleration = p.pose.acceleration;
+        state.acceleration = Vec2::from(state.acceleration)
+            .lerp(p.pose.acceleration.into(), alpha)
+            .into();
         state.turn_rate += (p.pose.turn_rate - state.turn_rate) * alpha;
         let foot_alpha = 1.0 - (-time.delta_secs() * 18.0).exp();
         let confirmed = p
@@ -931,7 +933,7 @@ fn animate(
                 .cache
                 .get(session.configurations.cache.epoch(), p.configuration)
         {
-            match common::humanoid::configured::evaluate(
+            match common::humanoid::configured::evaluate_with_carry(
                 state,
                 [
                     p.body.anatomy.capacity(Region::LeftLeg),
