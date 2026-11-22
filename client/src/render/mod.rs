@@ -12,6 +12,7 @@ mod blood;
 mod destruction;
 mod dot_sight;
 pub(crate) mod feedback;
+pub(crate) mod item_icons;
 pub(crate) mod shot_audio;
 pub(crate) mod voxel;
 mod weapons;
@@ -27,6 +28,7 @@ impl bevy::prelude::Plugin for Plugin {
         app.add_plugins(dot_sight::Plugin);
         app.add_plugins(feedback::Plugin);
         app.add_plugins(shot_audio::Plugin);
+        app.add_plugins(item_icons::Plugin);
         app.add_plugins((voxel::Plugin, voxel::debug::Plugin));
         let startup_systems = (
             spawn_view_model,
