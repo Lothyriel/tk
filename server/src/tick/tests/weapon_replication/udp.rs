@@ -545,7 +545,7 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
             CompartmentId, ItemInstanceId,
             item_grid::{Placement, Rotation},
             item_inventory::{
-                GridLocation, InventoryAction, InventoryOperation, OperationResult,
+                GridLocation, InventoryAction, InventoryOperation, ItemContents, OperationResult,
                 VersionedCompartment,
             },
             item_manifest::{S1_SEEDS, item_visuals, planned_items},
@@ -838,6 +838,58 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
         "private split/merge leaked to the observer"
     );
 
+    // Collect the separate empty magazine as ordinary ground loot. Its
+    // contents must not change when extraction credits the inventory.
+    let magazine = &items[1];
+    assert_eq!(S1_SEEDS[usize::from(magazine.seed)], "ammo.mag_ar30");
+    let center = Vec3::from_array(magazine.root)
+        + Vec3::from_array(item_visuals()[S1_SEEDS[1]].collider_center());
+    let start = Vec3::new(center.x, 1.02, center.z + 1.0);
+    harness
+        .app
+        .world_mut()
+        .get_mut::<Transform>(actor)
+        .unwrap()
+        .translation = start;
+    let ray = center - (start + Vec3::Y * PLAYER_VIEW_HEIGHT);
+    first.input.camera.pitch = ray.y.atan2(-ray.z);
+    harness.pump(&mut [&mut first, &mut late], 48);
+    assert!(
+        drain(&mut first)
+            .iter()
+            .any(|update| update.body == UpdateBody::GroundFocus(Some(magazine.id)))
+    );
+    first.input.interact = true;
+    first.input.pickup_focus = Some((epoch, magazine.id));
+    harness.pump(&mut [&mut first, &mut late], 96);
+    let updates = drain(&mut first);
+    let empty_magazine = updates
+        .iter()
+        .find_map(|update| match &update.body {
+            UpdateBody::Delta(deltas) => {
+                assert_eq!(update.session, key);
+                assert_eq!(deltas.len(), 1);
+                assert_eq!(
+                    deltas[0].version,
+                    VersionedCompartment {
+                        id: own,
+                        revision: 6
+                    }
+                );
+                assert_eq!(deltas[0].items.len(), 1);
+                assert_eq!(deltas[0].items[0].id, magazine.id);
+                deltas[0].items[0].item.as_ref()
+            }
+            _ => None,
+        })
+        .expect("confirmed magazine pickup");
+    assert_eq!(empty_magazine.definition, "ammo.mag_ar30");
+    assert_eq!(empty_magazine.quantity, 1);
+    assert_eq!(empty_magazine.contents, ItemContents::EmptyMagazine);
+    let public = drain(&mut late);
+    assert_eq!(public.len(), 1);
+    assert_eq!(public[0].body, UpdateBody::Ground(items[2..].to_vec()));
+
     // Stage the player in the exit but keep the normal hold duration and
     // production credit/debrief transitions. No legacy crate was collected.
     let [x, _, z] = common::map::EXTRACTION_CENTER;
@@ -853,14 +905,14 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     first.input.interact = true;
     harness.pump(&mut [&mut first, &mut late], 512);
     assert_eq!(displayed(&first).status, RaidStatus::Active);
-    assert_eq!(displayed(&first).carried, 2);
+    assert_eq!(displayed(&first).carried, 3);
     assert_eq!(displayed(&first).secured, 0);
     harness.pump(&mut [&mut first, &mut late], 256);
     assert_eq!(displayed(&first).status, RaidStatus::Extracted);
     assert_eq!(displayed(&first).carried, 0);
-    assert_eq!(displayed(&first).secured, 2);
+    assert_eq!(displayed(&first).secured, 3);
     harness.pump(&mut [&mut first, &mut late], 128);
-    assert_eq!(displayed(&first).secured, 2);
+    assert_eq!(displayed(&first).secured, 3);
     assert_eq!(
         harness.app.world().resource::<RaidState>().phase,
         RaidPhase::Debrief
@@ -881,8 +933,13 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
         .resource::<WorldState>()
         .inventory
         .fixture_snapshot(own);
-    assert_eq!(authoritative.version.revision, 5);
-    assert_eq!(authoritative.items.as_slice(), &[(child, reunited.clone())]);
+    assert_eq!(authoritative.version.revision, 6);
+    let mut expected = [
+        (child, reunited.clone()),
+        (magazine.id, empty_magazine.clone()),
+    ];
+    expected.sort_unstable_by_key(|(id, _)| *id);
+    assert_eq!(authoritative.items.as_slice(), &expected);
 
     first.input.interact = false;
     first.input.pickup_focus = None;
