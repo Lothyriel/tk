@@ -383,7 +383,7 @@ fn available(
 
 type PreferenceResources<'w> = (
     ResMut<'w, Preferences>,
-    Res<'w, Store>,
+    ResMut<'w, Store>,
     ResMut<'w, UiScale>,
     ResMut<'w, bevy::audio::GlobalVolume>,
 );
@@ -408,7 +408,7 @@ fn route(
     mut pointer: MessageReader<PointerActivation>,
     mut activations: MessageWriter<Activation>,
     mut exit: MessageWriter<AppExit>,
-    (mut preferences, store, mut ui_scale, mut volume): PreferenceResources,
+    (mut preferences, mut store, mut ui_scale, mut volume): PreferenceResources,
     mut connection: Option<ResMut<Connection>>,
 ) {
     let old = menu.surface;
@@ -1129,7 +1129,7 @@ mod tests {
         let mut app = fixture();
         let path =
             std::env::temp_dir().join(format!("tk-menu-prefs-{:016x}.json", rand::random::<u64>()));
-        app.insert_resource(Store::test_path(path.clone()));
+        app.insert_resource(Store::from_path(Some(path.clone())).0);
         let settings = button(&mut app, Action::Settings);
         let fov_more = button(&mut app, Action::FovMore);
         let scale = button(&mut app, Action::UiScaleCycle);
@@ -1200,6 +1200,68 @@ mod tests {
         assert!(app.world().resource::<Menu>().settings.is_none());
         assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 0);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn menu_preferences_repair_clears_load_warning_only_after_successful_save() {
+        use std::fs;
+
+        let dir =
+            std::env::temp_dir().join(format!("tk-menu-repair-{:016x}", rand::random::<u64>()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("preferences.json");
+        let invalid = br#"{"fov":null}"#;
+        fs::write(&path, invalid).unwrap();
+        let (store, prefs) = Store::from_path(Some(path.clone()));
+        assert_eq!(prefs, Preferences::default());
+        let mut app = fixture();
+        app.insert_resource(store).insert_resource(prefs);
+        let settings = button(&mut app, Action::Settings);
+        let fov_more = button(&mut app, Action::FovMore);
+        let apply = button(&mut app, Action::ApplySettings);
+        let back = button(&mut app, Action::BackSettings);
+        let activate = |app: &mut App, entity| {
+            click(app, entity);
+            app.update();
+        };
+        let warning = "Invalid or unreadable file; using defaults.";
+
+        activate(&mut app, settings);
+        assert_eq!(app.world().resource::<Menu>().settings_status, warning);
+        activate(&mut app, fov_more);
+
+        // A directory at the destination makes the atomic rename fail even as root.
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        activate(&mut app, apply);
+        assert_eq!(
+            app.world().resource::<Menu>().settings_status,
+            "Could not save; applied values unchanged."
+        );
+        assert_eq!(*app.world().resource::<Preferences>(), prefs);
+        fs::remove_dir(&path).unwrap();
+        fs::write(&path, invalid).unwrap();
+        activate(&mut app, back);
+        activate(&mut app, settings);
+        assert_eq!(app.world().resource::<Menu>().settings_status, warning);
+
+        activate(&mut app, fov_more);
+        activate(&mut app, apply);
+        assert_eq!(
+            app.world().resource::<Menu>().settings_status,
+            "Applied and saved."
+        );
+        let applied = *app.world().resource::<Preferences>();
+        assert_eq!(applied.fov, 75);
+        let saved: Preferences = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved, applied);
+        activate(&mut app, back);
+        activate(&mut app, settings);
+        let menu = app.world().resource::<Menu>();
+        assert_eq!(menu.settings, Some(applied));
+        assert_eq!(menu.settings_status, "");
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
     }
 
     fn focus(app: &App, expected: Entity) {

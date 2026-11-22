@@ -92,14 +92,6 @@ pub(crate) struct Store {
 }
 
 impl Store {
-    #[cfg(test)]
-    pub(crate) fn test_path(path: PathBuf) -> Self {
-        Self {
-            path: Some(path),
-            load_warning: false,
-        }
-    }
-
     pub(crate) fn open() -> (Self, Preferences) {
         let path = std::env::var_os("TK_PREFERENCES_PATH")
             .map(PathBuf::from)
@@ -111,6 +103,10 @@ impl Store {
                     .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".config")))
                     .map(|p| p.join("tk").join("preferences.json"))
             });
+        Self::from_path(path)
+    }
+
+    pub(crate) fn from_path(path: Option<PathBuf>) -> (Self, Preferences) {
         let (prefs, load_warning) = path
             .as_deref()
             .map_or((Preferences::default(), false), Self::load);
@@ -130,7 +126,7 @@ impl Store {
         }
     }
 
-    pub(crate) fn save(&self, prefs: Preferences) -> io::Result<()> {
+    pub(crate) fn save(&mut self, prefs: Preferences) -> io::Result<()> {
         let Some(path) = self
             .path
             .as_deref()
@@ -164,6 +160,8 @@ impl Store {
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temp);
+        } else {
+            self.load_warning = false;
         }
         result
     }
@@ -178,7 +176,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("tk-prefs-test-{:016x}", rand::random::<u64>()));
         let path = dir.join("preferences.json");
-        let store = Store {
+        let mut store = Store {
             path: Some(path.clone()),
             load_warning: false,
         };
