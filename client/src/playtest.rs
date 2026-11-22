@@ -4,6 +4,7 @@ use common::{combat::*, map::*, raid::*, *};
 
 use crate::{ClientSystems, input::InputCapture, sync::ClientSession};
 mod animation;
+mod arena;
 mod asset_review;
 mod lobby;
 mod mechanics;
@@ -25,6 +26,16 @@ pub(crate) fn requested_viewport() -> Option<(u32, u32)> {
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
+        if std::env::var_os("TK_PLAYTEST_ARENA_SOLO").is_some() {
+            app.init_resource::<Driver>()
+                .init_resource::<video::CaptureQueue>()
+                .add_systems(
+                    Update,
+                    arena::solo.in_set(ClientSystems::Input).after(InputCapture),
+                )
+                .add_systems(PostUpdate, video::record);
+            return;
+        }
         app.init_resource::<Driver>()
             .add_systems(
                 Update,

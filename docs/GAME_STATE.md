@@ -90,6 +90,9 @@ Use the same workbench and **Ready / deploy** button. The server spawns one bot
 and runs a continuous duel, without raid loot or extraction. Either combatant
 returns after three seconds when a spawn is clear. Use **Leave Arena / return
 to lobby** from the pause or respawn menu, then ready again or switch to Raid.
+To verify the simulated duel over local UDP with a rendered client, run
+`python scripts/playtest.py --arena-solo`. This route drives ordinary client
+inputs; it does not replace testing the menu with mouse and keyboard.
 
 ## Controls
 

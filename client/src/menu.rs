@@ -579,18 +579,18 @@ fn present(
         }
         Surface::ArenaWaiting => {
             if menu.pending.is_some() {
-                "ARENA · Leaving duel…".into()
+                "ARENA | Leaving duel...".into()
             } else if participant.is_some_and(|p| p.status == RaidStatus::Dead) {
                 if session.raid.seconds_left > 0.0 {
                     format!(
-                        "ARENA · Eliminated\nRespawn in {:.1}s",
+                        "ARENA | Eliminated\nRespawn in {:.1}s",
                         session.raid.seconds_left
                     )
                 } else {
-                    "ARENA · Eliminated\nWaiting for a clear spawn".into()
+                    "ARENA | Eliminated\nWaiting for a clear spawn".into()
                 }
             } else {
-                "ARENA · Waiting for a combatant".into()
+                "ARENA | Waiting for a combatant".into()
             }
         }
         Surface::Debrief | Surface::Waiting => {
