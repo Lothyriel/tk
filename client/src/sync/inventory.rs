@@ -10,17 +10,18 @@ use common::{
             SessionKey, VersionedCompartment,
         },
     },
-    replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+    replication::inventory::{CHANNEL, GroundItem, InventoryRequest, InventoryUpdate, UpdateBody},
 };
 
 #[derive(Default, Resource)]
-pub(super) struct State {
+pub(crate) struct State {
     session: Option<SessionKey>,
     replica: Option<InventoryReplica>,
     // False until enqueued. The reliable channel handles packet retransmission.
     resync: BTreeMap<CompartmentId, bool>,
     last_operation: u64,
     pending: Option<InventoryOperation>,
+    ground: Vec<GroundItem>,
 }
 
 /// Intent from the inventory UI. Compartments are in source/destination order.
@@ -37,7 +38,11 @@ pub(crate) struct OperationFinished {
 }
 
 impl State {
-    fn apply(&mut self, update: InventoryUpdate) -> Option<OperationFinished> {
+    pub(crate) fn ground(&self) -> (&[GroundItem], Option<SessionKey>) {
+        (&self.ground, self.session)
+    }
+
+    pub(crate) fn apply(&mut self, update: InventoryUpdate) -> Option<OperationFinished> {
         let key = update.session;
         if matches!(update.body, UpdateBody::Begin) {
             // Begin is ordered with snapshots and deltas. Ignore repeat or
@@ -76,6 +81,19 @@ impl State {
             UpdateBody::Closed(id) => {
                 replica.close(key, id);
                 self.resync.remove(&id);
+            }
+            UpdateBody::Ground(items) => {
+                let count = common::catalog::item_manifest::S1_SEEDS.len();
+                if items.len() <= count
+                    && items.iter().enumerate().all(|(index, item)| {
+                        item.id.0 != 0
+                            && usize::from(item.seed) < count
+                            && Vec3::from_array(item.root).is_finite()
+                            && !items[..index].iter().any(|other| other.id == item.id)
+                    })
+                {
+                    self.ground = items;
+                }
             }
             // An acknowledgment never substitutes for a confirmed delta.
             UpdateBody::Result { id, result } => {
