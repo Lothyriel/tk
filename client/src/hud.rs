@@ -3,7 +3,11 @@ use bevy::{
     prelude::*,
 };
 use bevy_renet2::prelude::RenetClient;
-use common::catalog::item_inventory::{Condition, ItemContents, ProjectedItem};
+use common::catalog::{
+    item_grid::{Footprint, Placement, Rotation},
+    item_inventory::{Condition, InventorySnapshot, ItemContents, ProjectedItem},
+    item_manifest::{S1_SEEDS, planned_items},
+};
 use common::{combat::*, map::*, raid::*, *};
 use std::fmt::Write;
 
@@ -162,7 +166,6 @@ fn update(
     let mut text = describe(&session, &input.loadout, id.0, &connection, input.aim);
     let mut catalog_rows = String::new();
     if connection.is_empty() && panel.open {
-        use common::catalog::item_manifest::planned_items;
         text = if panel.inspection.is_some() {
             String::from("ITEM INSPECTION\nArrows: rotate   +/-: zoom   R: reset   I/Esc: back\n")
         } else {
@@ -203,10 +206,13 @@ fn update(
             .is_some_and(|actor| actor.participant.status == RaidStatus::Active)
         && let Some(item) = inventory.focused_ground(session.raid.raid_id)
     {
-        use common::catalog::item_manifest::{S1_SEEDS, planned_items};
-        let name = planned_items()[S1_SEEDS[usize::from(item.seed)]].name;
         // Item names need the same accented glyphs as the inventory list.
-        write!(&mut catalog_rows, "\nGround item: {name} [F]").unwrap();
+        let grid = if inventory.pending_operation_id().is_none() {
+            inventory.owned_grid(session.raid.raid_id, id.0)
+        } else {
+            None
+        };
+        append_ground_item(&mut catalog_rows, item.seed, grid);
     }
     ***hud = text;
     if rows.as_str() != catalog_rows {
@@ -215,6 +221,47 @@ fn update(
             *row_font = font.sized(16.0);
         }
     }
+}
+
+fn append_ground_item(text: &mut String, seed: u8, grid: Option<&InventorySnapshot>) {
+    let Some(definition) = S1_SEEDS
+        .get(usize::from(seed))
+        .and_then(|id| planned_items().get(*id))
+    else {
+        return;
+    };
+    write!(text, "\nGround item: {}", definition.name).unwrap();
+    if grid.and_then(|grid| backpack_fits(grid, definition.footprint)) == Some(false) {
+        text.push_str("\nNo room in last confirmed backpack. Tab: make space.");
+    } else {
+        text.push_str(" [F]");
+    }
+}
+
+/// Advisory geometry only; this does not predict an authoritative pickup result.
+fn backpack_fits(snapshot: &InventorySnapshot, footprint: Footprint) -> Option<bool> {
+    let [width, height] = snapshot.size;
+    let grid = Footprint::new(width, height)?;
+    let occupied: Vec<_> = snapshot
+        .items
+        .iter()
+        .map(|(_, item)| {
+            let shape = planned_items().get(item.definition.as_str())?.footprint;
+            Some(item.placement.area(shape))
+        })
+        .collect::<Option<_>>()?;
+    Some((0..height).any(|y| {
+        (0..width).any(|x| {
+            [Rotation::Upright, Rotation::QuarterTurn]
+                .into_iter()
+                .any(|rotation| {
+                    Placement { x, y, rotation }
+                        .area(footprint)
+                        .validate(grid, occupied.iter().copied())
+                        .is_ok()
+                })
+        })
+    }))
 }
 
 fn describe(
@@ -348,6 +395,61 @@ fn append_exit(text: &mut String, distance: f32, participant: &Participant) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ground_pickup_hint_uses_confirmed_geometry_without_claiming_a_rejection() {
+        use common::catalog::{
+            CompartmentId, ItemInstanceId, item_inventory::VersionedCompartment,
+        };
+        let mut grid = InventorySnapshot {
+            version: VersionedCompartment {
+                id: CompartmentId(7),
+                revision: 1,
+            },
+            size: [4, 4],
+            items: [
+                ("carry.daypack", 0, 0),
+                ("med.bandage", 3, 1),
+                ("elec.ssd", 1, 3),
+                ("value.watch_mechanical", 3, 3),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (definition, x, y))| {
+                (
+                    ItemInstanceId(i as u64 + 1),
+                    ProjectedItem {
+                        definition: definition.into(),
+                        condition: Condition::Intact,
+                        quantity: 1,
+                        placement: Placement {
+                            x,
+                            y,
+                            rotation: Rotation::Upright,
+                        },
+                        contents: ItemContents::None,
+                    },
+                )
+            })
+            .collect(),
+        };
+        let hint = |grid: Option<&InventorySnapshot>| {
+            let mut text = String::new();
+            append_ground_item(&mut text, 2, grid);
+            text
+        };
+        let blocked = hint(Some(&grid));
+        assert!(blocked.contains("Água potável"));
+        assert!(blocked.contains("No room in last confirmed backpack. Tab: make space."));
+        assert!(!blocked.contains("[F]"));
+        assert!(hint(None).ends_with(" [F]"));
+        // Move the watch so only a horizontal pair becomes available.
+        grid.items[3].1.placement.x = 3;
+        grid.items[3].1.placement.y = 2;
+        assert!(hint(Some(&grid)).ends_with(" [F]"));
+        grid.items[3].1.definition = "unknown".into();
+        assert!(hint(Some(&grid)).ends_with(" [F]"));
+    }
 
     #[test]
     fn inspection_details_reflect_confirmed_contents_without_unrelated_fields() {
