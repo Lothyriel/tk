@@ -1,20 +1,15 @@
 //! Opt-in native client route. Inputs are synthetic Bevy events, not OS input.
 //! Match transitions are real snapshots from a separately started server.
 use bevy::{
-    camera::NormalizedRenderTarget,
     input::{
         ButtonState,
         keyboard::{Key, KeyboardInput},
         mouse::MouseButtonInput,
     },
-    picking::{
-        backend::HitData,
-        events::{Pointer, PointerClick},
-        pointer::{Location, PointerButton, PointerId},
-    },
     prelude::*,
+    ui::UiGlobalTransform,
     ui_widgets::Button,
-    window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowRef},
+    window::{CursorGrabMode, CursorMoved, CursorOptions, PrimaryWindow, WindowEvent},
 };
 use common::{
     LocalInput, PlayerId,
@@ -131,6 +126,7 @@ struct Route {
     since: f64,
     release: Option<KeyCode>,
     release_mouse: bool,
+    moved_mouse: bool,
     first_raid: Option<u32>,
     checked_return_focus: bool,
 }
@@ -151,6 +147,7 @@ type Widgets<'w, 's> = Query<
 type KeysAndMouse<'w> = (
     MessageWriter<'w, KeyboardInput>,
     MessageWriter<'w, MouseButtonInput>,
+    MessageWriter<'w, WindowEvent>,
 );
 
 fn presented_button<'a>(
@@ -185,7 +182,6 @@ fn key_event(window: Entity, key_code: KeyCode, state: ButtonState) -> KeyboardI
 
 #[allow(clippy::too_many_arguments)] // Separate input and read-only presentation queries.
 fn drive(
-    mut commands: Commands,
     (probe, mut route, time): (Res<Probe>, ResMut<Route>, Res<Time<Real>>),
     (session, player, input, menu): (
         Res<ClientSession>,
@@ -195,8 +191,9 @@ fn drive(
     ),
     window: Single<(Entity, &Window, &CursorOptions), With<PrimaryWindow>>,
     widgets: Widgets,
+    layout: Query<&UiGlobalTransform, With<Button>>,
     text: Query<&Text>,
-    (mut keyboard, mut mouse): KeysAndMouse,
+    (mut keyboard, mut mouse, mut window_events): KeysAndMouse,
     mut exit: MessageWriter<AppExit>,
 ) {
     use Step::*;
@@ -212,11 +209,13 @@ fn drive(
         return;
     }
     if std::mem::take(&mut route.release_mouse) {
-        mouse.write(MouseButtonInput {
+        let release = MouseButtonInput {
             button: MouseButton::Left,
             state: ButtonState::Released,
             window: window_id,
-        });
+        };
+        mouse.write(release);
+        window_events.write(WindowEvent::MouseButtonInput(release));
         return;
     }
     if !window.focused {
@@ -317,27 +316,24 @@ fn drive(
     assert!(menu.owns_input());
     assert_eq!(cursor.grab_mode, CursorGrabMode::None);
     if probe.mouse(step) {
-        commands.trigger(PointerClick {
-            entity: target,
-            pointer: Pointer::new(
-                PointerId::Mouse,
-                Location {
-                    target: NormalizedRenderTarget::Window(
-                        WindowRef::Entity(window_id).normalize(None).unwrap(),
-                    ),
-                    position: Vec2::ZERO,
-                },
-            ),
-            button: PointerButton::Primary,
-            hit: HitData::new(window_id, 0.0, None, None),
-            duration: std::time::Duration::ZERO,
-            count: 1,
-        });
-        mouse.write(MouseButtonInput {
+        if !route.moved_mouse {
+            let transform = layout.get(target).expect("laid-out menu button");
+            window_events.write(WindowEvent::CursorMoved(CursorMoved {
+                window: window_id,
+                position: (*transform * Vec2::ZERO) / window.scale_factor(),
+                delta: None,
+            }));
+            route.moved_mouse = true;
+            return;
+        }
+        let press = MouseButtonInput {
             button: MouseButton::Left,
             state: ButtonState::Pressed,
             window: window_id,
-        });
+        };
+        mouse.write(press);
+        window_events.write(WindowEvent::MouseButtonInput(press));
+        route.moved_mouse = false;
         route.release_mouse = true;
     } else {
         let focused = menu.focused_widget() == Some(target);

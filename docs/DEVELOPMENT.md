@@ -45,9 +45,9 @@ Não combine com `--playtest`.
 
 A sonda visita a bancada, confirma e cancela prontidão, entra na Arena Solo,
 espera a eliminação pelo bot, volta ao lobby e repete a preparação e entrada.
-Procure `ARENA MENU PROBE PASS` no log. São eventos sintéticos do Bevy,
-incluindo picking direcionado a widgets com layout; não certificam eventos do
-SO, hit-testing, legibilidade, nem perda UDP. A sonda não registra mídia.
+Procure `ARENA MENU PROBE PASS` no log. Os eventos sintéticos de janela do
+Bevy percorrem o picking por coordenadas no layout real. Não certificam
+dispositivos do SO, legibilidade nem perda UDP. A sonda não registra mídia.
 
 ## Revisão estática da grade
 
