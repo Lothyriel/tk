@@ -48,9 +48,7 @@ type RaidObservation<'w, 's> = (
 pub(super) fn solo(
     mut commands: Commands,
     mut run: Local<Run>,
-    time: Res<Time<Real>>,
-    session: Res<ClientSession>,
-    id: Res<PlayerId>,
+    (time, session, id): (Res<Time<Real>>, Res<ClientSession>, Res<PlayerId>),
     mut input: ResMut<LocalInput>,
     mut exit: MessageWriter<AppExit>,
     (network, menu, status): RaidObservation,
