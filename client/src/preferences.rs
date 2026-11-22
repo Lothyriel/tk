@@ -48,6 +48,7 @@ pub(crate) struct Preferences {
     pub fov: u16,
     pub sensitivity_percent: u16,
     pub reload: Reload,
+    pub ui_scale_percent: u16,
 }
 
 impl Default for Preferences {
@@ -56,6 +57,7 @@ impl Default for Preferences {
             fov: 70,
             sensitivity_percent: 100,
             reload: Reload::R,
+            ui_scale_percent: 100,
         }
     }
 }
@@ -65,8 +67,14 @@ impl Preferences {
         f32::from(self.sensitivity_percent) / 100.0
     }
 
+    pub(crate) fn ui_scale(self) -> f32 {
+        f32::from(self.ui_scale_percent) / 100.0
+    }
+
     fn valid(self) -> bool {
-        (20..=160).contains(&self.fov) && (25..=300).contains(&self.sensitivity_percent)
+        (20..=160).contains(&self.fov)
+            && (25..=300).contains(&self.sensitivity_percent)
+            && matches!(self.ui_scale_percent, 100 | 125)
     }
 }
 
@@ -171,6 +179,7 @@ mod tests {
             fov: 90,
             sensitivity_percent: 125,
             reload: Reload::LeftBracket,
+            ui_scale_percent: 125,
         };
         assert_eq!(Store::load(&path), (Preferences::default(), false));
         store.save(prefs).unwrap();
@@ -181,6 +190,7 @@ mod tests {
             r#"{"reload":"Enter"}"#,
             r#"{"reload":"KeyF"}"#,
             r#"{"sensitivity_percent":301}"#,
+            r#"{"ui_scale_percent":200}"#,
             r#"{"fov":null}"#,
         ] {
             fs::write(&path, invalid).unwrap();

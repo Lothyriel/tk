@@ -31,6 +31,7 @@ impl bevy::prelude::Plugin for Plugin {
         };
         app.insert_resource(store)
             .insert_resource(preferences)
+            .insert_resource(UiScale(preferences.ui_scale()))
             .init_resource::<Menu>()
             .add_message::<Activation>()
             .add_message::<PointerActivation>()
@@ -137,6 +138,7 @@ enum Action {
     MouseLess,
     MouseMore,
     ReloadKey,
+    UiScaleCycle,
     Defaults,
     Revert,
     ApplySettings,
@@ -247,6 +249,7 @@ fn setup(mut commands: Commands) {
                 Action::MouseLess,
                 Action::MouseMore,
                 Action::ReloadKey,
+                Action::UiScaleCycle,
                 Action::Defaults,
                 Action::Revert,
                 Action::ApplySettings,
@@ -333,6 +336,7 @@ fn available(
                     | Action::MouseLess
                     | Action::MouseMore
                     | Action::ReloadKey
+                    | Action::UiScaleCycle
                     | Action::Defaults
                     | Action::Revert
                     | Action::ApplySettings
@@ -385,7 +389,7 @@ fn route(
     mut pointer: MessageReader<PointerActivation>,
     mut activations: MessageWriter<Activation>,
     mut exit: MessageWriter<AppExit>,
-    (mut preferences, store): (ResMut<Preferences>, Res<Store>),
+    (mut preferences, store, mut ui_scale): (ResMut<Preferences>, Res<Store>, ResMut<UiScale>),
     mut connection: Option<ResMut<Connection>>,
 ) {
     let old = menu.surface;
@@ -636,6 +640,13 @@ fn route(
                     draft.sensitivity_percent = (draft.sensitivity_percent + 5).min(300)
                 }
                 Action::ReloadKey => draft.reload = draft.reload.next(),
+                Action::UiScaleCycle => {
+                    draft.ui_scale_percent = if draft.ui_scale_percent == 100 {
+                        125
+                    } else {
+                        100
+                    };
+                }
                 Action::Defaults => *draft = Preferences::default(),
                 Action::Revert => *draft = *preferences,
                 Action::ApplySettings => {
@@ -643,6 +654,9 @@ fn route(
                         warn!("Could not save client preferences: {error}");
                         "Could not save; applied values unchanged."
                     } else {
+                        if preferences.ui_scale_percent != draft.ui_scale_percent {
+                            ui_scale.0 = draft.ui_scale();
+                        }
                         *preferences = *draft;
                         "Applied and saved."
                     };
@@ -876,6 +890,10 @@ fn present(
                     menu.settings.unwrap_or_default().reload.label()
                 ),
                 Action::Defaults => "Use defaults in draft".into(),
+                Action::UiScaleCycle => format!(
+                    "UI scale: {}% (cycle)",
+                    menu.settings.unwrap_or_default().ui_scale_percent
+                ),
                 Action::Revert => "Revert unapplied changes".into(),
                 Action::ApplySettings => "Apply and save".into(),
                 Action::BackSettings => "Back (discard draft)".into(),
@@ -1039,6 +1057,7 @@ mod tests {
         app.insert_resource(Store::test_path(path.clone()));
         let settings = button(&mut app, Action::Settings);
         let fov_more = button(&mut app, Action::FovMore);
+        let scale = button(&mut app, Action::UiScaleCycle);
         let apply = button(&mut app, Action::ApplySettings);
         let revert = button(&mut app, Action::Revert);
         click(&mut app, settings);
@@ -1053,9 +1072,23 @@ mod tests {
         assert_eq!(app.world().resource::<Menu>().settings.unwrap().fov, 70);
         click(&mut app, fov_more);
         app.update();
+        click(&mut app, scale);
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<Menu>()
+                .settings
+                .unwrap()
+                .ui_scale_percent,
+            125
+        );
+        assert_eq!(app.world().resource::<UiScale>().0, 1.0);
         click(&mut app, apply);
         app.update();
         assert_eq!(app.world().resource::<Preferences>().fov, 75);
+        assert_eq!(app.world().resource::<UiScale>().0, 1.25);
+        let saved: Preferences = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.ui_scale_percent, 125);
         assert!(path.exists());
         key(&mut app, KeyCode::Escape);
         assert_eq!(app.world().resource::<Menu>().selected, Some(settings));
