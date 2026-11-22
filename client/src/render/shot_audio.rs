@@ -33,6 +33,9 @@ impl bevy::prelude::Plugin for Plugin {
             .add_systems(Update, present.in_set(ClientSystems::Present));
         if probe {
             app.add_systems(Update, report_playback);
+            if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("action-fault") {
+                app.add_systems(Update, report_fault_playback);
+            }
         }
     }
 }
@@ -240,6 +243,23 @@ fn report_playback(
         if ready && !reported[i] {
             info!("PLAYTEST AUDIO SINK {kind}");
             reported[i] = true;
+        }
+    }
+}
+
+fn report_fault_playback(
+    cues: Res<Cues>,
+    local: Query<&AudioPlayer<SynthShot>, (With<Voice>, Added<AudioSink>)>,
+    remote: Query<&AudioPlayer<SynthShot>, (With<Voice>, Added<SpatialAudioSink>)>,
+) {
+    let fault = &cues.0[HandlingCue::ActionFault as usize];
+    for (kind, player) in local
+        .iter()
+        .map(|player| ("local", player))
+        .chain(remote.iter().map(|player| ("spatial", player)))
+    {
+        if &player.0 == fault {
+            info!("PLAYTEST FAULT AUDIO SINK {kind}");
         }
     }
 }

@@ -231,8 +231,8 @@ def main():
         parser.error("--voxel-loot requires the full raid route")
     if args.no_capture and (args.video or args.pov or args.weapon_debug):
         parser.error("--no-capture is for the plain raid or animation review, not visual evidence modes")
-    if args.audio and not (args.no_capture and args.clients == 2):
-        parser.error("--audio requires --no-capture and --clients 2")
+    if args.audio and not (args.clients == 2 and (args.no_capture or args.pov == "action-fault")):
+        parser.error("--audio requires --clients 2 and either --no-capture or --pov action-fault")
     if (args.pov_hz or args.pov_drop_every) and args.pov not in {"stop-lean", "armed-stride"}:
         parser.error("POV cadence/loss options require stop-lean or armed-stride")
     if args.pov_peer_lossless and (args.pov != "armed-stride" or args.clients != 2):
@@ -512,9 +512,11 @@ def main():
                         expected.insert(0, ("rest", "Standing"))
                     assert cues == expected, f"Unexpected stumble checkpoints on {role}: {cues}"
             if args.pov == "action-fault":
-                for remote, text in (("false", client_text), ("true", peer_text)):
+                for remote, kind, text in (("false", "local", client_text), ("true", "spatial", peer_text)):
                     cues = re.findall(r"POV FAULT CUE remote=(true|false) scheduled=(true|false)", text)
-                    assert cues == [(remote, "false")], f"Expected one muted fault cue, got {cues}"
+                    assert cues == [(remote, str(args.audio).lower())], f"Expected one fault cue, got {cues}"
+                    sinks = re.findall(r"PLAYTEST FAULT AUDIO SINK (\S+)", text)
+                    assert sinks == ([kind] if args.audio else []), f"Unexpected fault playback sinks: {sinks}"
             for name in DUAL_POV[args.pov]:
                 assert f"POV OBSERVER {name} " in peer_text, f"Missing observer cue {name}: {peer}"
                 data = (peer / f"pov-{name}.png").read_bytes()
