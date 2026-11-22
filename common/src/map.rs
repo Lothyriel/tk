@@ -18,6 +18,22 @@ pub const POV_STEP: MapBlock = MapBlock {
     surface: SurfaceKind::Concrete,
 };
 pub const POV_MARKER: [f32; 3] = [0.0, 1.02, -2.392];
+pub const POV_PRONE_CANOPY: MapBlock = MapBlock {
+    center: [0.0, 0.72, 8.1],
+    half_size: [1.4, 0.10, 0.35],
+    surface: SurfaceKind::Concrete,
+};
+
+pub fn pov_blocks() -> impl Iterator<Item = MapBlock> {
+    pov_fixture()
+        .then_some(POV_STEP)
+        .into_iter()
+        .chain(pov_side_cover())
+        .chain(
+            (std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("prone"))
+                .then_some(POV_PRONE_CANOPY),
+        )
+}
 
 pub fn pov_side_cover() -> impl Iterator<Item = MapBlock> {
     let enabled = matches!(
@@ -37,7 +53,13 @@ pub fn pov_side_cover() -> impl Iterator<Item = MapBlock> {
 pub fn pov_fixture() -> bool {
     matches!(
         std::env::var("TK_PLAYTEST_POV").as_deref(),
-        Ok("ads" | "inspect" | "stop-lean" | "side-cover" | "handling-route" | "armed-stride")
+        Ok("ads"
+            | "inspect"
+            | "stop-lean"
+            | "side-cover"
+            | "handling-route"
+            | "armed-stride"
+            | "prone")
     )
 }
 

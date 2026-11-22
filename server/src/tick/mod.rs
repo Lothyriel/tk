@@ -205,11 +205,7 @@ fn spawn_world_colliders(mut commands: Commands) {
             Transform::from_translation(Vec3::from(position)),
         ));
     }
-    for block in common::map::pov_fixture()
-        .then_some(common::map::POV_STEP)
-        .into_iter()
-        .chain(common::map::pov_side_cover())
-    {
+    for block in common::map::pov_blocks() {
         commands.spawn((
             block.surface,
             Collider::cuboid(block.half_size[0], block.half_size[1], block.half_size[2]),

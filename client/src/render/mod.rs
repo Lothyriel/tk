@@ -436,11 +436,7 @@ fn spawn_world_model(
         ));
     }
     let full = materials.add(Color::srgb(1.0, 0.38, 0.045));
-    for block in pov_fixture()
-        .then_some(POV_STEP)
-        .into_iter()
-        .chain(pov_side_cover())
-    {
+    for block in pov_blocks() {
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::from_size(Vec3::from(block.half_size) * 2.0))),
             MeshMaterial3d(concrete.clone()),

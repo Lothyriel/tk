@@ -23,6 +23,7 @@ POV_CAPTURES = {
     "inspect": ("rest", "inspect", "return"),
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "armed-stride": ("rest", "walk", "run", "turn", "moving-ads", "return"),
+    "prone": ("rest", "prone", "refused", "clear", "return"),
     "side-cover": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "handling-route": ("rest", "walk", "run", "stop", "crouch", "left", "right",
                        "neutral", "ads", "moving-ads", "hip", "inspect", "cancel", "return"),
@@ -30,6 +31,7 @@ POV_CAPTURES = {
 DUAL_POV = {
     "stop-lean": ("run", "left", "right", "return"),
     "armed-stride": ("turn", "moving-ads", "return"),
+    "prone": ("prone", "refused", "return"),
 }
 
 
@@ -172,14 +174,14 @@ def main():
         parser.error("--no-capture is for the plain raid or animation review, not visual evidence modes")
     if args.audio and not (args.no_capture and args.clients == 2):
         parser.error("--audio requires --no-capture and --clients 2")
-    if (args.pov_hz or args.pov_drop_every) and args.pov not in DUAL_POV:
+    if (args.pov_hz or args.pov_drop_every) and args.pov not in {"stop-lean", "armed-stride"}:
         parser.error("POV cadence/loss options require stop-lean or armed-stride")
     if args.pov_peer_lossless and (args.pov != "armed-stride" or args.clients != 2):
         parser.error("--pov-peer-lossless requires dual armed-stride")
     if args.pov and (args.animation_review or args.configure_weapons
                      or (args.video and (args.pov != "stop-lean" or args.clients != 1 or args.pov_hz))
                      or (args.clients == 2 and args.pov not in DUAL_POV)):
-        parser.error("--pov is standalone; dual clients require stop-lean or armed-stride. Video requires solo stop-lean without --pov-hz")
+        parser.error("--pov is standalone; dual clients require stop-lean, armed-stride or prone. Video requires solo stop-lean without --pov-hz")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
     assert not args.clean_art or args.weapon_debug, "--clean-art requires --weapon-debug"
     assert not args.neutral_art or args.clean_art, "--neutral-art requires --clean-art"
@@ -414,7 +416,17 @@ def main():
                 assert bool(dropped) != args.pov_peer_lossless, "Unexpected observer loss mode"
                 assert all(int(seq) % 3 == 0 for _, seq in dropped)
                 settings["observer_snapshot_drop_logged_count"] = int(dropped[-1][0]) if dropped else 0
-                assert (peer / "gait-trace.csv").stat().st_size > 500
+                if args.pov == "armed-stride":
+                    assert (peer / "gait-trace.csv").stat().st_size > 500
+            if args.pov == "prone":
+                edges = re.findall(r"POV PRONE EDGE sequence=(\d+) pos=\[([^\]]+)\] confirmed_prone=(true|false)", client_text)
+                assert len(edges) == 3 and [edge[2] for edge in edges] == ["false", "true", "true"]
+                assert 7.9 < float(edges[1][1].split(",")[-1]) < 8.35, "Blocked edge was not beneath canopy"
+                assert float(edges[2][1].split(",")[-1]) < 6.8, "Final edge was not clear of canopy"
+                for role, text in (("LEADER", client_text), ("PEER", peer_text)):
+                    for cue in ("prone", "refused", "return"):
+                        expected = "false" if cue == "return" else "true"
+                        assert f"POV PRONE {role} {'pov-' if role == 'LEADER' else ''}{cue} prone={expected} " in text
             for name in DUAL_POV[args.pov]:
                 assert f"POV OBSERVER {name} " in peer_text, f"Missing observer cue {name}: {peer}"
                 data = (peer / f"pov-{name}.png").read_bytes()

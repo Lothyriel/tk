@@ -155,6 +155,95 @@ pub(super) enum Ads {
 /// ready assembly a short, bounded warm-up before sampling the first pose.
 pub(super) const VIEW_WARMUP_SECONDS: f64 = 1.0;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum ProneStage {
+    #[default]
+    Rest,
+    Enter,
+    Approach,
+    Settle,
+    Refused,
+    Leave,
+    Rise,
+    Finish,
+}
+
+#[derive(Default, Clone, Copy)]
+pub(super) struct Prone {
+    stage: ProneStage,
+    attempt_at: f64,
+}
+
+impl Prone {
+    fn beneath(player: &common::ClientData) -> bool {
+        (7.9..8.35).contains(&player.pos[2])
+    }
+
+    fn still(player: &common::ClientData) -> bool {
+        player.pose.velocity[0].hypot(player.pose.velocity[2]) < 0.08
+    }
+
+    pub(super) fn advance(
+        &mut self,
+        elapsed: f64,
+        ready: bool,
+        player: &common::ClientData,
+    ) -> Result<Option<&'static str>, &'static str> {
+        use ProneStage::*;
+        if elapsed >= 15.0 {
+            return Err("prone route timed out before a confirmed stance");
+        }
+        if !ready {
+            return Ok(None);
+        }
+        if matches!(self.stage, Refused) && !player.pose.prone {
+            return Err("server allowed standing beneath the canopy");
+        }
+        let (next, cue) = match self.stage {
+            Rest if !player.pose.prone => (Enter, Some("pov-rest")),
+            Enter if player.pose.prone => (Approach, Some("pov-prone")),
+            Approach if player.pose.prone && player.pos[2] < 8.35 => (Settle, None),
+            Settle if player.pose.prone && Self::beneath(player) && Self::still(player) => {
+                self.attempt_at = elapsed;
+                (Refused, None)
+            }
+            Refused if elapsed - self.attempt_at >= 0.7 && Self::beneath(player) => {
+                (Leave, Some("pov-refused"))
+            }
+            Leave if player.pose.prone && player.pos[2] < 6.8 => (Rise, Some("pov-clear")),
+            Rise if !player.pose.prone && !player.crouched && Self::still(player) => {
+                (Finish, Some("pov-return"))
+            }
+            _ => return Ok(None),
+        };
+        self.stage = next;
+        Ok(cue)
+    }
+
+    pub(super) fn apply(&self, input: &mut common::ClientInput, before: Self) {
+        use ProneStage::*;
+        input.forward = matches!(self.stage, Approach | Leave);
+        if self.stage != before.stage && matches!(self.stage, Enter | Refused | Rise) {
+            input.prone_sequence = input.prone_sequence.wrapping_add(1);
+        }
+    }
+
+    pub(super) fn finished(&self) -> bool {
+        self.stage == ProneStage::Finish
+    }
+
+    pub(super) fn observe(stage: u8, player: &common::ClientData) -> Option<&'static str> {
+        match stage {
+            0 if player.pose.prone && player.pos[2] > 8.6 => Some("prone"),
+            1 if player.pose.prone && Self::beneath(player) && Self::still(player) => {
+                Some("refused")
+            }
+            2 if !player.pose.prone && !player.crouched && player.pos[2] < 6.8 => Some("return"),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) enum ArmedStride {
     #[default]
@@ -441,6 +530,59 @@ impl Handling {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prone_bench_waits_under_cover_without_replaying_toggle() {
+        let mut route = Prone::default();
+        let mut player = common::ClientData::default();
+        let mut input = common::ClientInput::default();
+        let mut step = |route: &mut Prone, elapsed, player: &common::ClientData| {
+            let before = *route;
+            let result = route.advance(elapsed, true, player);
+            route.apply(&mut input, before);
+            (result, input.prone_sequence, input.forward)
+        };
+        assert_eq!(
+            step(&mut route, 1.0, &player),
+            (Ok(Some("pov-rest")), 1, false)
+        );
+        player.pose.prone = true;
+        player.pos[2] = 10.0;
+        assert_eq!(Prone::observe(0, &player), Some("prone"));
+        assert_eq!(
+            step(&mut route, 1.2, &player),
+            (Ok(Some("pov-prone")), 1, true)
+        );
+        player.pos[2] = 8.2;
+        player.pose.velocity[2] = -0.8;
+        assert_eq!(step(&mut route, 4.0, &player), (Ok(None), 1, false));
+        assert_eq!(step(&mut route, 4.1, &player), (Ok(None), 1, false));
+        player.pose.velocity[2] = 0.0;
+        assert_eq!(step(&mut route, 4.4, &player), (Ok(None), 2, false));
+        assert_eq!(step(&mut route, 4.8, &player), (Ok(None), 2, false));
+        assert_eq!(Prone::observe(1, &player), Some("refused"));
+        let mut unexpected = route;
+        player.pose.prone = false;
+        assert!(unexpected.advance(4.9, true, &player).is_err());
+        player.pose.prone = true;
+        assert_eq!(
+            step(&mut route, 5.2, &player),
+            (Ok(Some("pov-refused")), 2, true)
+        );
+        player.pos[2] = 6.75;
+        assert_eq!(
+            step(&mut route, 7.0, &player),
+            (Ok(Some("pov-clear")), 3, false)
+        );
+        assert_eq!(Prone::observe(2, &player), None);
+        player.pose.prone = false;
+        assert_eq!(Prone::observe(2, &player), Some("return"));
+        assert_eq!(
+            step(&mut route, 7.2, &player),
+            (Ok(Some("pov-return")), 3, false)
+        );
+        assert!(route.finished());
+    }
 
     #[test]
     fn armed_stride_requires_turned_running_phase_and_moving_ads_confirmation() {

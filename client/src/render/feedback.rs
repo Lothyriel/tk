@@ -166,11 +166,7 @@ impl CasingSurfaces {
     fn new() -> Self {
         Self {
             cells: map::barrier_cells(),
-            fixtures: map::pov_fixture()
-                .then_some(map::POV_STEP)
-                .into_iter()
-                .chain(map::pov_side_cover())
-                .collect(),
+            fixtures: map::pov_blocks().collect(),
         }
     }
 }

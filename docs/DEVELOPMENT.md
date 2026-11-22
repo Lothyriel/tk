@@ -107,6 +107,15 @@ roll, a cadência efetiva e a projeção normalizada do marcador em
 `pov-trace.csv`, sem vídeo. A projeção não mede oclusão. Compare também a
 posição de parada: percorrer a mesma rota não garante a mesma trajetória.
 
+Para revisar a postura voluntária, após coordenar o uso de GPU/UDP, use
+`python scripts/playtest.py --no-build --pov prone --clients 2 --viewport 900x700 --output target/pov-prone`.
+O líder deita, rasteja sob uma cobertura baixa e tenta levantar. Depois de
+confirmar que permaneceu deitado, sai rastejando e envia uma nova alternância.
+O observador descarta cada terceiro snapshot e exige pose confirmada e altura
+do tronco compatíveis nos checkpoints `prone`, `refused` e `return`. Compare
+os logs e capturas: a geometria da cobertura pode ocultar parte da silhueta.
+O preset não testa queda por lesão nem certifica naturalidade em movimento.
+
 No relatório `observer_gait` em `run-settings.json`, compare os picos por
 quadro com `peak_support_excursion`: o maior deslocamento desde o primeiro
 quadro de um trecho continuamente carregado (peso > 0,95, pelo menos dois

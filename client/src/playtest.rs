@@ -148,6 +148,7 @@ struct Driver {
     pov_inspect: pov::Inspect,
     pov_handling: pov::Handling,
     pov_stop_lean: pov::StopLean,
+    pov_prone: pov::Prone,
     pov_stride: pov::ArmedStride,
     pov_turn: f32,
     pov_stop_lean_roll: f32,
@@ -469,7 +470,8 @@ fn drive(
         Step::Pov => {
             let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");
             let armed = preset == "armed-stride";
-            let observe = (armed || preset == "stop-lean")
+            let prone = preset == "prone";
+            let observe = (prone || armed || preset == "stop-lean")
                 && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("2");
             if peer && observe {
                 view_camera.is_active = false;
@@ -485,7 +487,8 @@ fn drive(
                 // runner is still ahead of the observer in the adjacent lane.
                 let delta = Vec3::from(actor.pos) - Vec3::from(local.pos);
                 let [vx, _, vz] = actor.pose.velocity;
-                if !armed
+                if !prone
+                    && !armed
                     && driver.captures & 1 == 0
                     && vx.hypot(vz) > 4.5
                     && delta.z < -2.5
@@ -501,7 +504,7 @@ fn drive(
                     );
                     capture(&mut commands, "pov-run");
                 }
-                if !armed && local.pos[2] > 5.5 {
+                if !prone && !armed && local.pos[2] > 5.5 {
                     input.camera = CameraInput::default();
                     input.forward = true;
                     return;
@@ -511,7 +514,17 @@ fn drive(
                     pitch: (delta.y - 0.65).atan2(delta.x.hypot(delta.z)),
                     ..default()
                 };
-                let observed = if armed {
+                let observed = if prone {
+                    pov::Prone::observe(driver.pov_observed, actor).filter(|name| {
+                        let Some(chest) = projections
+                            .poses
+                            .presented_bone(actor.id, common::humanoid::Segment::Thorax)
+                        else {
+                            return false;
+                        };
+                        (chest.translation.y < 0.60) == (*name != "return")
+                    })
+                } else if armed {
                     pov::ArmedStride::observe(driver.pov_observed, actor)
                 } else {
                     projections.poses.presented_roll(actor.id).and_then(|roll| {
@@ -526,6 +539,12 @@ fn drive(
                     })
                 };
                 if let Some(name) = observed {
+                    if prone {
+                        info!(
+                            "POV PRONE PEER {name} prone={} pos={:?}",
+                            actor.pose.prone, actor.pos
+                        );
+                    }
                     info!(
                         "POV OBSERVER {name} yaw={:.3} velocity={:?} ads={:.3} phase={:.3} snapshot={}",
                         actor.rot.yaw,
@@ -542,7 +561,7 @@ fn drive(
                         .join("pov-return.png")
                         .is_file()
                 {
-                    if !armed {
+                    if !prone && !armed {
                         assert_ne!(
                             driver.captures & 1,
                             0,
@@ -571,7 +590,9 @@ fn drive(
             let visual_settled = visual_ready
                 && now - *driver.pov_visual_since.get_or_insert(now) >= pov::VIEW_WARMUP_SECONDS;
             let ready = local.pose.grounded && visual_settled;
+            let before_prone = driver.pov_prone;
             let name = match preset.as_str() {
+                "prone" => driver.pov_prone.advance(elapsed, ready, local),
                 "armed-stride" => driver.pov_stride.advance(elapsed, ready, local),
                 "ads" => driver.pov_ads.advance(elapsed, ready, ads, world_fov),
                 "inspect" => driver.pov_inspect.advance(elapsed, ready, local.mechanics),
@@ -612,6 +633,12 @@ fn drive(
                 )
             });
             if let Some(name) = name {
+                if prone {
+                    info!(
+                        "POV PRONE LEADER {name} prone={} pos={:?}",
+                        local.pose.prone, local.pos
+                    );
+                }
                 driver.pov_lean_since = now;
                 info!(
                     "POV EVIDENCE {name} t={now:.3} pos={:?} velocity={:?} crouch={:.3} roll={:.3} ads={ads:.3} fov={world_fov:.2} config={} action={:?} fraction={:.3} yaw={:.3} phase={:.3}",
@@ -633,7 +660,16 @@ fn drive(
             {
                 input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
             }
-            if armed {
+            if prone {
+                let previous = input.prone_sequence;
+                driver.pov_prone.apply(&mut input, before_prone);
+                if previous != input.prone_sequence {
+                    info!(
+                        "POV PRONE EDGE sequence={} pos={:?} confirmed_prone={}",
+                        input.prone_sequence, local.pos, local.pose.prone
+                    );
+                }
+            } else if armed {
                 let mut turn = driver.pov_turn;
                 driver
                     .pov_stride
@@ -651,6 +687,7 @@ fn drive(
                 driver.pov_stop_lean_roll = input.camera.roll;
             }
             if (driver.pov_ads == pov::Ads::Finish
+                || driver.pov_prone.finished()
                 || driver.pov_stride == pov::ArmedStride::Finish
                 || driver.pov_inspect == pov::Inspect::Finish
                 || (driver.pov_stop_lean == pov::StopLean::Finish && preset != "handling-route")
