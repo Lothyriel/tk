@@ -22,9 +22,14 @@ POV_CAPTURES = {
     "ads": ("rest", "ads", "return"),
     "inspect": ("rest", "inspect", "return"),
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
+    "armed-stride": ("rest", "walk", "run", "turn", "moving-ads", "return"),
     "side-cover": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "handling-route": ("rest", "walk", "run", "stop", "crouch", "left", "right",
                        "neutral", "ads", "moving-ads", "hip", "inspect", "cancel", "return"),
+}
+DUAL_POV = {
+    "stop-lean": ("run", "left", "right", "return"),
+    "armed-stride": ("turn", "moving-ads", "return"),
 }
 
 
@@ -138,9 +143,11 @@ def main():
     parser.add_argument("--viewport", type=parse_viewport,
                         help="Require this exact POV or clean-art framebuffer (WIDTHxHEIGHT)")
     parser.add_argument("--pov-hz", type=int, choices=range(15, 241), metavar="HZ",
-                        help="Cap the stop-lean client update rate and write the actual camera trace")
+                        help="Cap the stop-lean or armed-stride update rate and write the actual camera trace")
     parser.add_argument("--pov-drop-every", type=int, choices=range(2, 61), metavar="N",
-                        help="Discard every Nth received snapshot on the stop-lean POV leader")
+                        help="Discard every Nth snapshot on the stop-lean or armed-stride POV leader")
+    parser.add_argument("--pov-peer-lossless", action="store_true",
+                        help="Disable injected snapshot loss for the dual armed-stride observer")
     parser.add_argument("--no-capture", action="store_true",
                         help="Run the raid without framebuffer readbacks for profiling")
     parser.add_argument("--audio", action="store_true",
@@ -165,14 +172,14 @@ def main():
         parser.error("--no-capture is for the plain raid or animation review, not visual evidence modes")
     if args.audio and not (args.no_capture and args.clients == 2):
         parser.error("--audio requires --no-capture and --clients 2")
-    if args.pov_hz and args.pov != "stop-lean":
-        parser.error("--pov-hz requires --pov stop-lean")
-    if args.pov_drop_every and args.pov != "stop-lean":
-        parser.error("--pov-drop-every requires --pov stop-lean")
+    if (args.pov_hz or args.pov_drop_every) and args.pov not in DUAL_POV:
+        parser.error("POV cadence/loss options require stop-lean or armed-stride")
+    if args.pov_peer_lossless and (args.pov != "armed-stride" or args.clients != 2):
+        parser.error("--pov-peer-lossless requires dual armed-stride")
     if args.pov and (args.animation_review or args.configure_weapons
                      or (args.video and (args.pov != "stop-lean" or args.clients != 1 or args.pov_hz))
-                     or (args.clients == 2 and args.pov != "stop-lean")):
-        parser.error("--pov is standalone; only stop-lean supports a second client or solo video without --pov-hz")
+                     or (args.clients == 2 and args.pov not in DUAL_POV)):
+        parser.error("--pov is standalone; dual clients require stop-lean or armed-stride. Video requires solo stop-lean without --pov-hz")
     assert not args.weapon_debug or args.animation_review, "--weapon-debug requires --animation-review"
     assert not args.clean_art or args.weapon_debug, "--clean-art requires --weapon-debug"
     assert not args.neutral_art or args.clean_art, "--neutral-art requires --clean-art"
@@ -196,7 +203,7 @@ def main():
         (output / "pov-trace.csv").unlink(missing_ok=True)
         if args.clients == 2:
             (output / "peer" / "gait-trace.csv").unlink(missing_ok=True)
-            for name in ("run", "left", "right", "return"):
+            for name in DUAL_POV[args.pov]:
                 (output / "peer" / f"pov-{name}.png").unlink(missing_ok=True)
     if args.video:
         assert not (output / "frame-times.csv").exists(), "Use a fresh output directory for video evidence"
@@ -317,9 +324,9 @@ def main():
                     client_output.mkdir(exist_ok=True)
                     client_env = env.copy()
                     client_env.update(TK_PLAYTEST_DIR=str(client_output), TK_PLAYTEST_ROLE=str(index))
-                    if index == 1:
+                    if index == 1 and not args.pov_peer_lossless:
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = "3"
-                    elif args.pov_drop_every:
+                    elif index == 0 and args.pov_drop_every:
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = str(args.pov_drop_every)
                     log = (client_output / "client.log").open("w", encoding="utf-8")
                     logs.append(log)
@@ -400,8 +407,15 @@ def main():
             peer_text = re.sub(r"\x1b\[[0-9;]*m", "", peer_text)
             assert "POV OBSERVER PASS" in peer_text and "panicked at" not in peer_text
             assert " ERROR " not in peer_text, f"Runtime/render error in observer log: {peer}"
-            settings["observer_gait"] = gait_metrics(peer / "gait-trace.csv")
-            for name in ("run", "left", "right", "return"):
+            if args.pov == "stop-lean":
+                settings["observer_gait"] = gait_metrics(peer / "gait-trace.csv")
+            else:
+                dropped = re.findall(r"SNAPSHOT LOSS dropped=(\d+) sequence=(\d+)", peer_text)
+                assert bool(dropped) != args.pov_peer_lossless, "Unexpected observer loss mode"
+                assert all(int(seq) % 3 == 0 for _, seq in dropped)
+                settings["observer_snapshot_drop_logged_count"] = int(dropped[-1][0]) if dropped else 0
+                assert (peer / "gait-trace.csv").stat().st_size > 500
+            for name in DUAL_POV[args.pov]:
                 assert f"POV OBSERVER {name} " in peer_text, f"Missing observer cue {name}: {peer}"
                 data = (peer / f"pov-{name}.png").read_bytes()
                 assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000

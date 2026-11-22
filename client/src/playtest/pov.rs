@@ -124,16 +124,20 @@ pub(super) fn trace(
         .map_or(Vec2::splat(f32::NAN), |p| p.truncate());
     writeln!(
         out,
-        "{:.6},{:.6},{:?},{x:.6},{y:.6},{z:.6},{roll:.6},{:.6},{:.6},{:.6}",
+        "{:.6},{:.6},{},{x:.6},{y:.6},{z:.6},{roll:.6},{:.6},{:.6},{:.6}",
         time.elapsed_secs_f64() - driver.since,
         time.delta_secs_f64(),
-        driver.pov_stop_lean,
+        if driver.pov_stride != ArmedStride::Rest {
+            format!("{:?}", driver.pov_stride)
+        } else {
+            format!("{:?}", driver.pov_stop_lean)
+        },
         input.camera.roll,
         marker.x,
         marker.y
     )
     .unwrap();
-    if driver.pov_stop_lean == StopLean::Finish {
+    if driver.pov_stop_lean == StopLean::Finish || driver.pov_stride == ArmedStride::Finish {
         out.flush().unwrap();
     }
 }
@@ -150,6 +154,93 @@ pub(super) enum Ads {
 /// Resolved ECS state can precede GPU mesh/material preparation. Give the
 /// ready assembly a short, bounded warm-up before sampling the first pose.
 pub(super) const VIEW_WARMUP_SECONDS: f64 = 1.0;
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) enum ArmedStride {
+    #[default]
+    Rest,
+    Walk,
+    Run,
+    Turn,
+    RecoverAim,
+    Stop,
+    Finish,
+}
+
+impl ArmedStride {
+    const TURN_YAW: f32 = -0.40;
+
+    fn turned(player: &common::ClientData) -> bool {
+        player.rot.yaw <= -0.30
+            && player.pose.velocity[0].hypot(player.pose.velocity[2]) > 4.3
+            && player.pose.ads < 0.05
+    }
+
+    fn moving_ads(player: &common::ClientData) -> bool {
+        let [x, _, z] = player.pose.velocity;
+        (1.5..3.7).contains(&x.hypot(z)) && player.pose.ads > 0.90
+    }
+
+    pub(super) fn advance(
+        &mut self,
+        elapsed: f64,
+        ready: bool,
+        player: &common::ClientData,
+    ) -> Result<Option<&'static str>, &'static str> {
+        if elapsed >= 15.0 {
+            return Err("armed stride did not reach its confirmed state before timeout");
+        }
+        if !ready {
+            return Ok(None);
+        }
+        let [x, _, z] = player.pose.velocity;
+        let speed = x.hypot(z);
+        let (next, cue) = match self {
+            Self::Rest => (Self::Walk, "pov-rest"),
+            Self::Walk if (2.5..3.7).contains(&speed) && player.pos[2] < 8.0 => {
+                (Self::Run, "pov-walk")
+            }
+            Self::Run if speed > 4.6 && player.pose.ads < 0.05 => (Self::Turn, "pov-run"),
+            Self::Turn
+                if Self::turned(player)
+                    && player.rot.yaw <= -0.39
+                    && player.pose.phase.sin().abs() > 0.5 =>
+            {
+                (Self::RecoverAim, "pov-turn")
+            }
+            Self::RecoverAim if Self::moving_ads(player) && player.pose.ads > 0.98 => {
+                (Self::Stop, "pov-moving-ads")
+            }
+            Self::Stop if speed < 0.08 && player.pose.ads < 0.02 => (Self::Finish, "pov-return"),
+            _ => return Ok(None),
+        };
+        *self = next;
+        Ok(Some(cue))
+    }
+
+    pub(super) fn input(&self, input: &mut common::ClientInput, turn: &mut f32, dt: f32) {
+        input.forward = matches!(self, Self::Walk | Self::Run | Self::Turn | Self::RecoverAim);
+        input.run = matches!(self, Self::Run | Self::Turn);
+        input.aim = matches!(self, Self::Turn | Self::RecoverAim);
+        if matches!(
+            self,
+            Self::Turn | Self::RecoverAim | Self::Stop | Self::Finish
+        ) {
+            *turn = (*turn - 1.8 * dt).max(Self::TURN_YAW);
+        }
+        input.camera.yaw = *turn;
+    }
+
+    pub(super) fn observe(stage: u8, player: &common::ClientData) -> Option<&'static str> {
+        let [x, _, z] = player.pose.velocity;
+        match stage {
+            0 if Self::turned(player) => Some("turn"),
+            1 if Self::moving_ads(player) => Some("moving-ads"),
+            2 if x.hypot(z) < 0.08 && player.pose.ads < 0.02 => Some("return"),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) enum StopLean {
@@ -350,6 +441,50 @@ impl Handling {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn armed_stride_requires_turned_running_phase_and_moving_ads_confirmation() {
+        let mut route = ArmedStride::default();
+        let mut player = common::ClientData::default();
+        let mut input = common::ClientInput::default();
+        let mut yaw = 0.0;
+        assert_eq!(route.advance(0.0, false, &player), Ok(None));
+        assert_eq!(route.advance(1.0, true, &player), Ok(Some("pov-rest")));
+        player.pose.velocity[2] = -3.1;
+        assert_eq!(route.advance(2.0, true, &player), Ok(Some("pov-walk")));
+        player.pose.velocity[2] = -5.0;
+        assert_eq!(route.advance(2.5, true, &player), Ok(Some("pov-run")));
+        route.input(&mut input, &mut yaw, 0.05);
+        assert!(input.run && input.aim && input.forward && yaw < 0.0);
+        assert_eq!(route.advance(2.6, true, &player), Ok(None));
+        player.rot.yaw = -0.40;
+        assert_eq!(ArmedStride::observe(0, &player), Some("turn"));
+        assert_eq!(
+            route.advance(2.7, true, &player),
+            Ok(None),
+            "wait for mid-stride"
+        );
+        player.pose.phase = 1.0;
+        assert_eq!(route.advance(2.8, true, &player), Ok(Some("pov-turn")));
+        route.input(&mut input, &mut yaw, 0.05);
+        assert!(!input.run && input.aim && input.forward);
+        player.pose.ads = 1.0;
+        assert_eq!(route.advance(2.9, true, &player), Ok(None), "still running");
+        player.pose.velocity[2] = -3.1;
+        assert_eq!(ArmedStride::observe(1, &player), Some("moving-ads"));
+        assert_eq!(
+            route.advance(3.3, true, &player),
+            Ok(Some("pov-moving-ads"))
+        );
+        route.input(&mut input, &mut yaw, 0.05);
+        assert!(!input.forward && !input.aim);
+        assert_eq!(ArmedStride::observe(2, &player), None);
+        player.pose.ads = 0.0;
+        player.pose.velocity[2] = 0.0;
+        assert_eq!(ArmedStride::observe(2, &player), Some("return"));
+        assert_eq!(route.advance(4.0, true, &player), Ok(Some("pov-return")));
+        assert!(route.advance(15.0, true, &player).is_err());
+    }
 
     #[test]
     fn handling_route_cancels_inspect_before_requesting_swap() {

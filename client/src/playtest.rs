@@ -69,14 +69,14 @@ impl bevy::prelude::Plugin for Plugin {
                 asset_review::camera.after(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(PostUpdate, video::record);
-        if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("stop-lean")
-            && std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1")
-        {
+        let stride_bench = matches!(
+            std::env::var("TK_PLAYTEST_POV").as_deref(),
+            Ok("stop-lean" | "armed-stride")
+        );
+        if stride_bench && std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1") {
             app.add_systems(PostUpdate, pov::trace_observer);
         }
-        if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("stop-lean")
-            && let Ok(value) = std::env::var("TK_PLAYTEST_POV_HZ")
-        {
+        if stride_bench && let Ok(value) = std::env::var("TK_PLAYTEST_POV_HZ") {
             let hz = value.parse::<u32>().expect("POV cadence in Hz");
             assert!((15..=240).contains(&hz));
             app.insert_resource(pov::Cadence::new(hz))
@@ -147,6 +147,8 @@ struct Driver {
     pov_inspect: pov::Inspect,
     pov_handling: pov::Handling,
     pov_stop_lean: pov::StopLean,
+    pov_stride: pov::ArmedStride,
+    pov_turn: f32,
     pov_stop_lean_roll: f32,
     pov_lean_since: f64,
     pov_observed: u8,
@@ -465,8 +467,9 @@ fn drive(
         }
         Step::Pov => {
             let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");
-            let observe =
-                preset == "stop-lean" && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("2");
+            let armed = preset == "armed-stride";
+            let observe = (armed || preset == "stop-lean")
+                && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("2");
             if peer && observe {
                 view_camera.is_active = false;
                 assert!(now - driver.since < 18.0, "POV observer timed out");
@@ -481,7 +484,8 @@ fn drive(
                 // runner is still ahead of the observer in the adjacent lane.
                 let delta = Vec3::from(actor.pos) - Vec3::from(local.pos);
                 let [vx, _, vz] = actor.pose.velocity;
-                if driver.captures & 1 == 0
+                if !armed
+                    && driver.captures & 1 == 0
                     && vx.hypot(vz) > 4.5
                     && delta.z < -2.5
                     && delta.length() < 7.0
@@ -496,7 +500,7 @@ fn drive(
                     );
                     capture(&mut commands, "pov-run");
                 }
-                if local.pos[2] > 5.5 {
+                if !armed && local.pos[2] > 5.5 {
                     input.camera = CameraInput::default();
                     input.forward = true;
                     return;
@@ -506,34 +510,44 @@ fn drive(
                     pitch: (delta.y - 0.65).atan2(delta.x.hypot(delta.z)),
                     ..default()
                 };
-                if let Some(roll) = projections.poses.presented_roll(actor.id) {
-                    let observed = match driver.pov_observed {
-                        0 if roll < -0.27 && actor.pose.aim_roll < -0.29 => Some("left"),
-                        1 if roll > 0.27 && actor.pose.aim_roll > 0.29 => Some("right"),
-                        2 if roll.abs() < 0.01 && actor.pose.aim_roll.abs() < 0.001 => {
-                            Some("return")
+                let observed = if armed {
+                    pov::ArmedStride::observe(driver.pov_observed, actor)
+                } else {
+                    projections.poses.presented_roll(actor.id).and_then(|roll| {
+                        match driver.pov_observed {
+                            0 if roll < -0.27 && actor.pose.aim_roll < -0.29 => Some("left"),
+                            1 if roll > 0.27 && actor.pose.aim_roll > 0.29 => Some("right"),
+                            2 if roll.abs() < 0.01 && actor.pose.aim_roll.abs() < 0.001 => {
+                                Some("return")
+                            }
+                            _ => None,
                         }
-                        _ => None,
-                    };
-                    if let Some(name) = observed {
-                        info!(
-                            "POV OBSERVER {name} render_roll={roll:.3} confirmed_roll={:.3}",
-                            actor.pose.aim_roll
-                        );
-                        capture(&mut commands, &format!("pov-{name}"));
-                        driver.pov_observed += 1;
-                    }
+                    })
+                };
+                if let Some(name) = observed {
+                    info!(
+                        "POV OBSERVER {name} yaw={:.3} velocity={:?} ads={:.3} phase={:.3} snapshot={}",
+                        actor.rot.yaw,
+                        actor.pose.velocity,
+                        actor.pose.ads,
+                        actor.pose.phase,
+                        session.last_sequence
+                    );
+                    capture(&mut commands, &format!("pov-{name}"));
+                    driver.pov_observed += 1;
                 }
                 if driver.pov_observed == 3
                     && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
                         .join("pov-return.png")
                         .is_file()
                 {
-                    assert_ne!(
-                        driver.captures & 1,
-                        0,
-                        "POV observer missed the loaded running phase"
-                    );
+                    if !armed {
+                        assert_ne!(
+                            driver.captures & 1,
+                            0,
+                            "POV observer missed the loaded running phase"
+                        );
+                    }
                     info!("POV OBSERVER PASS");
                     exit.write(AppExit::Success);
                 }
@@ -557,6 +571,7 @@ fn drive(
                 && now - *driver.pov_visual_since.get_or_insert(now) >= pov::VIEW_WARMUP_SECONDS;
             let ready = local.pose.grounded && visual_settled;
             let name = match preset.as_str() {
+                "armed-stride" => driver.pov_stride.advance(elapsed, ready, local),
                 "ads" => driver.pov_ads.advance(elapsed, ready, ads, world_fov),
                 "inspect" => driver.pov_inspect.advance(elapsed, ready, local.mechanics),
                 "handling-route" if driver.pov_stop_lean == pov::StopLean::Finish => {
@@ -598,14 +613,16 @@ fn drive(
             if let Some(name) = name {
                 driver.pov_lean_since = now;
                 info!(
-                    "POV EVIDENCE {name} t={now:.3} pos={:?} velocity={:?} crouch={:.3} roll={:.3} ads={ads:.3} fov={world_fov:.2} config={} action={:?} fraction={:.3}",
+                    "POV EVIDENCE {name} t={now:.3} pos={:?} velocity={:?} crouch={:.3} roll={:.3} ads={ads:.3} fov={world_fov:.2} config={} action={:?} fraction={:.3} yaw={:.3} phase={:.3}",
                     local.pos,
                     local.pose.velocity,
                     local.pose.crouch,
                     local.pose.aim_roll,
                     local.configuration,
                     local.mechanics.kind,
-                    local.mechanics.fraction
+                    local.mechanics.fraction,
+                    local.rot.yaw,
+                    local.pose.phase
                 );
                 capture(&mut commands, name);
             }
@@ -615,7 +632,13 @@ fn drive(
             {
                 input.inspect_sequence = input.inspect_sequence.wrapping_add(1);
             }
-            if preset == "handling-route" && driver.pov_stop_lean == pov::StopLean::Finish {
+            if armed {
+                let mut turn = driver.pov_turn;
+                driver
+                    .pov_stride
+                    .input(&mut input, &mut turn, time.delta_secs().min(0.05));
+                driver.pov_turn = turn;
+            } else if preset == "handling-route" && driver.pov_stop_lean == pov::StopLean::Finish {
                 driver.pov_handling.input(&mut input);
             } else if matches!(
                 preset.as_str(),
@@ -627,6 +650,7 @@ fn drive(
                 driver.pov_stop_lean_roll = input.camera.roll;
             }
             if (driver.pov_ads == pov::Ads::Finish
+                || driver.pov_stride == pov::ArmedStride::Finish
                 || driver.pov_inspect == pov::Inspect::Finish
                 || (driver.pov_stop_lean == pov::StopLean::Finish && preset != "handling-route")
                 || driver.pov_handling == pov::Handling::Finish)

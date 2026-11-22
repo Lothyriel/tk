@@ -37,7 +37,7 @@ pub fn pov_side_cover() -> impl Iterator<Item = MapBlock> {
 pub fn pov_fixture() -> bool {
     matches!(
         std::env::var("TK_PLAYTEST_POV").as_deref(),
-        Ok("ads" | "inspect" | "stop-lean" | "side-cover" | "handling-route")
+        Ok("ads" | "inspect" | "stop-lean" | "side-cover" | "handling-route" | "armed-stride")
     )
 }
 

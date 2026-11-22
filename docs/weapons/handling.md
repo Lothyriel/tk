@@ -91,18 +91,21 @@ and cadence (`compact`/`suppressed`, `30`/`165`), with fresh output directories:
 
 ```sh
 python scripts/playtest.py --no-build --server-path "$CARGO_TARGET_DIR/debug/server" \
-  --client-path "$CARGO_TARGET_DIR/debug/client" --pov stop-lean --clients 2 \
+  --client-path "$CARGO_TARGET_DIR/debug/client" --pov armed-stride --clients 2 \
   --viewport 900x700 --weapon-kit "$kit" --pov-hz "$hz" --pov-drop-every 3 \
   --output "../tar102-tmp/udp-$kit-$hz"
 ```
 
-The existing bench repeats rest → walk → sprint → brake before the low wall
-→ crouch/lean/return. It drops every third snapshot on both clients as
-configured above. Check `run-settings.json`, client logs, `pov-trace.csv` and
-`peer/gait-trace.csv` for completion, logged loss, actual cadence and the
-states sampled. Compare leader walk/run/stop captures and the peer's running
-silhouette; check both grips, full-body weight transfer and camera bob.
-Screenshots/traces do not establish normal-speed continuity.
+The preset repeats rest → walk → sprint → turn about 23° with ADS held →
+release sprint during a confirmed stride → ADS while walking → stop and
+release ADS. The observer independently confirms turn, moving ADS and return.
+The command drops every third snapshot on both clients. For the no-injected-loss
+control, remove `--pov-drop-every 3`, add `--pov-peer-lossless`, and use a new
+output directory. Check `run-settings.json`, client logs, `pov-trace.csv`
+(leader and peer) and `peer/gait-trace.csv`. Use measured frame intervals,
+not the requested cap, when comparing cadences. Compare the two perspectives'
+turn, moving-ADS and return captures; inspect the grips, posture and camera.
+Screenshots and traces do not establish normal-speed continuity.
 
 For live temporal acceptance, use a two-client private test session with the
 same kit and camera settings. Launch both ordinary clients with
@@ -116,5 +119,5 @@ ADS returns. Repeat on both kits, placing the observer clear of the path with a
 three-quarter view of the torso and hands. Review live at normal speed.
 Record separately whether each transition
 is continuous in POV and on the peer, whether either grip breaks contact, and
-whether ADS resumes. The straight bench does not script the turn or ADS during
-braking, so it is not sufficient on its own. No video is required.
+whether ADS resumes. The older `stop-lean` bench remains useful for lean and
+foot support but does not cover the turn or ADS recovery. No video is required.
