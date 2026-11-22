@@ -111,6 +111,42 @@ impl InventoryAuthority {
             .then(|| self.revisions.get(&id).copied().unwrap_or(0))
     }
 
+    /// Commit a server-validated world pickup. The caller owns reach, visibility
+    /// and actor checks. `None` means no room; the world item stays in place.
+    pub fn pickup(
+        &mut self,
+        item: ItemInstanceId,
+        source: CompartmentId,
+        target: CompartmentId,
+    ) -> Result<Option<VersionedCommit>, OperationResult> {
+        let unavailable = OperationResult::Rejected(TransactionError::Unavailable);
+        if source == target
+            || !self
+                .inventory
+                .get(item)
+                .is_some_and(|entry| entry.location.compartment == source)
+        {
+            return Err(unavailable);
+        }
+        let Some(destination) = self
+            .inventory
+            .first_fit(item, target)
+            .map_err(|error| OperationResult::Rejected(TransactionError::Rule(error)))?
+        else {
+            return Ok(None);
+        };
+        let expected = [source, target].map(|id| VersionedCompartment {
+            id,
+            revision: self.revision(id).expect("validated pickup compartment"),
+        });
+        self.commit(
+            InventoryAction::Move { item, destination },
+            expected,
+            |id| id == source || id == target,
+        )
+        .map(Some)
+    }
+
     pub fn apply(
         &mut self,
         session: &mut OperationSession,
@@ -139,7 +175,7 @@ impl InventoryAuthority {
         if session.last.checked_add(1) != Some(request.id) {
             return without_commit(OperationResult::OutOfOrder);
         }
-        let reply = match self.commit(request, may_write) {
+        let reply = match self.commit(request.action, request.expected, may_write) {
             Ok(commit) => OperationReply {
                 result: OperationResult::Committed,
                 commit: Some(commit),
@@ -156,18 +192,19 @@ impl InventoryAuthority {
 
     fn commit(
         &mut self,
-        request: InventoryOperation,
+        action: InventoryAction,
+        expected: [VersionedCompartment; 2],
         may_write: impl Fn(CompartmentId) -> bool,
     ) -> Result<VersionedCommit, OperationResult> {
         let rejected = OperationResult::Rejected;
         let scope = self
             .inventory
-            .transaction_scope(request.action, &may_write)
+            .transaction_scope(action, &may_write)
             .map_err(rejected)?;
         let mut next = [0; 2];
         for (index, id) in scope.into_iter().enumerate() {
             let revision = self.revision(id).expect("validated compartment");
-            if request.expected[index] != (VersionedCompartment { id, revision }) {
+            if expected[index] != (VersionedCompartment { id, revision }) {
                 return Err(OperationResult::Conflict);
             }
             next[index] = revision
@@ -176,16 +213,11 @@ impl InventoryAuthority {
         }
         let commit = self
             .inventory
-            .transact(request.action, |id| scope.contains(&id))
+            .transact(action, |id| scope.contains(&id))
             .map_err(rejected)?;
         for (id, revision) in scope.into_iter().zip(next) {
             self.revisions.insert(id, revision);
         }
-        Ok(VersionedCommit::new(
-            request.session.raid_epoch,
-            scope,
-            next,
-            commit,
-        ))
+        Ok(VersionedCommit::new(self.raid_epoch, scope, next, commit))
     }
 }
