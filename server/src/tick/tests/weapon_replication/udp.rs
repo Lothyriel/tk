@@ -315,6 +315,96 @@ fn arena_pvp_udp_alternates_lives_rejects_stale_input_and_releases_seat() {
 
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn fictional_fault_udp_reconnect_retires_old_actor() {
+    let mut harness = Harness::new();
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<WorldState>()
+        .action_fault_fixture = true;
+    let mut first = UdpPeer::new(7, harness.address, harness.now, false);
+    let mut observer = UdpPeer::new(8, harness.address, harness.now, true);
+    harness.pump(&mut [&mut first, &mut observer], 192);
+    first.input.lobby_sequence = 1;
+    observer.input.lobby_sequence = 1;
+    for _ in 0..640 {
+        harness.step(&mut [&mut first, &mut observer]);
+        if observer
+            .peer
+            .latest
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.raid.phase == RaidPhase::Active)
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        observer.peer.latest.as_ref().unwrap().raid.phase,
+        RaidPhase::Active
+    );
+    let ids = |h: &Harness| {
+        let lobby = h.app.world().resource::<Lobby>();
+        (
+            lobby.players.get(&7).copied(),
+            lobby.players.get(&9).copied(),
+        )
+    };
+    let old_entity = ids(&harness).0.unwrap();
+    let world = harness.app.world_mut();
+    let bots: Vec<_> = world
+        .query_filtered::<Entity, With<Bot>>()
+        .iter(world)
+        .collect();
+    for bot in bots {
+        world.entity_mut(bot).despawn();
+    }
+    let next_shot = |h: &Harness| h.app.world().resource::<WorldState>().next_projectile_id;
+    let baseline = next_shot(&harness);
+    first.input.fire = true;
+    first.input.fire_pressed_sequence = 1;
+    harness.pump(&mut [&mut first, &mut observer], 48);
+    let observed = observer.peer.latest.as_ref().unwrap();
+    let old = observed.players.iter().find(|p| p.id == 7).unwrap();
+    assert!(old.mechanics.action_unavailable());
+    let observer_shots = (
+        observer.peer.presented_ids.len(),
+        observer.peer.reliable_ids.len(),
+    );
+    first.transport.disconnect();
+    harness.pump(&mut [&mut observer], 64);
+    assert!(ids(&harness).0.is_none());
+    assert!(harness.app.world().get_entity(old_entity).is_err());
+
+    // The game's reconnect creates a new transport ID and fresh input state.
+    let mut fresh = UdpPeer::new(9, harness.address, harness.now, false);
+    harness.pump(&mut [&mut fresh, &mut observer], 192);
+    assert!(fresh.transport.is_connected());
+    assert_ne!(ids(&harness).1.unwrap(), old_entity);
+    for peer in [&fresh, &observer] {
+        let snapshot = peer.peer.latest.as_ref().unwrap();
+        assert_eq!(snapshot.raid.phase, RaidPhase::Active);
+        assert!(!snapshot.players.iter().any(|p| p.id == 7));
+        let player = snapshot.players.iter().find(|p| p.id == 9).unwrap();
+        assert_eq!(player.participant.status, RaidStatus::Waiting);
+        assert!(!player.alive && !player.mechanics.action_unavailable());
+        assert_eq!(player.mechanics.recovery_ms(), 0);
+    }
+    assert_eq!(next_shot(&harness), baseline);
+    assert_eq!(
+        (
+            observer.peer.presented_ids.len(),
+            observer.peer.reliable_ids.len()
+        ),
+        observer_shots
+    );
+    assert!(fresh.peer.reliable_ids.is_empty() && fresh.peer.presented_ids.is_empty());
+    let dropped = observer.dropped.load(Ordering::Relaxed);
+    assert!(dropped > 0);
+    eprintln!("reconnect retired the faulted actor with {dropped} discarded observer datagrams");
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn fictional_fault_udp_late_observer_converges_without_replaying_actions() {
     fn actor(peer: &UdpPeer) -> &ClientData {
         peer.peer

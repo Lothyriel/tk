@@ -374,6 +374,58 @@ mod tests {
     }
 
     #[test]
+    fn fictional_fault_cue_is_not_replayed_after_reconnect() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<ClientSession>()
+            .insert_resource(PlayerId(8))
+            .insert_resource(Muted(false))
+            .insert_resource(Cues(std::array::from_fn(|_| Handle::default())))
+            // No audio plugin or device: observe only scheduling in ECS.
+            .add_systems(Update, present);
+        let actor = |id, action_fault| common::ClientData {
+            id,
+            alive: true,
+            weapon_instance: WeaponInstanceId(42),
+            mechanics: MechanicalSnapshot {
+                action_fault,
+                ..default()
+            },
+            ..default()
+        };
+        let voices = |app: &mut App| {
+            let world = app.world_mut();
+            world.query::<&AudioPlayer<SynthShot>>().iter(world).count()
+        };
+        app.world_mut().resource_mut::<ClientSession>().players = vec![actor(7, 0)];
+        app.update();
+        app.world_mut().resource_mut::<ClientSession>().players = vec![actor(7, 1)];
+        app.update();
+        assert_eq!(voices(&mut app), 1);
+        app.update();
+        assert_eq!(voices(&mut app), 1);
+        app.world_mut()
+            .resource_mut::<ClientSession>()
+            .players
+            .clear();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs(1));
+        app.update();
+        assert_eq!(voices(&mut app), 0);
+        let mut waiting = actor(9, 0);
+        waiting.alive = false;
+        app.world_mut().resource_mut::<ClientSession>().players = vec![waiting];
+        app.update();
+        assert_eq!(voices(&mut app), 0);
+        // A later active snapshot establishes a fresh baseline even if its
+        // protocol-local instance number equals the previous session's.
+        app.world_mut().resource_mut::<ClientSession>().players = vec![actor(9, 0)];
+        app.update();
+        assert_eq!(voices(&mut app), 0);
+    }
+
+    #[test]
     #[ignore = "opt-in CPU timing experiment; run without other workloads"]
     fn shot_audio_scheduling_cost() {
         const ACTORS: u64 = 32;
