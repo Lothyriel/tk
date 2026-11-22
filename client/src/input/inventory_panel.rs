@@ -5,6 +5,7 @@ use common::{PlayerId, catalog::ItemInstanceId, replication::inventory::CHANNEL}
 
 use crate::sync::{ClientSession, inventory::State};
 pub(super) mod grid;
+pub(crate) use grid::GridReview;
 
 #[derive(Default, Resource)]
 pub(crate) struct Panel {

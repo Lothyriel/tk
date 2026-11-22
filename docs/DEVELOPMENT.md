@@ -39,6 +39,32 @@ Procure `ARENA MENU PROBE PASS` no log. São eventos sintéticos do Bevy,
 incluindo picking direcionado a widgets com layout; não certificam eventos do
 SO, hit-testing, legibilidade, nem perda UDP. A sonda não registra mídia.
 
+## Revisão estática da grade
+
+Somente após coordenação, com um servidor normal e loot real, rode o cliente
+sem `--playtest`:
+
+```sh
+TK_GRID_REVIEW_DIR="$HOME/tmp/tar56-grid-720" TK_PLAYTEST_VIEWPORT=1280x720 \
+  cargo run --locked -p client -- --inventory-grid-review
+```
+
+Use um diretório novo por execução e repita em `1280x800` e `1920x1080`.
+Repita com `TK_GRID_REVIEW_UI_SCALE=1.25` para verificar escala maior.
+Confirme a resolução física no log e nas imagens; não conte uma janela que
+o compositor tenha redimensionado como parte da matriz.
+
+Entre na raid, colete a água e as bandagens, abra a grade apontando fora dela,
+passe o cursor sobre um item, arraste para uma célula válida e outra inválida
+(por exemplo, a última coluna com a garrafa girada), solte numa posição válida
+para enviar o movimento e abra o menu contextual com clique direito ou F10.
+O observador registra um PNG por estado e `GRID REVIEW` com revisão, escala
+e limites de layout. Aguarde os arquivos antes de fechar o cliente. Se não
+houver um frame real de pending ou o arquivo não for produzido, deixe a
+evidência pendente; não congele o estado, simule confirmação ou atrase o
+servidor para obter a imagem. `inside` não substitui revisão de legibilidade,
+foco, sobreposição ou áudio. Não há injeção de input nem vídeo neste modo.
+
 ## Entradas compartilhadas
 
 OpenCode e Codex descobrem skills do projeto em `.agents/skills/`.

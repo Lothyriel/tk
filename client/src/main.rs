@@ -14,6 +14,7 @@ fn main() {
     let playtest = std::env::args().any(|argument| argument == "--playtest");
     let grid_probe = std::env::args().any(|argument| argument == "--inventory-grid-probe");
     let arena_menu_probe = playtest::arena_menu::Probe::requested();
+    let grid_review = std::env::args().any(|argument| argument == "--inventory-grid-review");
     let voxel_grid = playtest && std::env::var_os("TK_PLAYTEST_INVENTORY_GRID").is_some();
     assert!(
         !voxel_grid
@@ -31,7 +32,13 @@ fn main() {
         !grid_probe || !(playtest || item_review || arena_menu_probe.is_some()),
         "run the inventory grid probe without other playtest or review modes"
     );
-    let viewport = playtest.then(playtest::requested_viewport).flatten();
+    assert!(
+        !grid_review || !(playtest || grid_probe || item_review || arena_menu_probe.is_some()),
+        "run the inventory grid review on a normal connected client"
+    );
+    let viewport = (playtest || grid_review)
+        .then(playtest::requested_viewport)
+        .flatten();
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
@@ -81,6 +88,9 @@ fn main() {
     }
     if let Some(probe) = arena_menu_probe {
         app.add_plugins(probe);
+    }
+    if grid_review {
+        app.add_plugins(input::inventory_panel::GridReview);
     }
     app.run();
 }

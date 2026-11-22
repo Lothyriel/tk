@@ -120,6 +120,16 @@ pub(in crate::input) struct Tile;
 #[derive(Component)]
 pub(in crate::input) struct ItemTooltip;
 
+mod review;
+pub(crate) use review::GridReview;
+
+#[derive(Clone, Copy, Component)]
+enum GhostKind {
+    Valid,
+    Invalid,
+    Pending,
+}
+
 fn footprint(item: &ProjectedItem) -> Footprint {
     planned_items()[item.definition.as_str()].footprint
 }
@@ -978,6 +988,13 @@ pub(in crate::input) fn present(
         {
             board.spawn((
                 Tile,
+                if pending {
+                    GhostKind::Pending
+                } else if valid {
+                    GhostKind::Valid
+                } else {
+                    GhostKind::Invalid
+                },
                 Pickable::IGNORE,
                 FocusPolicy::Pass,
                 rectangle(target, dimensions(item, target.rotation), grid.size),
