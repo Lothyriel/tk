@@ -1484,14 +1484,77 @@ fn inventory_udp_contested_item_converges_under_loss() {
         (item, 2, Condition::Damaged)
     );
 
-    // Transfer the surviving stack out of the shared view. Only its new
-    // owner may see the destination; the other peer sees just the removal.
+    // The second peer now tries a cross-compartment transfer using the
+    // shared revision from before the contested move. The destination is
+    // otherwise valid and empty; neither inventory may change on Conflict.
+    let second_own = CompartmentId(8);
+    let second_key = views[1].0;
+    let second_before = views[1].1.get(second_own).unwrap();
+    let shared_before = snapshot;
+    let stale_transfer = InventoryOperation {
+        session: second_key,
+        id: 2,
+        expected: [
+            VersionedCompartment {
+                id: shared,
+                revision: 0,
+            },
+            second_before.version,
+        ],
+        action: InventoryAction::Move {
+            item,
+            destination: GridLocation {
+                compartment: second_own,
+                placement,
+            },
+        },
+    };
+    for _ in 0..2 {
+        second.peer.network.send_message(
+            CHANNEL,
+            InventoryRequest::Operate(stale_transfer).encode().unwrap(),
+        );
+    }
+    harness.pump(&mut [&mut first, &mut second], 160);
+    assert!(drain(&mut first).is_empty());
+    let stale_results = drain(&mut second);
+    assert_eq!(stale_results.len(), 2);
+    assert!(stale_results.iter().all(|update| {
+        update.session == second_key
+            && update.body
+                == UpdateBody::Result {
+                    id: 2,
+                    result: OperationResult::Conflict,
+                }
+    }));
+    for compartment in [shared, second_own] {
+        second.peer.network.send_message(
+            CHANNEL,
+            InventoryRequest::Resync {
+                session: second_key,
+                compartment,
+            }
+            .encode()
+            .unwrap(),
+        );
+    }
+    harness.pump(&mut [&mut first, &mut second], 160);
+    assert!(drain(&mut first).is_empty());
+    let snapshots = drain(&mut second);
+    assert_eq!(snapshots.len(), 2);
+    for (update, expected) in snapshots.iter().zip([shared_before, second_before]) {
+        assert_eq!(update.session, second_key);
+        assert!(matches!(&update.body, UpdateBody::Snapshot(actual) if actual == expected));
+    }
+
+    // Transfer the surviving stack out of the shared view with fresh
+    // revisions. Only the new owner may see the destination.
     let own = CompartmentId(7);
     let session = views[0].0;
     let transfer = InventoryOperation {
         session,
         id: 2,
-        expected: [snapshot.version, views[0].1.get(own).unwrap().version],
+        expected: [shared_before.version, views[0].1.get(own).unwrap().version],
         action: InventoryAction::Move {
             item,
             destination: GridLocation {
