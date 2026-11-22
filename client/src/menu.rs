@@ -969,6 +969,7 @@ mod tests {
             .insert_resource(client)
             .insert_resource(PlayerId(7))
             .init_resource::<crate::sync::inventory::State>()
+            .init_resource::<Assets<Font>>()
             .init_resource::<Time<Real>>()
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<ButtonInput<MouseButton>>()

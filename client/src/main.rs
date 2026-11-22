@@ -149,6 +149,7 @@ mod startup_tests {
         ))
         .init_asset::<StandardMaterial>()
         .init_asset::<Image>()
+        .init_asset::<Font>()
         .configure_sets(
             Update,
             (

@@ -608,6 +608,17 @@ pub(super) fn interact(
     true
 }
 
+const GRID_FONT_BYTES: &[u8] = include_bytes!("../../../../assets/fonts/FiraMono-Medium.ttf");
+
+#[derive(Resource)]
+pub(in crate::input) struct GridFont(Handle<Font>);
+
+impl GridFont {
+    fn sized(&self, size: f32) -> TextFont {
+        TextFont::from_font_size(size).with_font(self.0.clone())
+    }
+}
+
 fn reason(verdict: Option<Result<(), PlacementError>>) -> &'static str {
     match verdict {
         Some(Ok(())) => "Valid placement",
@@ -617,14 +628,15 @@ fn reason(verdict: Option<Result<(), PlacementError>>) -> &'static str {
     }
 }
 
-pub(in crate::input) fn setup(mut commands: Commands) {
+pub(in crate::input) fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
+    let font = GridFont(fonts.add(Font::from_bytes(GRID_FONT_BYTES.to_vec())));
     commands.spawn((
         ItemTooltip,
         Pickable::IGNORE,
         FocusPolicy::Pass,
         GlobalZIndex(230),
         Text::default(),
-        TextFont::from_font_size(13.0),
+        font.sized(13.0),
         BackgroundColor(Color::srgb(0.04, 0.08, 0.12)),
         Node {
             display: Display::None,
@@ -654,7 +666,7 @@ pub(in crate::input) fn setup(mut commands: Commands) {
         .with_children(|parent| {
             parent.spawn((
                 Text::new("BACKPACK GRID\nDrag or Enter to move · R rotate\nShift+drag/Enter split · drop on stack to merge"),
-                TextFont::from_font_size(13.0),
+                font.sized(13.0),
             ));
             parent.spawn((
                 Board,
@@ -667,7 +679,7 @@ pub(in crate::input) fn setup(mut commands: Commands) {
                 },
                 BackgroundColor(Color::srgb(0.10, 0.13, 0.16)),
             ));
-            parent.spawn((Feedback, Text::default(), TextFont::from_font_size(14.0)));
+            parent.spawn((Feedback, Text::default(), font.sized(14.0)));
             parent.spawn((QuantityControls, Node { display: Display::None, column_gap: Val::Px(5.0), ..default() }))
                 .with_children(|buttons| {
                     for (action, label) in [
@@ -680,7 +692,7 @@ pub(in crate::input) fn setup(mut commands: Commands) {
                             action, RelativeCursorPosition::default(),
                             Node { padding: UiRect::all(Val::Px(7.0)), ..default() },
                             BackgroundColor(Color::srgb(0.17, 0.29, 0.40)),
-                        )).with_child((FocusPolicy::Pass, Text::new(label), TextFont::from_font_size(14.0)));
+                        )).with_child((FocusPolicy::Pass, Text::new(label), font.sized(14.0)));
                     }
                 });
             parent.spawn((ContextControls, Node { display: Display::None, column_gap: Val::Px(5.0), ..default() }))
@@ -690,10 +702,11 @@ pub(in crate::input) fn setup(mut commands: Commands) {
                             action, RelativeCursorPosition::default(),
                             Node { padding: UiRect::all(Val::Px(7.0)), ..default() },
                             BackgroundColor(Color::srgb(0.17, 0.29, 0.40)),
-                        )).with_child((ContextLabel(action), FocusPolicy::Pass, Text::new(label), TextFont::from_font_size(14.0)));
+                        )).with_child((ContextLabel(action), FocusPolicy::Pass, Text::new(label), font.sized(14.0)));
                     }
                 });
         });
+    commands.insert_resource(font);
 }
 
 fn tooltip_rect(pointer: Vec2, viewport: Vec2) -> (Vec2, Vec2) {
@@ -804,6 +817,7 @@ type ContextNode<'w, 's> =
 #[allow(clippy::too_many_arguments)]
 pub(in crate::input) fn present(
     mut commands: Commands,
+    font: Res<GridFont>,
     (panel, inventory): (Res<Panel>, Res<State>),
     (session, player): (Res<crate::sync::ClientSession>, Res<common::PlayerId>),
     mut root: Single<&mut Node, With<GridRoot>>,
@@ -980,7 +994,8 @@ pub(in crate::input) fn present(
                     Pickable::IGNORE,
                     FocusPolicy::Pass,
                     Text::new(format!("{} ×{}", entry.name, item.quantity)),
-                    TextFont::from_font_size(12.0),
+                    font.sized(12.0),
+                    TextLayout::linebreak(bevy::text::LineBreak::WordOrCharacter),
                 ));
         }
         if let Some((id, target, pending)) = ghost
@@ -1074,6 +1089,34 @@ mod tests {
         fixture_with_stacks(false)
     }
 
+    #[test]
+    fn inventory_grid_uses_licensed_face_and_preserves_word_wrapped_names() {
+        use bevy::text::{FontSource, LineBreak};
+        let (mut app, _, _) = fixture();
+        let world = app.world_mut();
+        let handle = world.resource::<GridFont>().0.clone();
+        assert_eq!(
+            world
+                .resource::<Assets<Font>>()
+                .get(&handle)
+                .unwrap()
+                .data
+                .as_ref(),
+            GRID_FONT_BYTES
+        );
+        let mut labels = world.query::<(&Text, &TextFont, &TextLayout)>();
+        let mut items = Vec::new();
+        for (label, font, layout) in labels.iter(world) {
+            assert_eq!(font.font, FontSource::Handle(handle.clone()));
+            if label.contains('×') {
+                assert_eq!(layout.linebreak, LineBreak::WordOrCharacter);
+                items.push(label.as_str());
+            }
+        }
+        assert!(items.contains(&"Água potável 500 ml ×1"));
+        assert!(items.contains(&"Bandagem estéril ×1"));
+    }
+
     fn fixture_with_stacks(stacks: bool) -> (App, InventoryAuthority, ItemInstanceId) {
         let mut source = Inventory::default();
         source
@@ -1120,6 +1163,7 @@ mod tests {
         client.set_connected();
         let mut app = App::new();
         app.insert_resource(client)
+            .init_resource::<Assets<Font>>()
             .insert_resource(session)
             .insert_resource(state)
             .insert_resource(PlayerId(7))
