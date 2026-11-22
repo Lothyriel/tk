@@ -133,6 +133,13 @@ com outro arquivo novo. A sonda faz um único deploy, abre a pausa com Esc
 e verifica que o fluxo não envia novos comandos de lobby nem ativa mira ou
 disparo. Use `reload` em outro processo para verificar o arquivo salvo.
 
+Para verificar só a recuperação de um arquivo inválido, grave
+`{"fov":null}` em um arquivo descartável e execute com
+`TK_PREFERENCES_FLOW=repair`, `TK_PREFERENCES_PATH` apontando para esse arquivo
+e `--arena-menu-probe=keyboard`. Em um lobby local novo, a sonda abre
+Preferências, observa o aviso, aplica FOV 75 e reabre no mesmo processo sem
+o aviso. Procure `PREFERENCES FLOW PASS repair`. Sem captura ou input físico.
+
 ## Verificação de debrief compacto
 
 Para verificar o debrief compacto, rode

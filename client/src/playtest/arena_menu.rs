@@ -131,7 +131,11 @@ impl Plugin for Probe {
                     assert!(path.is_file());
                     Step::ReloadPreferences(false)
                 }
-                _ => panic!("use TK_PREFERENCES_FLOW=edit, pause-edit or reload"),
+                "repair" => {
+                    assert!(path.is_file(), "repair needs an isolated invalid file");
+                    Step::RepairPreferences(0)
+                }
+                _ => panic!("use TK_PREFERENCES_FLOW=edit, pause-edit, reload or repair"),
             };
             route.flow_path = Some(path);
         }
@@ -187,6 +191,7 @@ enum Step {
     PreferencesPause,
     EditPreferences(usize),
     ReloadPreferences(bool),
+    RepairPreferences(usize),
 }
 
 // Activate only real menu widgets; None represents an explicit Esc or
@@ -207,6 +212,14 @@ const EDIT_ACTIONS: [Option<&str>; 14] = [
     Some("Back (discard draft)"),
     None,
 ];
+const REPAIR_ACTIONS: [Option<&str>; 6] = [
+    Some("Preferences"),
+    Some("+ Vertical FOV"),
+    Some("Apply and save"),
+    Some("Back (discard draft)"),
+    Some("Preferences"),
+    None,
+];
 
 impl Step {
     fn label(self) -> Option<&'static str> {
@@ -223,6 +236,7 @@ impl Step {
             Self::EditPreferences(index) => return EDIT_ACTIONS[index],
             Self::ReloadPreferences(false) => "Preferences",
             Self::ReloadPreferences(true) => return None,
+            Self::RepairPreferences(index) => return REPAIR_ACTIONS[index],
             Self::Done | Self::CapturePreferences | Self::PreferencesPause => return None,
         })
     }
@@ -243,6 +257,7 @@ impl Step {
             OpenPreferences | CapturePreferences => CapturePreferences,
             EditPreferences(index) => EditPreferences(index + 1),
             ReloadPreferences(_) => ReloadPreferences(true),
+            RepairPreferences(index) => RepairPreferences(index + 1),
             PreferencesDeploy => PreferencesPause,
             PreferencesPause => EditPreferences(0),
         }
@@ -262,7 +277,8 @@ impl Step {
             Self::OpenPreferences
             | Self::CapturePreferences
             | Self::EditPreferences(_)
-            | Self::ReloadPreferences(_) => 0,
+            | Self::ReloadPreferences(_)
+            | Self::RepairPreferences(_) => 0,
         }
     }
 }
@@ -402,6 +418,7 @@ fn drive(
     widgets: Widgets,
     layout: Query<&UiGlobalTransform, With<Button>>,
     text: Query<&Text>,
+    status: Query<(&Text, &ComputedNode)>,
     editor: Res<crate::loadout::Editor>,
     (mut keyboard, mut mouse, mut window_events): KeysAndMouse,
     mut exit: MessageWriter<AppExit>,
@@ -544,55 +561,95 @@ fn drive(
         assert_eq!(actor.participant.last_command, sequence);
         let fov = || presented_button(&widgets, &text, "- Vertical FOV:").map(|(_, text, _)| text);
         let scale_text = || presented_button(&widgets, &text, "UI scale:").map(|(_, text, _)| text);
-        let applied = matches!(step, EditPreferences(12..) | ReloadPreferences(_));
-        let expected = crate::preferences::Preferences {
-            fov: if applied { 75 } else { 70 },
-            ui_scale_percent: if applied { 125 } else { 100 },
-            ..default()
-        };
-        assert_eq!(*preferences, expected);
-        assert_eq!(scale.0, expected.ui_scale());
-        if applied {
-            let saved = std::fs::read(path).expect("saved preferences");
-            let saved = serde_json::from_slice::<crate::preferences::Preferences>(&saved)
-                .expect("valid saved preferences");
-            assert_eq!(saved, expected);
-        } else {
-            assert!(!path.exists(), "a draft unexpectedly saved");
-        }
-        match step {
-            EditPreferences(2 | 4 | 7 | 10 | 11 | 12) => {
-                assert_eq!(fov(), Some("- Vertical FOV: 75 deg"));
-            }
-            EditPreferences(3 | 6 | 9) => {
-                assert_eq!(fov(), Some("- Vertical FOV: 70 deg"));
-            }
-            _ => {}
-        }
-        if matches!(step, EditPreferences(5 | 8 | 13)) {
-            let Some(settings) = button("Preferences") else {
-                return;
+        if let RepairPreferences(index) = step {
+            let expected = crate::preferences::Preferences {
+                fov: if index >= 3 { 75 } else { 70 },
+                ..default()
             };
-            assert_eq!(menu.focused_widget(), Some(settings));
-        }
-        if step == EditPreferences(4) {
-            keyboard.write(key_event(window_id, KeyCode::Escape, ButtonState::Pressed));
-            route.release = Some(KeyCode::Escape);
-            route.step = step.next();
-            route.since = now;
-            return;
-        }
-        if step == ReloadPreferences(true) {
-            assert_eq!(fov(), Some("- Vertical FOV: 75 deg"));
-            assert_eq!(scale_text(), Some("UI scale: 125% (cycle)"));
-        }
-        if matches!(step, EditPreferences(13) | ReloadPreferences(true)) {
-            info!(
-                "PREFERENCES FLOW PASS {step:?}: FOV 75, scale 125, pause={}, lobby_sequence={sequence}, no aim or fire",
-                route.pause_flow
-            );
-            exit.write(AppExit::Success);
-            return;
+            assert_eq!(*preferences, expected);
+            assert_eq!(scale.0, expected.ui_scale());
+            if let Some((message, label)) = match index {
+                1 => Some(("Invalid or unreadable file; using defaults.", 70)),
+                2 => Some(("Unapplied changes.", 75)),
+                3 => Some(("Applied and saved.", 75)),
+                5 => Some(("", 75)),
+                _ => None,
+            } {
+                let Some((status, _)) = status.iter().find(|(text, node)| {
+                    text.starts_with("LOCAL PREFERENCES\n") && node.size().min_element() > 0.0
+                }) else {
+                    return;
+                };
+                assert_eq!(status.lines().nth(1), Some(message));
+                assert_eq!(fov(), Some(format!("- Vertical FOV: {label} deg").as_str()));
+            }
+            if index == 1 {
+                info!("PREFERENCES REPAIR observed invalid-file warning at default FOV 70");
+            }
+            if index >= 3 {
+                let saved = std::fs::read(path).expect("repaired preferences");
+                let saved = serde_json::from_slice::<crate::preferences::Preferences>(&saved)
+                    .expect("valid repaired preferences");
+                assert_eq!(saved, expected);
+            }
+            if index == 5 {
+                info!(
+                    "PREFERENCES FLOW PASS repair: saved FOV 75, reopened without warning, lobby_sequence={sequence}, no aim or fire"
+                );
+                exit.write(AppExit::Success);
+                return;
+            }
+        } else {
+            let applied = matches!(step, EditPreferences(12..) | ReloadPreferences(_));
+            let expected = crate::preferences::Preferences {
+                fov: if applied { 75 } else { 70 },
+                ui_scale_percent: if applied { 125 } else { 100 },
+                ..default()
+            };
+            assert_eq!(*preferences, expected);
+            assert_eq!(scale.0, expected.ui_scale());
+            if applied {
+                let saved = std::fs::read(path).expect("saved preferences");
+                let saved = serde_json::from_slice::<crate::preferences::Preferences>(&saved)
+                    .expect("valid saved preferences");
+                assert_eq!(saved, expected);
+            } else {
+                assert!(!path.exists(), "a draft unexpectedly saved");
+            }
+            match step {
+                EditPreferences(2 | 4 | 7 | 10 | 11 | 12) => {
+                    assert_eq!(fov(), Some("- Vertical FOV: 75 deg"));
+                }
+                EditPreferences(3 | 6 | 9) => {
+                    assert_eq!(fov(), Some("- Vertical FOV: 70 deg"));
+                }
+                _ => {}
+            }
+            if matches!(step, EditPreferences(5 | 8 | 13)) {
+                let Some(settings) = button("Preferences") else {
+                    return;
+                };
+                assert_eq!(menu.focused_widget(), Some(settings));
+            }
+            if step == EditPreferences(4) {
+                keyboard.write(key_event(window_id, KeyCode::Escape, ButtonState::Pressed));
+                route.release = Some(KeyCode::Escape);
+                route.step = step.next();
+                route.since = now;
+                return;
+            }
+            if step == ReloadPreferences(true) {
+                assert_eq!(fov(), Some("- Vertical FOV: 75 deg"));
+                assert_eq!(scale_text(), Some("UI scale: 125% (cycle)"));
+            }
+            if matches!(step, EditPreferences(13) | ReloadPreferences(true)) {
+                info!(
+                    "PREFERENCES FLOW PASS {step:?}: FOV 75, scale 125, pause={}, lobby_sequence={sequence}, no aim or fire",
+                    route.pause_flow
+                );
+                exit.write(AppExit::Success);
+                return;
+            }
         }
     }
     match step {
