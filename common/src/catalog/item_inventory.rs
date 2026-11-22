@@ -1,6 +1,6 @@
 //! S1 inventory rules, without spawning items or granting gameplay actions.
 use super::{
-    item_grid::{Footprint, Placement, PlacementError},
+    item_grid::{Footprint, Placement, PlacementError, Rotation},
     item_manifest::{planned_items, PlannedItem, S1_SEEDS},
     CompartmentId, ItemInstanceId,
 };
@@ -204,6 +204,55 @@ impl Inventory {
         self.validate_placement(item, Some(id))?;
         self.items.insert(id, item);
         Ok(())
+    }
+
+    /// Plan a whole-stack placement, without moving or merging the instance.
+    /// This is a deterministic row-major search, preferring upright at each
+    /// cell. The authority must still validate the move at commit time.
+    pub fn first_fit(
+        &self,
+        id: ItemInstanceId,
+        compartment: CompartmentId,
+    ) -> Result<Option<GridLocation>, InventoryError> {
+        let item = self.item(id)?;
+        let grid = self
+            .compartments
+            .get(&compartment)
+            .ok_or(InventoryError::UnknownCompartment)?;
+        if grid
+            .profile
+            .as_deref()
+            .is_some_and(|profile| profile != item.definition.profile)
+        {
+            return Err(InventoryError::FilteredOut);
+        }
+        let occupied: Vec<_> = self
+            .items
+            .iter()
+            .filter(|(other_id, other)| {
+                **other_id != id && other.location.compartment == compartment
+            })
+            .map(|(_, other)| other.location.placement.area(other.definition.footprint))
+            .collect();
+        let [width, height] = grid.size.dimensions();
+        for y in 0..height {
+            for x in 0..width {
+                for rotation in [Rotation::Upright, Rotation::QuarterTurn] {
+                    let placement = Placement { x, y, rotation };
+                    if placement
+                        .area(item.definition.footprint)
+                        .validate(grid.size, occupied.iter().copied())
+                        .is_ok()
+                    {
+                        return Ok(Some(GridLocation {
+                            compartment,
+                            placement,
+                        }));
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 
     pub fn split(

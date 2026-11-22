@@ -2,6 +2,59 @@ use super::*;
 use crate::catalog::item_grid::Rotation;
 
 #[test]
+fn pickup_first_fit_rotates_without_moving_or_copying_the_stack() {
+    let mut inventory = fixture();
+    let target = CompartmentId(3);
+    inventory
+        .register_compartment(target, Footprint::new(3, 1).unwrap(), None)
+        .unwrap();
+    let water = inventory
+        .insert_seed("food.water500", Condition::Damaged, 1, at(1, 0, 0))
+        .unwrap();
+    let original = *inventory.get(water).unwrap();
+    inventory
+        .insert_seed("med.bandage", Condition::Intact, 1, at(3, 0, 0))
+        .unwrap();
+    assert_eq!(
+        inventory.first_fit(water, CompartmentId(2)),
+        Err(InventoryError::FilteredOut)
+    );
+    let fit = inventory.first_fit(water, target).unwrap().unwrap();
+    assert_eq!(
+        fit,
+        GridLocation {
+            compartment: target,
+            placement: Placement {
+                x: 1,
+                y: 0,
+                rotation: Rotation::QuarterTurn
+            },
+        }
+    );
+    assert_eq!(inventory.get(water), Some(&original));
+
+    let blocking = inventory
+        .insert_seed("med.bandage", Condition::Intact, 1, at(3, 2, 0))
+        .unwrap();
+    assert_eq!(inventory.first_fit(water, target), Ok(None));
+    assert_eq!(
+        inventory.move_item(water, fit),
+        Err(InventoryError::Placement(PlacementError::Occupied))
+    );
+    assert_eq!(inventory.get(water), Some(&original));
+
+    inventory.move_item(blocking, at(1, 3, 0)).unwrap();
+    inventory.move_item(water, fit).unwrap();
+    assert_eq!(
+        inventory.get(water),
+        Some(&ItemInstance {
+            location: fit,
+            ..original
+        })
+    );
+}
+
+#[test]
 fn item_inventory_does_not_merge_open_and_sealed_dressings() {
     let mut inventory = fixture();
     let sealed = inventory
