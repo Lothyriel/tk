@@ -14,6 +14,11 @@ pub const RAID_SECONDS: f32 = 300.0;
 pub const EXTRACTION_SECONDS: f32 = 5.0;
 pub const EXTRACTION_RADIUS: f32 = 2.5;
 
+pub fn in_extraction_zone(position: Vec3) -> bool {
+    let offset = position - Vec3::from(EXTRACTION_CENTER);
+    offset.xz().length() <= EXTRACTION_RADIUS && offset.y.abs() <= 2.0
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub enum RaidPhase {
     #[default]
@@ -150,14 +155,11 @@ impl Participant {
         interact: bool,
         delta: f32,
     ) -> bool {
-        let center = Vec3::from(EXTRACTION_CENTER);
-        let horizontal = Vec2::new(position.x - center.x, position.z - center.z).length();
         let eligible = raid.phase == RaidPhase::Active
             && self.status == RaidStatus::Active
             && self.carried > 0
             && interact
-            && horizontal <= EXTRACTION_RADIUS
-            && (position.y - center.y).abs() <= 2.0;
+            && in_extraction_zone(position);
         if !eligible {
             self.extraction_seconds = 0.0;
             return false;

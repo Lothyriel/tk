@@ -118,7 +118,7 @@ fn update(
     {
         use common::catalog::item_manifest::{S1_SEEDS, planned_items};
         let name = planned_items()[S1_SEEDS[usize::from(item.seed)]].name;
-        text.push_str(&format!("\nGround item: {name} (pickup unavailable)"));
+        text.push_str(&format!("\nGround item: {name} [F]"));
     }
     ***hud = text;
 }

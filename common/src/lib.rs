@@ -15,7 +15,7 @@ pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 21;
+pub const PROTOCOL_ID: u64 = 22;
 pub const SNAPSHOT_INTERVAL: f32 = 1.0 / 60.0;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
@@ -106,6 +106,8 @@ pub struct ClientInput {
     pub lobby_sequence: u32,
     pub loadout: combat::Loadout,
     pub interact: bool,
+    /// Ground focus displayed when the interaction key was pressed.
+    pub pickup_focus: Option<(u32, catalog::ItemInstanceId)>,
     pub forward: bool,
     pub backward: bool,
     pub left: bool,
