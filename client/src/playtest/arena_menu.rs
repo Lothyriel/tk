@@ -61,6 +61,26 @@ impl Probe {
 
 impl Plugin for Probe {
     fn build(&self, app: &mut App) {
+        if std::env::var_os("TK_INVALID_ENDPOINT_REVIEW").is_some() {
+            assert_eq!(*self, Self::Keyboard);
+            for flag in [
+                "TK_STALE_RECONNECT_DIR",
+                "TK_LOBBY_REVIEW_SCALE",
+                "TK_PREFERENCES_FLOW",
+                "TK_PREFERENCES_SCREENSHOT",
+                "TK_PREFERENCES_REVIEW_SCALE",
+            ] {
+                assert!(
+                    std::env::var_os(flag).is_none(),
+                    "incompatible flag: {flag}"
+                );
+            }
+            app.add_systems(
+                PostUpdate,
+                invalid_endpoint_review.after(bevy::ui::UiSystems::PostLayout),
+            );
+            return;
+        }
         if let Some(path) = std::env::var_os("TK_STALE_RECONNECT_DIR") {
             assert_eq!(*self, Self::Keyboard);
             for flag in [
@@ -309,6 +329,61 @@ fn key_event(window: Entity, key_code: KeyCode, state: ButtonState) -> KeyboardI
         repeat: false,
         window,
     }
+}
+
+#[allow(clippy::too_many_arguments)] // Separate read-only presentation and transport queries.
+fn invalid_endpoint_review(
+    time: Res<Time<Real>>,
+    (id, input, menu): (Res<PlayerId>, Res<LocalInput>, Res<Menu>),
+    (client, transport): (
+        Res<bevy_renet2::prelude::RenetClient>,
+        Option<Res<bevy_renet2::netcode::NetcodeClientTransport>>,
+    ),
+    widgets: Widgets,
+    text: Query<&Text>,
+    status: Query<(&Text, &ComputedNode)>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    const ERROR: &str = "DISCONNECTED\nInvalid SERVER_ADDR. Fix the configuration and retry.";
+    assert!(
+        time.elapsed_secs_f64() < 5.0,
+        "expected rendered status: {ERROR:?}"
+    );
+    // The failed startup uses the same reset as a disconnect. Its first
+    // presentation can precede the routing pass that assigns focus.
+    if menu.focused_widget().is_none()
+        || !status
+            .iter()
+            .any(|(label, node)| label.as_str() == ERROR && node.size().min_element() > 0.0)
+    {
+        return;
+    }
+    assert!(client.is_disconnected());
+    assert!(transport.is_none());
+    assert_eq!(id.0, 0);
+    assert_eq!(input.lobby_sequence, 0);
+    assert!(menu.owns_input());
+    let button = |label| {
+        let (entity, actual, laid_out) =
+            presented_button(&widgets, &text, label).expect("expected disconnected menu button");
+        assert_eq!(actual, label);
+        assert!(laid_out, "{label} was not laid out");
+        entity
+    };
+    let reconnect = button("Reconnect");
+    button("Quit client");
+    assert!(presented_button(&widgets, &text, "Ready / deploy").is_none());
+    assert!(presented_button(&widgets, &text, "Cancel connection").is_none());
+    assert_eq!(menu.focused_widget(), Some(reconnect));
+    assert!(
+        widgets
+            .get(reconnect)
+            .unwrap()
+            .5
+            .is_some_and(|outline| outline.color != Color::NONE)
+    );
+    info!("INVALID ENDPOINT REVIEW PASS: {ERROR:?}; Reconnect focused, Quit available, no Ready");
+    exit.write(AppExit::Success);
 }
 
 #[allow(clippy::too_many_arguments)] // Separate input and read-only presentation queries.

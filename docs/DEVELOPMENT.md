@@ -71,6 +71,17 @@ o aviso de stale com transporte conectado, o cancelamento e o retorno
 ao lobby com ID novo e sem Ready. Não registra mídia nem certifica
 dispositivos físicos.
 
+Para verificar o erro de endereço no menu, execute sem servidor:
+
+```sh
+SERVER_ADDR=not-an-ip TK_INVALID_ENDPOINT_REVIEW=1 \
+  cargo run --locked -p client -- --arena-menu-probe=keyboard
+```
+
+Procure `INVALID ENDPOINT REVIEW PASS`: mensagem de erro, Reconnect com
+foco, Quit disponível e Ready ausente. É uma inspeção estática do cliente
+nativo, sem entrada ou mídia. Corrigir o endereço requer reiniciar o cliente.
+
 Para verificar os limites e o foco inicial do lobby conectado, inicie um
 servidor local novo e execute, com `TK_PREFERENCES_PATH` isolado:
 
