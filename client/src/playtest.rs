@@ -5,6 +5,7 @@ use common::{combat::*, map::*, raid::*, *};
 use crate::{ClientSystems, input::InputCapture, sync::ClientSession};
 mod animation;
 mod arena;
+pub(crate) mod arena_menu;
 mod asset_review;
 pub(crate) mod inventory_grid;
 mod lobby;

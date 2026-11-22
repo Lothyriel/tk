@@ -17,6 +17,21 @@ como não exercitados. A sonda não semeia itens, não simula confirmação e
 não faz capturas. Não certifica mouse, teclado físico, legibilidade nem perda
 de pacotes.
 
+## Sonda opt-in do menu Arena
+
+Na revisão integrada com Arena, inicie um servidor local novo, sem outros
+clientes ou fixtures. Após coordenar a execução renderizada, inicie
+`cargo run --bin client -- --arena-menu-probe=mouse`. Repita com
+`--arena-menu-probe=keyboard` e `--arena-menu-probe=mixed`, com servidor novo
+para cada percurso. Mantenha a janela em foco sem interagir durante a sonda.
+Não combine com `--playtest`.
+
+A sonda visita a bancada, confirma e cancela prontidão, entra na Arena Solo,
+espera a eliminação pelo bot, volta ao lobby e repete a preparação e entrada.
+Procure `ARENA MENU PROBE PASS` no log. São eventos sintéticos do Bevy,
+incluindo picking direcionado a widgets com layout; não certificam eventos do
+SO, hit-testing, legibilidade, nem perda UDP. A sonda não registra mídia.
+
 ## Entradas compartilhadas
 
 OpenCode e Codex descobrem skills do projeto em `.agents/skills/`.

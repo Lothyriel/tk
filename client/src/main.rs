@@ -13,9 +13,14 @@ mod sync;
 fn main() {
     let playtest = std::env::args().any(|argument| argument == "--playtest");
     let grid_probe = std::env::args().any(|argument| argument == "--inventory-grid-probe");
+    let arena_menu_probe = playtest::arena_menu::Probe::requested();
+    assert!(
+        !(playtest && arena_menu_probe.is_some()),
+        "run the Arena menu probe without --playtest"
+    );
     let item_review = std::env::args().any(|argument| argument == "--item-review");
     assert!(
-        !grid_probe || !(playtest || item_review),
+        !grid_probe || !(playtest || item_review || arena_menu_probe.is_some()),
         "run the inventory grid probe without other playtest or review modes"
     );
     let viewport = playtest.then(playtest::requested_viewport).flatten();
@@ -63,6 +68,9 @@ fn main() {
     }
     if grid_probe {
         app.add_plugins(playtest::inventory_grid::Plugin);
+    }
+    if let Some(probe) = arena_menu_probe {
+        app.add_plugins(probe);
     }
     app.run();
 }
