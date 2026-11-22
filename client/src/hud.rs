@@ -114,11 +114,23 @@ fn update(
     let mut text = describe(&session, &input.loadout, id.0, &connection, input.aim);
     if connection.is_empty() && panel.open {
         use common::catalog::item_manifest::planned_items;
-        text = String::from("RAID INVENTORY\nUp/Down: select   Delete: drop   Tab/Esc: close\n");
+        text = if panel.inspection.is_some() {
+            String::from("ITEM INSPECTION\nArrows: rotate   +/-: zoom   R: reset   I/Esc: back\n")
+        } else {
+            String::from(
+                "RAID INVENTORY\nUp/Down: select   I: inspect   Delete: drop   Tab/Esc: close\n",
+            )
+        };
         match inventory.owned_grid(session.raid.raid_id, id.0) {
             Some(grid) if grid.items.is_empty() => text.push_str("\nEmpty"),
             Some(grid) => {
                 for (instance, item) in &grid.items {
+                    if panel
+                        .inspection
+                        .is_some_and(|inspect| inspect.item != *instance)
+                    {
+                        continue;
+                    }
                     let marker = if panel.selected == Some(*instance) {
                         ">"
                     } else {

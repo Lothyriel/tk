@@ -14,6 +14,7 @@ mod dot_sight;
 pub(crate) mod feedback;
 mod ground_items;
 pub(crate) mod item_icons;
+mod item_inspection;
 pub(crate) mod shot_audio;
 pub(crate) mod voxel;
 mod weapons;
@@ -31,6 +32,7 @@ impl bevy::prelude::Plugin for Plugin {
         app.add_plugins(shot_audio::Plugin);
         app.add_plugins(ground_items::Plugin);
         app.add_plugins(item_icons::Plugin);
+        app.add_plugins(item_inspection::Plugin);
         app.add_plugins((voxel::Plugin, voxel::debug::Plugin));
         let startup_systems = (
             spawn_view_model,
@@ -537,7 +539,10 @@ fn spawn_lights(mut commands: Commands) {
 }
 
 fn change_fov(
-    input: Res<ButtonInput<KeyCode>>,
+    (input, panel): (
+        Res<ButtonInput<KeyCode>>,
+        Option<Res<crate::input::inventory_panel::Panel>>,
+    ),
     time: Res<Time>,
     mut settings: ResMut<ViewSettings>,
     id: Res<PlayerId>,
@@ -556,10 +561,11 @@ fn change_fov(
             );
         };
 
-        if input.pressed(KeyCode::ArrowUp) {
+        let world_zoom = !panel.is_some_and(|panel| panel.open);
+        if world_zoom && input.pressed(KeyCode::ArrowUp) {
             settings.world_fov -= 45.0_f32.to_radians() * time.delta_secs();
         }
-        if input.pressed(KeyCode::ArrowDown) {
+        if world_zoom && input.pressed(KeyCode::ArrowDown) {
             settings.world_fov += 45.0_f32.to_radians() * time.delta_secs();
         }
         settings.world_fov = settings
@@ -734,17 +740,19 @@ fn sync_view_weapon_visibility(
     session: Res<ClientSession>,
     id: Res<PlayerId>,
     feedback: Res<feedback::Feedback>,
+    panel: Option<Res<crate::input::inventory_panel::Panel>>,
     mut query: Query<(&WeaponViewModel, &Children, &mut Visibility)>,
     mut mesh_roots: Query<&mut Visibility, (With<WeaponMeshRoot>, Without<WeaponViewModel>)>,
 ) {
-    let usable = session.local(id.0).is_none_or(|p| {
-        p.body.anatomy.capacity(common::combat::Region::RightArm) > 0.0
-            && match p.pose.mode {
-                common::humanoid::PhysicalMode::Fallen => p.pose.mode_time < 0.2,
-                common::humanoid::PhysicalMode::Recovering => p.pose.mode_time > 0.75,
-                _ => true,
-            }
-    });
+    let usable = !panel.is_some_and(|panel| panel.inspection.is_some())
+        && session.local(id.0).is_none_or(|p| {
+            p.body.anatomy.capacity(common::combat::Region::RightArm) > 0.0
+                && match p.pose.mode {
+                    common::humanoid::PhysicalMode::Fallen => p.pose.mode_time < 0.2,
+                    common::humanoid::PhysicalMode::Recovering => p.pose.mode_time > 0.75,
+                    _ => true,
+                }
+        });
     let displayed = feedback
         .responses
         .get(&id.0)

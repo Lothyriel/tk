@@ -104,6 +104,7 @@ There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed bra
 | I | Inspect; yields to fire, ADS, reload, sprint or weapon switch |
 | F | Collect nearby loot; hold in the exit to extract |
 | Tab / Up / Down / Delete | Open raid inventory, select an item, and request a drop; Tab or Esc closes the panel |
+| I in raid inventory | Inspect the selected item in first person. Arrow keys rotate, +/- zoom, R resets, and I or Esc returns to the list |
 | Escape | Release or recapture the cursor during a raid; lobby/debrief release it automatically |
 | Up / Down arrow | Narrow / widen the field of view |
 | F8 / F9 | Toggle weapon socket/pivot debug overlay / cycle inspection LOD while enabled |
