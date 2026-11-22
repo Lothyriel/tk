@@ -67,7 +67,7 @@ cargo run --bin client
 
 The client defaults to `127.0.0.1`, UDP port `9080`. No `.env` file is needed, and assets are resolved from the client manifest directory rather than the shell's working directory. For LAN play, set `$env:SERVER_ADDR = "192.168.1.10"` to your server's IP before starting the client (POSIX: `SERVER_ADDR=192.168.1.10 cargo run --bin client`). Allow the server's UDP port through the firewall. Optional `TK_PORT` changes the port on both binaries.
 
-Rebuild both binaries for protocol 26 (adds replicated voluntary prone to the Arena PvP and life-scoped input protocol). The client waits for referenced configurations before presenting a snapshot; delayed configuration retains the last accepted world until the normal stale timeout. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
+Rebuild both binaries for protocol 27. The client waits for referenced configurations before presenting a snapshot; delayed configuration retains the last accepted world until the normal stale timeout. Close an older server before launching the current build on the same port; the automated harness does not stop a player's existing server.
 
 Start additional clients in separate terminals to test multiplayer. All connected players must ready up; solo play also starts normally. The server supports up to 32 clients and assigns distinct spawn positions. A client arriving during an active raid waits for the next lobby.
 
@@ -76,7 +76,7 @@ Start additional clients in separate terminals to test multiplayer. All connecte
 1. In the lobby, use the kit buttons to choose equipment, then activate **Ready / deploy**. Use **Cancel ready** to cancel before deployment. Gear is locked while ready or awaiting confirmation.
 2. After the three-second countdown, you spawn at approximately `x 0 / z 10`, looking toward negative Z. Find an **orange crate**; the nearest is at `x -4 / z 0`. Walk near it and press **F** to pick up one loot unit. A looted crate becomes gray for everyone and remains solid cover.
 
-   Six voxel items sit beside the crates. Look at one within 2.25 m with a clear line of sight and press **F** when its name appears. The item stays on the ground if your grid has no space. Items still in your grid count toward extraction, as does loot from the crates.
+   Six voxel loot stacks sit beside the crates. The bandage stack contains two units and can be split and merged in the backpack grid. Look at a stack within 2.25 m with a clear line of sight and press **F** when its name appears. The stack stays on the ground if your grid has no space. Loot still in your grid counts toward extraction by unit, as does loot from the crates.
 3. Two **red sentries** guard the yard. Shoot them or use cover. Brown panels and crates are penetrable wood; gray structures are bullet-stopping concrete. Shots break cells out of the wood panels and interior concrete cover. Other players can also hurt you.
 4. Return to the **green exit**, centered at `x 0 / z 15`. The HUD shows your position and distance to the exit. Bring at least one loot unit and hold **F** continuously for five seconds inside the green circle. Releasing F or leaving the zone resets progress.
 5. The result becomes **Extracted** and your loot is added to **Secured this session** exactly once. If other participants are still playing, wait for them to finish. In **Debrief**, activate **Return everyone to lobby**, then ready up for another raid.
@@ -130,9 +130,6 @@ the other combatant to the lobby, where a new pair can prepare another duel.
 | Escape | Close the workbench, inspection or inventory first, or toggle the local pause menu during a raid. Pausing releases the cursor and suppresses local actions; the server and dangers continue |
 | Up / Down arrow | Narrow / widen the field of view |
 | F8 / F9 | Toggle weapon socket/pivot debug overlay / cycle inspection LOD while enabled |
-
-The six ground seeds are distinct, single items. That starting set by itself
-does not offer a stack to split or two compatible stacks to merge.
 
 Hover a backpack item to see its confirmed quantity and condition. Move, split,
 and merge play a short cue after confirmation or explicit rejection unless game

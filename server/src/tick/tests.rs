@@ -582,6 +582,7 @@ fn ground_focus_checks_real_cover_reach_and_actor_state() {
                 sight.focus(
                     actor,
                     &[inventory::WorldItem {
+                        seed: 0,
                         id: ItemInstanceId(1),
                         source: CompartmentId(u64::MAX),
                         center: eye + Vec3::NEG_Z * distance,
@@ -3401,5 +3402,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
     assert_eq!(cover.cuts.len(), 1);
     assert_eq!(cover.cuts[0].cell, cell.id);
     assert_eq!(cover.raid_id, snapshot.raid.raid_id);
-    assert_eq!(PROTOCOL_ID, 26);
+    assert_eq!(PROTOCOL_ID, 27);
 }

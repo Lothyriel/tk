@@ -400,7 +400,7 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     assert!(matches!(&collected[0].body, UpdateBody::Delta(deltas)
         if deltas.len() == 1 && deltas[0].version.id == CompartmentId(7)
         && deltas[0].items.len() == 1 && deltas[0].items[0].id == item.id
-        && deltas[0].items[0].item.is_some()));
+        && deltas[0].items[0].item.as_ref().is_some_and(|entry| entry.quantity == 2)));
     assert_eq!(collected[1].body, UpdateBody::Ground(items[1..].to_vec()));
     assert_eq!(collected[2].body, UpdateBody::GroundFocus(None));
     let public = drain(&mut late);
@@ -423,7 +423,7 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
             .participant
             .clone()
     };
-    assert_eq!(displayed(&first).carried, 1);
+    assert_eq!(displayed(&first).carried, 2);
     assert_eq!(displayed(&first).secured, 0);
     assert_eq!(
         harness
@@ -493,7 +493,7 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     first.input.interact = true;
     first.input.pickup_focus = Some((epoch, item.id));
     harness.pump(&mut [&mut first, &mut late], 96);
-    assert_eq!(displayed(&first).carried, 1);
+    assert_eq!(displayed(&first).carried, 2);
     assert!(
         drain(&mut first)
             .iter()
@@ -521,9 +521,9 @@ fn inventory_udp_ground_bootstrap_late_join_and_cleanup() {
     harness.pump(&mut [&mut first, &mut late], 256);
     assert_eq!(displayed(&first).status, RaidStatus::Extracted);
     assert_eq!(displayed(&first).carried, 0);
-    assert_eq!(displayed(&first).secured, 1);
+    assert_eq!(displayed(&first).secured, 2);
     harness.pump(&mut [&mut first, &mut late], 128);
-    assert_eq!(displayed(&first).secured, 1);
+    assert_eq!(displayed(&first).secured, 2);
     assert_eq!(
         harness.app.world().resource::<RaidState>().phase,
         RaidPhase::Debrief
@@ -739,8 +739,8 @@ fn inventory_udp_contested_ground_pickup_with_snapshot_loss_and_disconnect() {
     let carried = [7, 8].map(|id| state.inventory.carried(raid, id));
     assert_eq!(
         carried.iter().sum::<u32>(),
-        1,
-        "exactly one unit commits in the collision tick"
+        2,
+        "exactly one two-unit stack commits in the collision tick"
     );
     harness.pump(&mut [&mut first, &mut second], 32);
     let mut award = None;
@@ -765,7 +765,7 @@ fn inventory_udp_contested_ground_pickup_with_snapshot_loss_and_disconnect() {
                     let granted = delta.items[0].item.clone().expect("winner gets the item");
                     assert_eq!(granted.definition, S1_SEEDS[0]);
                     assert_eq!(granted.condition, Condition::Intact);
-                    assert_eq!(granted.quantity, 1);
+                    assert_eq!(granted.quantity, 2);
                     assert_eq!(granted.contents, ItemContents::Dressing { sealed: true });
                     assert!(
                         award.replace((index, granted)).is_none(),
@@ -785,7 +785,7 @@ fn inventory_udp_contested_ground_pickup_with_snapshot_loss_and_disconnect() {
     }
     let (winner_index, granted) = award.expect("one pickup must commit");
     assert_eq!(
-        carried[winner_index], 1,
+        carried[winner_index], 2,
         "the private award goes to the authoritative owner"
     );
     let (winner, loser) = if winner_index == 0 {

@@ -21,6 +21,8 @@ pub const S1_SEEDS: [&str; 6] = [
     "value.watch_mechanical",
     "carry.daypack",
 ];
+/// A split can place both issued bandages on the ground as separate stacks.
+pub const S1_GROUND_LIMIT: usize = S1_SEEDS.len() + 1;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PlannedItem<'a> {

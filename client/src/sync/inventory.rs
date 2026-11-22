@@ -144,7 +144,7 @@ impl State {
             }
             UpdateBody::Ground(items) => {
                 let count = common::catalog::item_manifest::S1_SEEDS.len();
-                if items.len() <= count
+                if items.len() <= common::catalog::item_manifest::S1_GROUND_LIMIT
                     && items.iter().enumerate().all(|(index, item)| {
                         item.id.0 != 0
                             && usize::from(item.seed) < count
@@ -242,6 +242,39 @@ pub(super) fn receive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_ground_accepts_separate_bandage_stacks_with_distinct_ids() {
+        use common::catalog::item_manifest::{S1_GROUND_LIMIT, S1_SEEDS};
+        let mut state = State::default();
+        let session = SessionKey {
+            raid_epoch: 1,
+            session_epoch: 1,
+        };
+        state.apply(InventoryUpdate {
+            session,
+            body: UpdateBody::Begin,
+        });
+        let items: Vec<_> = (0..S1_GROUND_LIMIT)
+            .map(|i| GroundItem {
+                id: ItemInstanceId(i as u64 + 1),
+                seed: (i % S1_SEEDS.len()) as u8,
+                root: [i as f32, 0.0, 0.0],
+            })
+            .collect();
+        state.apply(InventoryUpdate {
+            session,
+            body: UpdateBody::Ground(items.clone()),
+        });
+        assert_eq!(state.ground().0, items);
+        let mut duplicate = items.clone();
+        duplicate.last_mut().unwrap().id = items[0].id;
+        state.apply(InventoryUpdate {
+            session,
+            body: UpdateBody::Ground(duplicate),
+        });
+        assert_eq!(state.ground().0, items);
+    }
     use bevy_renet2::prelude::RenetServer;
     use common::catalog::{
         ItemInstanceId,

@@ -60,6 +60,10 @@ pub struct VersionedCommit {
 }
 
 impl VersionedCommit {
+    pub fn changes(&self) -> impl Iterator<Item = InventoryChange> {
+        std::iter::once(self.receipt.primary).chain(self.receipt.secondary)
+    }
+
     pub(super) fn new(
         raid_epoch: u64,
         scope: [CompartmentId; 2],

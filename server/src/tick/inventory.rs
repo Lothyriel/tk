@@ -9,8 +9,9 @@ use common::{
         CompartmentId, ItemInstanceId,
         item_grid::{Footprint, Placement, Rotation},
         item_inventory::{
-            Condition, GridLocation, Inventory, InventoryAuthority, OperationSession, SessionKey,
-            VersionedCommit, VersionedCompartment,
+            Condition, GridLocation, Inventory, InventoryAction, InventoryAuthority,
+            InventoryOperation, OperationReply, OperationSession, SessionKey, VersionedCommit,
+            VersionedCompartment,
         },
         item_manifest::{S1_SEEDS, item_visuals, planned_items},
     },
@@ -28,11 +29,13 @@ use common::{
 const REQUESTS_PER_WINDOW: u8 = 4;
 const WINDOW_TICKS: u8 = 16;
 const WORLD_SLOT_START: u64 = u64::MAX - S1_SEEDS.len() as u64 + 1;
+const BANDAGE_SPARE_SLOT: CompartmentId = CompartmentId(WORLD_SLOT_START - 1);
 
 #[derive(Debug)]
 pub(super) struct WorldItem {
     pub id: ItemInstanceId,
     pub source: CompartmentId,
+    pub(super) seed: usize,
     /// Query-only volume. Drops use swept gravity without adding solver bodies.
     pub half_extents: Vec3,
     pub center: Vec3,
@@ -67,10 +70,9 @@ pub(super) struct Endpoint {
     window_tick: u8,
     peers: BTreeMap<u64, Peer>,
     world_items: Vec<WorldItem>,
-    // Production S1 seeds each have quantity one and distinct definitions;
-    // no other inventory items are issued. Preserve this provenance as the
-    // instances move. Mixed-provenance stacks will require unit attribution.
-    loot_ids: Vec<ItemInstanceId>,
+    // Seed lineage is independent of location and stack identity. We do not
+    // merge different provenance classes until attribution can track units.
+    loot_ids: BTreeMap<ItemInstanceId, usize>,
 }
 
 impl std::fmt::Debug for Endpoint {
@@ -83,6 +85,13 @@ impl std::fmt::Debug for Endpoint {
 }
 
 fn seed_world(inventory: &mut Inventory, items: &mut Vec<WorldItem>) {
+    inventory
+        .register_compartment(
+            BANDAGE_SPARE_SLOT,
+            planned_items()["med.bandage"].footprint,
+            None,
+        )
+        .expect("spare drop slot");
     for (index, seed) in S1_SEEDS.into_iter().enumerate() {
         let source = CompartmentId(WORLD_SLOT_START + index as u64);
         let visual = &item_visuals()[seed];
@@ -93,7 +102,7 @@ fn seed_world(inventory: &mut Inventory, items: &mut Vec<WorldItem>) {
             .insert_seed(
                 seed,
                 Condition::Intact,
-                1,
+                if seed == "med.bandage" { 2 } else { 1 },
                 GridLocation {
                     compartment: source,
                     placement: Placement {
@@ -117,6 +126,7 @@ fn seed_world(inventory: &mut Inventory, items: &mut Vec<WorldItem>) {
         let item = WorldItem {
             id,
             source,
+            seed: index,
             half_extents,
             center,
             fall_speed: None,
@@ -372,7 +382,7 @@ impl Endpoint {
             return 0;
         };
         self.loot_ids
-            .iter()
+            .keys()
             .filter_map(|&id| authority.inventory().get(id))
             .filter(|item| item.location.compartment == CompartmentId(client))
             .map(|item| u32::from(item.quantity))
@@ -386,7 +396,11 @@ impl Endpoint {
         if raid.loot_active() && self.raid != Some(raid.raid_id) {
             let mut inventory = self.empty_inventory();
             seed_world(&mut inventory, &mut self.world_items);
-            self.loot_ids = self.world_items.iter().map(|item| item.id).collect();
+            self.loot_ids = self
+                .world_items
+                .iter()
+                .map(|item| (item.id, item.seed))
+                .collect();
             self.raid = Some(raid.raid_id);
             self.authority = Some(InventoryAuthority::new(u64::from(raid.raid_id), inventory));
             self.peers.clear();
@@ -473,7 +487,7 @@ fn process(
                 .world_items
                 .iter()
                 .map(|item| {
-                    let seed = (item.source.0 - WORLD_SLOT_START) as u8;
+                    let seed = item.seed as u8;
                     let visual = &item_visuals()[S1_SEEDS[usize::from(seed)]];
                     GroundItem {
                         id: item.id,
@@ -513,7 +527,7 @@ fn process(
                     raid.loot_active()
                         && participant.status == RaidStatus::Active
                         && grant.raid_id == raid.raid_id
-                        && ((1_u64 << 63)..WORLD_SLOT_START).contains(&grant.id.0)
+                        && ((1_u64 << 63)..BANDAGE_SPARE_SLOT.0).contains(&grant.id.0)
                 })
             });
         let open = grant.map(|grant| grant.id);
@@ -594,7 +608,7 @@ fn process(
                     {
                         continue;
                     }
-                    let Some(index) = state.loot_ids.iter().position(|&id| id == item) else {
+                    let Some(&index) = state.loot_ids.get(&item) else {
                         continue;
                     };
                     let visual = &item_visuals()[S1_SEEDS[index]];
@@ -604,7 +618,9 @@ fn process(
                     else {
                         continue;
                     };
-                    let source = CompartmentId(WORLD_SLOT_START + index as u64);
+                    let Some(source) = drop_slot(index, &state.world_items) else {
+                        continue;
+                    };
                     if let Ok(commit) = authority.drop_to_world(
                         item,
                         VersionedCompartment {
@@ -616,6 +632,7 @@ fn process(
                         state.world_items.push(WorldItem {
                             id: item,
                             source,
+                            seed: index,
                             center,
                             half_extents,
                             fall_speed: Some(0.0),
@@ -640,8 +657,13 @@ fn process(
                         && participants
                             .get(peer.entity)
                             .is_ok_and(|(p, _)| p.status == RaidStatus::Active);
-                    let reply = authority
-                        .apply(&mut peer.operations, request, |id| active && can_access(id));
+                    let reply = apply_operation(
+                        authority,
+                        &mut state.loot_ids,
+                        &mut peer.operations,
+                        request,
+                        |id| active && can_access(id),
+                    );
                     if let Some(commit) = reply.commit {
                         for (&recipient, view) in &state.peers {
                             if !server.is_connected(recipient) {
@@ -671,6 +693,50 @@ fn process(
             }
         }
     }
+}
+
+fn drop_slot(seed: usize, world: &[WorldItem]) -> Option<CompartmentId> {
+    let original = CompartmentId(WORLD_SLOT_START + seed as u64);
+    let free = |slot| world.iter().all(|item| item.source != slot);
+    if free(original) {
+        Some(original)
+    } else if S1_SEEDS[seed] == "med.bandage" && free(BANDAGE_SPARE_SLOT) {
+        Some(BANDAGE_SPARE_SLOT)
+    } else {
+        None
+    }
+}
+
+fn apply_operation(
+    authority: &mut InventoryAuthority,
+    lineage: &mut BTreeMap<ItemInstanceId, usize>,
+    session: &mut OperationSession,
+    request: InventoryOperation,
+    can_access: impl Fn(CompartmentId) -> bool,
+) -> OperationReply {
+    let compatible = match request.action {
+        InventoryAction::Merge { source, target } => lineage.get(&source) == lineage.get(&target),
+        _ => true,
+    };
+    // Route rejections through the usual ledger so sequence/replay behavior
+    // is unchanged and we don't disclose inaccessible item provenance.
+    let reply = authority.apply(session, request, |id| compatible && can_access(id));
+    if let Some(commit) = &reply.commit {
+        let split_seed = match request.action {
+            InventoryAction::Split { item, .. } => lineage.get(&item).copied(),
+            _ => None,
+        };
+        for change in commit.changes() {
+            if change.after.is_none() {
+                lineage.remove(&change.id);
+            } else if change.before.is_none()
+                && let Some(seed) = split_seed
+            {
+                lineage.insert(change.id, seed);
+            }
+        }
+    }
+    reply
 }
 
 fn commit_ground_pickup(
@@ -777,6 +843,7 @@ mod tests {
             let seed = S1_SEEDS[index];
             let entry = authority.inventory().get(item.id).unwrap();
             assert_eq!(entry.definition.id, seed);
+            assert_eq!(entry.quantity, if seed == "med.bandage" { 2 } else { 1 });
             assert_eq!(entry.location.compartment, item.source);
             let visual = &item_visuals()[seed];
             assert!(
@@ -789,7 +856,7 @@ mod tests {
         }
         endpoint.sync_world(&raid);
         assert_eq!(endpoint.world_items.len(), S1_SEEDS.len());
-        let previous_ids = endpoint.loot_ids.clone();
+        let previous_ids: Vec<_> = endpoint.world_items.iter().map(|item| item.id).collect();
         raid.phase = RaidPhase::Debrief;
         endpoint.sync_world(&raid);
         assert!(endpoint.world_items.is_empty());
@@ -810,6 +877,147 @@ mod tests {
                 item.source
             );
         }
+    }
+
+    #[test]
+    fn bandage_seed_lineage_survives_split_drop_pickup_and_merge_into_the_new_id() {
+        let mut endpoint = Endpoint::default();
+        let raid = RaidState {
+            raid_id: 1,
+            phase: RaidPhase::Active,
+            ..default()
+        };
+        endpoint.sync_world(&raid);
+        let seed = &endpoint.world_items[0];
+        let id = seed.id;
+        let seed_index = seed.seed;
+        let original_slot = seed.source;
+        let owner = CompartmentId(7);
+        let authority = endpoint.authority.as_mut().unwrap();
+        authority
+            .register_compartment(owner, Footprint::new(4, 4).unwrap())
+            .unwrap();
+        let original = *authority.inventory().get(id).unwrap();
+        commit_ground_pickup(authority, &mut endpoint.world_items, id, owner).unwrap();
+        let key = SessionKey {
+            raid_epoch: 1,
+            session_epoch: 1,
+        };
+        let mut session = OperationSession::new(key);
+        let request = |sequence, revision, action| InventoryOperation {
+            session: key,
+            id: sequence,
+            expected: [VersionedCompartment {
+                id: owner,
+                revision,
+            }; 2],
+            action,
+        };
+        let split = request(
+            1,
+            1,
+            InventoryAction::Split {
+                item: id,
+                quantity: 1,
+                destination: GridLocation {
+                    compartment: owner,
+                    placement: Placement {
+                        x: 1,
+                        y: 0,
+                        rotation: Rotation::Upright,
+                    },
+                },
+            },
+        );
+        let reply = apply_operation(
+            authority,
+            &mut endpoint.loot_ids,
+            &mut session,
+            split,
+            |c| c == owner,
+        );
+        let child = reply
+            .commit
+            .unwrap()
+            .changes()
+            .find(|change| change.before.is_none())
+            .unwrap()
+            .id;
+        assert_eq!(endpoint.loot_ids.get(&child), Some(&seed_index));
+        let replay = apply_operation(
+            authority,
+            &mut endpoint.loot_ids,
+            &mut session,
+            split,
+            |c| c == owner,
+        );
+        assert_eq!(replay.result, OperationResult::Committed);
+        assert!(replay.commit.is_none());
+        assert_eq!(endpoint.carried(&raid, 7), 2);
+
+        for (item, slot) in [(id, original_slot), (child, BANDAGE_SPARE_SLOT)] {
+            assert_eq!(drop_slot(seed_index, &endpoint.world_items), Some(slot));
+            let authority = endpoint.authority.as_mut().unwrap();
+            let revision = authority.revision(owner).unwrap();
+            authority
+                .drop_to_world(
+                    item,
+                    VersionedCompartment {
+                        id: owner,
+                        revision,
+                    },
+                    slot,
+                )
+                .unwrap();
+            endpoint.world_items.push(WorldItem {
+                id: item,
+                source: slot,
+                seed: seed_index,
+                half_extents: Vec3::ONE,
+                center: Vec3::ZERO,
+                fall_speed: None,
+            });
+        }
+        assert_eq!(
+            endpoint.world_items.len(),
+            common::catalog::item_manifest::S1_GROUND_LIMIT
+        );
+        assert_eq!(endpoint.carried(&raid, 7), 0);
+        for (index, item) in [id, child].into_iter().enumerate() {
+            commit_ground_pickup(
+                endpoint.authority.as_mut().unwrap(),
+                &mut endpoint.world_items,
+                item,
+                owner,
+            )
+            .unwrap();
+            assert_eq!(endpoint.carried(&raid, 7), index as u32 + 1);
+        }
+        let authority = endpoint.authority.as_mut().unwrap();
+        let revision = authority.revision(owner).unwrap();
+        let reply = apply_operation(
+            authority,
+            &mut endpoint.loot_ids,
+            &mut session,
+            request(
+                2,
+                revision,
+                InventoryAction::Merge {
+                    source: id,
+                    target: child,
+                },
+            ),
+            |c| c == owner,
+        );
+        assert_eq!(reply.result, OperationResult::Committed);
+        assert!(!endpoint.loot_ids.contains_key(&id));
+        assert!(authority.inventory().get(id).is_none());
+        let reunited = authority.inventory().get(child).unwrap();
+        assert_eq!(reunited.quantity, 2);
+        assert_eq!(reunited.mass_g(), original.mass_g());
+        assert_eq!(reunited.contents, original.contents);
+        assert_eq!(reunited.condition, original.condition);
+        assert_eq!(endpoint.carried(&raid, 7), 2);
     }
 
     #[test]
