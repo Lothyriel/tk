@@ -1,5 +1,8 @@
 use super::{InventoryCue, Panel};
-use crate::sync::inventory::{Operate, State};
+use crate::{
+    render::item_icons::ItemIcon,
+    sync::inventory::{Operate, State},
+};
 use bevy::{
     ecs::system::SystemParam,
     prelude::*,
@@ -819,10 +822,25 @@ type DrawKey = (
     Option<ItemInstanceId>,
     Option<(ItemInstanceId, Placement, bool)>,
     bool,
+    bool,
 );
 
-type BoardNode<'w, 's> =
-    Single<'w, 's, (Entity, &'static mut Node), (With<Board>, Without<GridRoot>)>;
+type BoardNode<'w, 's> = Single<
+    'w,
+    's,
+    (Entity, &'static mut Node, &'static ComputedNode),
+    (With<Board>, Without<GridRoot>),
+>;
+
+fn compact_tiles(width: Val, computed: &ComputedNode, columns: u8) -> bool {
+    // Use a resolved pixel width immediately when available (including on
+    // resize); a percentage board uses its last laid-out width in UI units.
+    let width = match width {
+        Val::Px(width) => width,
+        _ => computed.size().x * computed.inverse_scale_factor(),
+    };
+    width > 0.0 && width / f32::from(columns) < 44.0
+}
 type QuantityNode<'w, 's> = Single<
     'w,
     's,
@@ -997,7 +1015,8 @@ pub(in crate::input) fn present(
     if message.as_str() != label {
         ***message = label;
     }
-    let draw = (key, grid.version, panel.selected, ghost, valid);
+    let compact = compact_tiles(board.1.width, board.2, grid.size[0]);
+    let draw = (key, grid.version, panel.selected, ghost, valid, compact);
     if *last == Some(draw) {
         return;
     }
@@ -1028,31 +1047,61 @@ pub(in crate::input) fn present(
             }
         }
         for (id, item) in &grid.items {
-            let entry = &planned_items()[item.definition.as_str()];
-            board
-                .spawn((
-                    Tile,
-                    Pickable::IGNORE,
-                    FocusPolicy::Pass,
-                    rectangle(
-                        item.placement,
-                        dimensions(item, item.placement.rotation),
-                        grid.size,
-                    ),
-                    BackgroundColor(if panel.selected == Some(*id) {
-                        Color::srgb(0.23, 0.38, 0.48)
-                    } else {
-                        Color::srgb(0.13, 0.22, 0.30)
-                    }),
-                    BorderColor::all(Color::srgb(0.48, 0.60, 0.70)),
-                ))
-                .with_child((
+            let mut node = rectangle(
+                item.placement,
+                dimensions(item, item.placement.rotation),
+                grid.size,
+            );
+            if compact {
+                node.flex_direction = FlexDirection::Column;
+                node.align_items = AlignItems::Center;
+                node.justify_content = JustifyContent::Center;
+            }
+            let mut tile = board.spawn((
+                Tile,
+                Pickable::IGNORE,
+                FocusPolicy::Pass,
+                node,
+                BackgroundColor(if panel.selected == Some(*id) {
+                    Color::srgb(0.23, 0.38, 0.48)
+                } else {
+                    Color::srgb(0.13, 0.22, 0.30)
+                }),
+                BorderColor::all(Color::srgb(0.48, 0.60, 0.70)),
+            ));
+            if compact {
+                tile.with_children(|tile| {
+                    // A 27.5-unit cell (720p at 200%) has room for this
+                    // icon and a separate, unchanged-size quantity line.
+                    tile.spawn((
+                        ItemIcon(item.definition.clone()),
+                        Pickable::IGNORE,
+                        FocusPolicy::Pass,
+                        Node {
+                            width: Val::Px(11.0),
+                            height: Val::Px(11.0),
+                            ..default()
+                        },
+                    ));
+                    tile.spawn((
+                        Pickable::IGNORE,
+                        FocusPolicy::Pass,
+                        Text::new(format!("×{}", item.quantity)),
+                        font.sized(12.0),
+                        TextLayout::no_wrap(),
+                        bevy::text::LineHeight::Px(12.0),
+                    ));
+                });
+            } else {
+                let entry = &planned_items()[item.definition.as_str()];
+                tile.with_child((
                     Pickable::IGNORE,
                     FocusPolicy::Pass,
                     Text::new(format!("{} ×{}", entry.name, item.quantity)),
                     font.sized(12.0),
                     TextLayout::linebreak(bevy::text::LineBreak::WordOrCharacter),
                 ));
+            }
         }
         if let Some((id, target, pending)) = ghost
             && let Some((_, item)) = grid.items.iter().find(|(other, _)| *other == id)
@@ -1171,6 +1220,61 @@ mod tests {
         }
         assert!(items.contains(&"Água potável 500 ml ×1"));
         assert!(items.contains(&"Bandagem estéril ×1"));
+    }
+
+    #[test]
+    fn inventory_grid_compact_tiles_keep_quantities_and_update_when_board_widens() {
+        let (mut app, authority, _) = fixture_with_stacks(true);
+        let confirmed = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        let set_scale = |app: &mut App, scale| {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            let world = app.world_mut();
+            world.insert_resource(UiScale(scale));
+            world
+                .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                .single_mut(world)
+                .unwrap()
+                .resolution = bevy::window::WindowResolution::new(1280, 720);
+            app.update();
+        };
+        let contents = |app: &mut App| {
+            let world = app.world_mut();
+            let mut icons = world.query::<&ItemIcon>();
+            let mut ids: Vec<_> = icons.iter(world).map(|icon| icon.0.clone()).collect();
+            ids.sort();
+            let mut labels = world.query::<&Text>();
+            let mut quantities: Vec<_> = labels
+                .iter(world)
+                .filter(|label| label.contains('×'))
+                .map(|label| label.as_str().to_owned())
+                .collect();
+            quantities.sort();
+            (ids, quantities)
+        };
+
+        set_scale(&mut app, 2.0);
+        let (ids, quantities) = contents(&mut app);
+        assert_eq!(ids, ["med.bandage", "med.bandage"]);
+        assert_eq!(quantities, ["×2", "×3"]);
+        set_scale(&mut app, 1.5);
+        let (ids, quantities) = contents(&mut app);
+        assert!(ids.is_empty());
+        assert_eq!(quantities, ["Bandagem estéril ×2", "Bandagem estéril ×3"]);
+        assert_eq!(
+            app.world().resource::<State>().owned_grid(1, 7),
+            Some(&confirmed)
+        );
+        assert!(compact_tiles(
+            Val::Percent(100.0),
+            &ComputedNode {
+                size: Vec2::splat(220.0),
+                inverse_scale_factor: 0.5,
+                ..default()
+            },
+            4,
+        ));
     }
 
     fn fixture_with_stacks(stacks: bool) -> (App, InventoryAuthority, ItemInstanceId) {

@@ -94,7 +94,10 @@ pub(super) struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Page>().add_systems(Update, bind);
+        // Grid tiles spawned during presentation need their atlas rect before
+        // layout and extraction, even on the first compact frame.
+        app.init_resource::<Page>()
+            .add_systems(Update, bind.after(crate::ClientSystems::Present));
     }
 }
 
