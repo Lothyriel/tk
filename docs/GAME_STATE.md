@@ -126,7 +126,7 @@ the other combatant to the lobby, where a new pair can prepare another duel.
 | F | Collect nearby loot; hold in the exit to extract |
 | Tab / Up / Down / Delete | Open raid inventory, select an item, and request a drop; Tab or Esc closes the panel |
 | Inventory: drag, or Enter / arrows / Enter | Move an item within the backpack grid; **R** rotates the preview and Esc cancels it. Releasing outside the grid cancels without dropping anything. The grid follows server confirmations |
-| Inventory: Shift+drag or Shift+Enter | Choose how many items to split, then select an empty destination. Drop a normal drag onto a compatible stack to merge; excess stays in the source |
+| Inventory: Shift+drag or Shift+Enter | Use left/right to adjust split quantity, Tab/Shift+Tab to focus a control, and Enter to activate it (Choose is focused by default). Choose the quantity, then select an empty destination. Esc cancels the split. Drop a normal drag onto a compatible stack to merge; excess stays in the source |
 | Inventory: right-click or Menu / F10 | Open the item's Inspect / Drop menu. Use mouse or arrows / Tab and Enter. Esc closes the menu before cancelling a drag or closing the inventory |
 | I in raid inventory | Hold the selected item up for local inspection. Arrow keys rotate, +/- change viewing distance, R resets, and I or Esc returns to the list |
 | Escape | Close the workbench, inspection or inventory first, or toggle the local pause menu during a raid. Pausing releases the cursor and suppresses local actions; the server and dangers continue |

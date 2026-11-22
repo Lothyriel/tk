@@ -71,7 +71,10 @@ pub(super) fn update(
         };
         return;
     }
-    if keys.just_pressed(KeyCode::Tab) && panel.context.is_none() {
+    if keys.just_pressed(KeyCode::Tab)
+        && panel.context.is_none()
+        && !panel.drag.is_some_and(|drag| drag.choosing_quantity())
+    {
         if panel.open {
             if let Some(mut diagnostic) = diagnostic {
                 diagnostic.on_tab_close(&panel, &inventory);

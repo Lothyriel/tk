@@ -30,11 +30,18 @@ pub(super) struct Drag {
     hover: Option<[u8; 2]>,
 }
 
+impl Drag {
+    pub(super) fn choosing_quantity(self) -> bool {
+        self.split.is_some_and(|split| split.choosing)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Split {
     quantity: u16,
     maximum: u16,
     choosing: bool,
+    focus: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -92,13 +99,22 @@ pub(in crate::input) struct PointerInput<'w, 's> {
     context: Query<'w, 's, (&'static ContextAction, &'static RelativeCursorPosition)>,
 }
 
-#[derive(Component, Clone, Copy)]
-enum QuantityButton {
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::input) enum QuantityButton {
     Less,
     More,
     Confirm,
     Cancel,
 }
+
+const QUANTITY_BUTTONS: [(QuantityButton, &str); 4] = [
+    (QuantityButton::Less, "−"),
+    (QuantityButton::More, "+"),
+    (QuantityButton::Confirm, "Choose"),
+    (QuantityButton::Cancel, "Cancel"),
+];
+const QUANTITY_DEFAULT_FOCUS: usize = 2;
+const QUANTITY_FOCUS_COLOR: Color = Color::srgb(0.78, 0.89, 1.0);
 
 #[derive(Component)]
 pub(in crate::input) struct QuantityControls;
@@ -432,6 +448,7 @@ pub(super) fn interact(
                     quantity: 1,
                     maximum: source.quantity - 1,
                     choosing: true,
+                    focus: QUANTITY_DEFAULT_FOCUS,
                 }),
                 hover: None,
             });
@@ -441,6 +458,12 @@ pub(super) fn interact(
     }
     let drag = panel.drag.as_mut().unwrap();
     if let Some(split) = drag.split.as_mut().filter(|s| s.choosing) {
+        if keys.just_pressed(KeyCode::Tab) {
+            let backward = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            let len = QUANTITY_BUTTONS.len();
+            split.focus = (split.focus + if backward { len - 1 } else { 1 }) % len;
+            return true;
+        }
         let button = mouse
             .is_some_and(|b| b.just_pressed(MouseButton::Left))
             .then(|| {
@@ -449,13 +472,15 @@ pub(super) fn interact(
                     .iter()
                     .find_map(|(button, cursor)| cursor.cursor_over.then_some(*button))
             })
-            .flatten();
+            .flatten()
+            .or_else(|| {
+                keys.just_pressed(KeyCode::Enter)
+                    .then(|| QUANTITY_BUTTONS[split.focus].0)
+            });
         if matches!(button, Some(QuantityButton::Cancel)) {
             panel.drag = None;
             panel.feedback = Some("Split cancelled");
-        } else if keys.just_pressed(KeyCode::Enter)
-            || matches!(button, Some(QuantityButton::Confirm))
-        {
+        } else if matches!(button, Some(QuantityButton::Confirm)) {
             split.choosing = false;
             // The quantity confirmation is not a destination click.
             drag.mouse = false;
@@ -684,16 +709,12 @@ pub(in crate::input) fn setup(mut commands: Commands, mut fonts: ResMut<Assets<F
             parent.spawn((Feedback, Text::default(), font.sized(14.0)));
             parent.spawn((QuantityControls, Node { display: Display::None, column_gap: Val::Px(5.0), ..default() }))
                 .with_children(|buttons| {
-                    for (action, label) in [
-                        (QuantityButton::Less, "−"),
-                        (QuantityButton::More, "+"),
-                        (QuantityButton::Confirm, "Choose"),
-                        (QuantityButton::Cancel, "Cancel"),
-                    ] {
+                    for (action, label) in QUANTITY_BUTTONS {
                         buttons.spawn((
                             action, RelativeCursorPosition::default(),
                             Node { padding: UiRect::all(Val::Px(7.0)), ..default() },
                             BackgroundColor(Color::srgb(0.17, 0.29, 0.40)),
+                            Outline::new(Val::Px(2.0), Val::Px(-2.0), Color::NONE),
                         )).with_child((FocusPolicy::Pass, Text::new(label), font.sized(14.0)));
                     }
                 });
@@ -840,6 +861,7 @@ pub(in crate::input) fn present(
     mut message: Single<&mut Text, (With<Feedback>, Without<ContextLabel>)>,
     mut context_node: ContextNode,
     mut context_labels: Query<(&ContextLabel, &mut Text), Without<Feedback>>,
+    mut quantity_outlines: Query<(&QuantityButton, &mut Outline)>,
     tiles: Query<Entity, With<Tile>>,
     mut last: Local<Option<DrawKey>>,
 ) {
@@ -870,6 +892,19 @@ pub(in crate::input) fn present(
         }
     }
     let choosing = panel.drag.and_then(|d| d.split).filter(|s| s.choosing);
+    if visible {
+        let focused = choosing.map(|split| QUANTITY_BUTTONS[split.focus].0);
+        for (button, mut outline) in &mut quantity_outlines {
+            let color = if Some(*button) == focused {
+                QUANTITY_FOCUS_COLOR
+            } else {
+                Color::NONE
+            };
+            if outline.color != color {
+                outline.color = color;
+            }
+        }
+    }
     quantity.display = if visible && choosing.is_some() {
         Display::Flex
     } else {
@@ -937,7 +972,7 @@ pub(in crate::input) fn present(
             )
     } else if let Some(split) = choosing {
         format!(
-            "Split {} / {} · arrows or −/+ · Enter to choose",
+            "Split {} / {} · arrows adjust · Tab focus · Enter activate",
             split.quantity, split.maximum
         )
     } else if panel.pending.is_some() {
@@ -1750,6 +1785,77 @@ mod tests {
             key(&mut app, KeyCode::Escape);
             assert!(!app.world().resource::<Panel>().open);
         }
+    }
+
+    #[test]
+    fn inventory_grid_split_focus_wraps_and_activates_without_submitting() {
+        use QuantityButton::{Cancel, Confirm, Less, More};
+
+        let (mut app, authority, _) = fixture_with_stacks(true);
+        let original = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        let mut server = RenetServer::new(data::renet_config());
+        server.add_connection(7, false);
+        let chord = |app: &mut App, modifier, key| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(modifier);
+            keys.press(key);
+            app.update();
+        };
+        let assert_focus = |app: &mut App, expected, quantity| {
+            let panel = app.world().resource::<Panel>();
+            assert!(panel.open && panel.pending.is_none());
+            let split = panel.drag.unwrap().split.unwrap();
+            assert!(split.choosing);
+            assert_eq!(split.quantity, quantity);
+            let world = app.world_mut();
+            let mut outlines = world.query::<(&QuantityButton, &Outline)>();
+            let focused: Vec<_> = outlines
+                .iter(world)
+                .filter_map(|(button, outline)| (outline.color != Color::NONE).then_some(*button))
+                .collect();
+            assert_eq!(focused, [expected]);
+        };
+
+        chord(&mut app, KeyCode::ShiftLeft, KeyCode::Enter);
+        assert_focus(&mut app, Confirm, 1);
+        for expected in [Cancel, Less, More, Confirm] {
+            key(&mut app, KeyCode::Tab);
+            assert_focus(&mut app, expected, 1);
+        }
+        for expected in [More, Less, Cancel, Confirm, More] {
+            chord(&mut app, KeyCode::ShiftRight, KeyCode::Tab);
+            assert_focus(&mut app, expected, 1);
+        }
+        key(&mut app, KeyCode::Enter);
+        assert_focus(&mut app, More, 2);
+        chord(&mut app, KeyCode::ShiftLeft, KeyCode::Tab);
+        key(&mut app, KeyCode::Enter);
+        assert_focus(&mut app, Less, 1);
+        chord(&mut app, KeyCode::ShiftLeft, KeyCode::Tab);
+        key(&mut app, KeyCode::Enter);
+        let panel = app.world().resource::<Panel>();
+        assert!(panel.open && panel.drag.is_none() && panel.pending.is_none());
+        assert_eq!(panel.feedback, Some("Split cancelled"));
+
+        chord(&mut app, KeyCode::ShiftLeft, KeyCode::Enter);
+        assert_focus(&mut app, Confirm, 1);
+        key(&mut app, KeyCode::Enter);
+        let panel = app.world().resource::<Panel>();
+        assert!(panel.open && panel.pending.is_none());
+        assert!(!panel.drag.unwrap().choosing_quantity());
+        assert!(transfer(&mut app, &mut server).is_none());
+        assert_eq!(
+            app.world().resource::<State>().owned_grid(1, 7),
+            Some(&original)
+        );
+
+        key(&mut app, KeyCode::Escape);
+        let panel = app.world().resource::<Panel>();
+        assert!(panel.open && panel.drag.is_none() && panel.consumed_escape);
+        key(&mut app, KeyCode::Tab);
+        assert!(!app.world().resource::<Panel>().open);
+        assert!(transfer(&mut app, &mut server).is_none());
     }
 
     #[test]
