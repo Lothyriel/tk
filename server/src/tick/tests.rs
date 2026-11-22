@@ -472,6 +472,58 @@ fn ecs_lobby_to_loot_extraction_debrief_and_second_raid() {
 }
 
 #[test]
+fn focused_pickup_input_does_not_also_extract() {
+    let (mut app, actor, _) = physical_fixture();
+    let raid_id = app.world().resource::<RaidState>().raid_id;
+    // Carry real legacy loot so the pickup focus is the only thing blocking
+    // otherwise eligible extraction.
+    app.world_mut()
+        .get_mut::<Transform>(actor)
+        .unwrap()
+        .translation = Vec3::from(common::map::LOOT_POSITIONS[0]) + Vec3::Y * 0.5;
+    app.world_mut()
+        .get_mut::<ClientInput>(actor)
+        .unwrap()
+        .interact = true;
+    held_steps(&mut app, actor, 2);
+    assert_eq!(app.world().get::<Participant>(actor).unwrap().carried, 1);
+    app.world_mut()
+        .get_mut::<Transform>(actor)
+        .unwrap()
+        .translation = Vec3::from(common::map::EXTRACTION_CENTER) + Vec3::Y * 0.9;
+    let set_interaction = |app: &mut App, held, focus| {
+        let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+        input.interact = held;
+        input.pickup_focus = focus;
+    };
+    // A pickup focus cached just before crossing into extraction may be
+    // stale. It must not turn the same held interaction into extraction.
+    set_interaction(
+        &mut app,
+        true,
+        Some((raid_id, common::catalog::ItemInstanceId(1))),
+    );
+    held_steps(&mut app, actor, 650);
+    let player = app.world().get::<Participant>(actor).unwrap();
+    assert_eq!(player.status, RaidStatus::Active);
+    assert_eq!(player.extraction_seconds, 0.0);
+    assert_eq!(player.secured, 0);
+    assert_eq!(player.carried, 1);
+
+    set_interaction(&mut app, false, None);
+    held_steps(&mut app, actor, 1);
+    set_interaction(&mut app, true, None);
+    held_steps(&mut app, actor, 64);
+    let player = app.world().get::<Participant>(actor).unwrap();
+    assert_eq!(player.status, RaidStatus::Active);
+    assert!((player.extraction_seconds - 0.5).abs() < 0.01);
+    held_steps(&mut app, actor, 586);
+    let player = app.world().get::<Participant>(actor).unwrap();
+    assert_eq!(player.status, RaidStatus::Extracted);
+    assert_eq!(player.secured, 1);
+}
+
+#[test]
 fn death_and_timeout_lose_loot_and_space_cannot_respawn() {
     let mut app = app();
     let player = add_player(&mut app, 7, Loadout::default());
