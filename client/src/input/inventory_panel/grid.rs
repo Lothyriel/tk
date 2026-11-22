@@ -1357,13 +1357,17 @@ mod tests {
         app.update();
     }
 
-    fn mouse(app: &mut App, point: Vec2, pressed: bool) {
+    fn point_at(app: &mut App, point: Vec2) {
         let mut cursor = app
             .world_mut()
             .query_filtered::<&mut RelativeCursorPosition, With<Board>>();
         let mut cursor = cursor.single_mut(app.world_mut()).unwrap();
         cursor.normalized = Some(point);
         cursor.cursor_over = point.abs().max_element() < 0.5;
+    }
+
+    fn mouse(app: &mut App, point: Vec2, pressed: bool) {
+        point_at(app, point);
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .reset_all();
@@ -1586,6 +1590,114 @@ mod tests {
         let mut server = RenetServer::new(data::renet_config());
         server.add_connection(7, false);
         assert!(transfer(&mut app, &mut server).is_none());
+    }
+
+    #[test]
+    fn inventory_grid_combat_input_stays_blocked_until_release_after_tab_close() {
+        use bevy::window::{CursorGrabMode, CursorOptions};
+        use common::LocalInput;
+
+        let (mut app, authority, item) = fixture();
+        let before = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        let window = app
+            .world_mut()
+            .query_filtered::<Entity, With<PrimaryWindow>>()
+            .single(app.world())
+            .unwrap();
+        app.world_mut().entity_mut(window).insert(CursorOptions {
+            grab_mode: CursorGrabMode::Locked,
+            ..default()
+        });
+        app.init_resource::<LocalInput>()
+            .add_systems(Update, crate::input::keyboard.after(super::super::update));
+
+        // The fixture opened with Tab. Release it before the first drag frame.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::Tab);
+        let frame = |app: &mut App, keys: &[(KeyCode, bool)], buttons: &[(MouseButton, bool)]| {
+            {
+                let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+                input.clear(); // Clear edges, not held state.
+                for &(key, down) in keys {
+                    if down {
+                        input.press(key);
+                    } else {
+                        input.release(key);
+                    }
+                }
+            }
+            {
+                let mut input = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+                input.clear();
+                for &(button, down) in buttons {
+                    if down {
+                        input.press(button);
+                    } else {
+                        input.release(button);
+                    }
+                }
+            }
+            app.update();
+        };
+        let assert_blocked = |app: &App, phase| {
+            let input = app.world().resource::<LocalInput>();
+            assert!(!input.fire && !input.aim, "{phase}: held mouse leaked");
+            assert_eq!(
+                (input.fire_pressed_sequence, input.reload_sequence),
+                (0, 0),
+                "{phase}: action edge leaked"
+            );
+        };
+        let (left, right, rotate) = (MouseButton::Left, MouseButton::Right, KeyCode::KeyR);
+
+        point_at(&mut app, Vec2::splat(-0.375)); // Water at (0, 0).
+        frame(&mut app, &[], &[(left, true)]);
+        let drag = app.world().resource::<Panel>().drag.unwrap();
+        assert!(drag.mouse && drag.item == item);
+        assert_blocked(&app, "start drag");
+
+        // The rotated grab offset is (1, 0); keep the preview on the board.
+        point_at(&mut app, Vec2::new(-0.125, -0.375));
+        frame(&mut app, &[(rotate, true)], &[]);
+        let drag = app.world().resource::<Panel>().drag.unwrap();
+        assert_eq!(drag.target.unwrap().rotation, Rotation::QuarterTurn);
+        assert_blocked(&app, "rotate drag");
+
+        point_at(&mut app, Vec2::splat(0.375)); // Empty (3, 3), no item context.
+        frame(&mut app, &[], &[(right, true)]);
+        let panel = app.world().resource::<Panel>();
+        assert!(panel.open && panel.drag.is_some() && panel.context.is_none());
+        assert_blocked(&app, "right press during drag");
+
+        frame(&mut app, &[(KeyCode::Tab, true)], &[]);
+        let panel = app.world().resource::<Panel>();
+        assert!(!panel.open && panel.drag.is_none() && panel.pending.is_none());
+        assert_blocked(&app, "Tab close");
+        frame(&mut app, &[(KeyCode::Tab, false)], &[]);
+        assert_blocked(&app, "still held after close");
+
+        frame(
+            &mut app,
+            &[(rotate, false)],
+            &[(left, false), (right, false)],
+        );
+        assert_blocked(&app, "release");
+        frame(&mut app, &[(rotate, true)], &[(left, true), (right, true)]);
+        let input = app.world().resource::<LocalInput>();
+        assert!(input.fire && input.aim);
+        assert_eq!((input.fire_pressed_sequence, input.reload_sequence), (1, 1));
+        frame(&mut app, &[], &[]);
+        let input = app.world().resource::<LocalInput>();
+        assert_eq!((input.fire_pressed_sequence, input.reload_sequence), (1, 1));
+
+        let mut server = RenetServer::new(data::renet_config());
+        server.add_connection(7, false);
+        assert!(transfer(&mut app, &mut server).is_none());
+        let state = app.world().resource::<State>();
+        let after = state.owned_grid(1, 7).unwrap();
+        assert_eq!(after.version, before.version);
+        assert_eq!(after.items, before.items);
     }
 
     #[test]
