@@ -178,6 +178,73 @@ impl Harness {
 
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn inventory_udp_private_resync_under_loss() {
+    use common::{
+        catalog::{CompartmentId, item_inventory::SessionKey},
+        replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+    };
+
+    let mut harness = Harness::new();
+    let mut first = UdpPeer::new(7, harness.address, harness.now, true);
+    let mut second = UdpPeer::new(8, harness.address, harness.now, true);
+    let drain = |peer: &mut UdpPeer| {
+        std::iter::from_fn(|| peer.peer.network.receive_message(CHANNEL))
+            .map(|bytes| InventoryUpdate::decode(&bytes).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let bootstrap = |peer: &mut UdpPeer, own: u64| -> SessionKey {
+        assert!(peer.transport.is_connected());
+        let updates = drain(peer);
+        assert_eq!(updates.len(), 2);
+        let session = updates[0].session;
+        assert_eq!(updates[0].body, UpdateBody::Begin);
+        assert_eq!(updates[1].session, session);
+        assert!(matches!(&updates[1].body, UpdateBody::Snapshot(snapshot)
+            if snapshot.version.id == CompartmentId(own) && snapshot.items.is_empty()));
+        session
+    };
+    harness.pump(&mut [&mut first, &mut second], 192);
+    let key_first = bootstrap(&mut first, 7);
+    let key_second = bootstrap(&mut second, 8);
+    assert_ne!(key_first, key_second);
+
+    for (peer, session, own, other) in [
+        (&mut first, key_first, 7, 8),
+        (&mut second, key_second, 8, 7),
+    ] {
+        for (key, compartment) in [(session, other), (session, own)] {
+            let request = InventoryRequest::Resync {
+                session: key,
+                compartment: CompartmentId(compartment),
+            };
+            peer.peer
+                .network
+                .send_message(CHANNEL, request.encode().unwrap());
+        }
+    }
+    first.input.camera.yaw = 0.25;
+    harness.pump(&mut [&mut first, &mut second], 160);
+    for (peer, session, own, other) in [
+        (&mut first, key_first, 7, 8),
+        (&mut second, key_second, 8, 7),
+    ] {
+        let updates = drain(peer);
+        assert_eq!(updates.len(), 2);
+        assert!(updates.iter().all(|update| update.session == session));
+        assert_eq!(updates[0].body, UpdateBody::Closed(CompartmentId(other)));
+        assert!(matches!(&updates[1].body, UpdateBody::Snapshot(snapshot)
+            if snapshot.version.id == CompartmentId(own) && snapshot.version.revision == 0));
+        let dropped = peer.dropped.load(Ordering::Relaxed);
+        assert!(dropped > 0);
+        println!("TK INVENTORY UDP own={own} dropped={dropped} private_resync=ok");
+    }
+    let world = harness.app.world();
+    let entity = world.resource::<Lobby>().players[&7];
+    assert_eq!(world.get::<ClientInput>(entity).unwrap().camera.yaw, 0.25);
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn replication_udp_solo_dual_loss_and_late_join() {
     for loss in [false, true] {
         let mut harness = Harness::new();
