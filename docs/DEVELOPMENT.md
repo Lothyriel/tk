@@ -79,6 +79,15 @@ Bevy, não a configuração no arquivo nem o DPI do sistema. O log informa
 `inside_viewport` para os controles; a captura ainda é salva se houver
 corte. Um PNG salvo não significa aceite de layout.
 
+Para verificar edição e persistência sem captura, execute a sonda de teclado
+com `TK_PREFERENCES_FLOW=edit` e `TK_PREFERENCES_PATH` apontando para um
+arquivo novo num diretório isolado. Ela verifica Reverter, Esc e Voltar
+antes de aplicar FOV 75 e escala 125%. Depois reinicie o servidor local
+e execute outro cliente com `TK_PREFERENCES_FLOW=reload` e o mesmo arquivo.
+Cada execução deve registrar `PREFERENCES FLOW PASS`; compare os bytes do
+arquivo antes e depois do segundo cliente. São eventos sintéticos do Bevy,
+não uso de teclado físico. Não combine com `TK_PREFERENCES_SCREENSHOT`.
+
 ## Revisão estática da grade
 
 Para automatizar o subconjunto de teclado após integração e coordenação:

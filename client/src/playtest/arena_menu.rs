@@ -60,6 +60,25 @@ impl Plugin for Probe {
     fn build(&self, app: &mut App) {
         let mut route = Route::default();
         let review_scale = std::env::var("TK_PREFERENCES_REVIEW_SCALE").ok();
+        if let Ok(mode) = std::env::var("TK_PREFERENCES_FLOW") {
+            assert_eq!(*self, Self::Keyboard);
+            assert!(std::env::var_os("TK_PREFERENCES_SCREENSHOT").is_none());
+            let path = std::path::PathBuf::from(
+                std::env::var_os("TK_PREFERENCES_PATH").expect("isolated preferences path"),
+            );
+            route.step = match mode.as_str() {
+                "edit" => {
+                    assert!(!path.exists());
+                    Step::EditPreferences(0)
+                }
+                "reload" => {
+                    assert!(path.is_file());
+                    Step::ReloadPreferences(false)
+                }
+                _ => panic!("use TK_PREFERENCES_FLOW=edit or reload"),
+            };
+            route.flow_path = Some(path);
+        }
         if let Some(path) = std::env::var_os("TK_PREFERENCES_SCREENSHOT") {
             assert_eq!(
                 *self,
@@ -108,7 +127,28 @@ enum Step {
     Done,
     OpenPreferences,
     CapturePreferences,
+    EditPreferences(usize),
+    ReloadPreferences(bool),
 }
+
+// Activate only real menu widgets; None represents an explicit Esc or
+// the final observation rather than an activation.
+const EDIT_ACTIONS: [Option<&str>; 14] = [
+    Some("Preferences"),
+    Some("+ Vertical FOV"),
+    Some("Revert unapplied"),
+    Some("+ Vertical FOV"),
+    None,
+    Some("Preferences"),
+    Some("+ Vertical FOV"),
+    Some("Back (discard draft)"),
+    Some("Preferences"),
+    Some("+ Vertical FOV"),
+    Some("UI scale:"),
+    Some("Apply and save"),
+    Some("Back (discard draft)"),
+    None,
+];
 
 impl Step {
     fn label(self) -> Option<&'static str> {
@@ -120,6 +160,9 @@ impl Step {
             Self::Cancel => "Cancel ready",
             Self::Leave => "Leave Arena / return to lobby",
             Self::OpenPreferences => "Preferences",
+            Self::EditPreferences(index) => return EDIT_ACTIONS[index],
+            Self::ReloadPreferences(false) => "Preferences",
+            Self::ReloadPreferences(true) => return None,
             Self::Done | Self::CapturePreferences => return None,
         })
     }
@@ -138,6 +181,8 @@ impl Step {
             CloseAgain => Reenter,
             Reenter | Done => Done,
             OpenPreferences | CapturePreferences => CapturePreferences,
+            EditPreferences(index) => EditPreferences(index + 1),
+            ReloadPreferences(_) => ReloadPreferences(true),
         }
     }
 
@@ -149,7 +194,10 @@ impl Step {
             Self::Leave => 3,
             Self::BenchAgain | Self::CloseAgain | Self::Reenter => 4,
             Self::Done => 5,
-            Self::OpenPreferences | Self::CapturePreferences => 0,
+            Self::OpenPreferences
+            | Self::CapturePreferences
+            | Self::EditPreferences(_)
+            | Self::ReloadPreferences(_) => 0,
         }
     }
 }
@@ -165,6 +213,7 @@ struct Route {
     checked_return_focus: bool,
     preferences: Option<std::path::PathBuf>,
     capture_requested: bool,
+    flow_path: Option<std::path::PathBuf>,
 }
 
 type Widgets<'w, 's> = Query<
@@ -221,6 +270,7 @@ fn drive(
     mut commands: Commands,
     (probe, mut route, time): (Res<Probe>, ResMut<Route>, Res<Time<Real>>),
     scale: Res<UiScale>,
+    preferences: Res<crate::preferences::Preferences>,
     (session, player, input, menu): (
         Res<ClientSession>,
         Res<PlayerId>,
@@ -343,6 +393,61 @@ fn drive(
         presented_button(&widgets, &text, prefix)
             .and_then(|(entity, _, laid_out)| laid_out.then_some(entity))
     };
+    if let Some(path) = route.flow_path.as_ref() {
+        if session.raid.phase != RaidPhase::Lobby {
+            return;
+        }
+        assert!(!actor.participant.ready && actor.participant.last_command == 0);
+        let fov = || presented_button(&widgets, &text, "- Vertical FOV:").map(|(_, text, _)| text);
+        let scale_text = || presented_button(&widgets, &text, "UI scale:").map(|(_, text, _)| text);
+        let applied = matches!(step, EditPreferences(12..) | ReloadPreferences(_));
+        let expected = crate::preferences::Preferences {
+            fov: if applied { 75 } else { 70 },
+            ui_scale_percent: if applied { 125 } else { 100 },
+            ..default()
+        };
+        assert_eq!(*preferences, expected);
+        assert_eq!(scale.0, expected.ui_scale());
+        if applied {
+            let saved = std::fs::read(path).expect("saved preferences");
+            let saved = serde_json::from_slice::<crate::preferences::Preferences>(&saved)
+                .expect("valid saved preferences");
+            assert_eq!(saved, expected);
+        } else {
+            assert!(!path.exists(), "a draft unexpectedly saved");
+        }
+        match step {
+            EditPreferences(2 | 4 | 7 | 10 | 11 | 12) => {
+                assert_eq!(fov(), Some("- Vertical FOV: 75 deg"));
+            }
+            EditPreferences(3 | 6 | 9) => {
+                assert_eq!(fov(), Some("- Vertical FOV: 70 deg"));
+            }
+            _ => {}
+        }
+        if matches!(step, EditPreferences(5 | 8 | 13)) {
+            let Some(settings) = button("Preferences") else {
+                return;
+            };
+            assert_eq!(menu.focused_widget(), Some(settings));
+        }
+        if step == EditPreferences(4) {
+            keyboard.write(key_event(window_id, KeyCode::Escape, ButtonState::Pressed));
+            route.release = Some(KeyCode::Escape);
+            route.step = step.next();
+            route.since = now;
+            return;
+        }
+        if step == ReloadPreferences(true) {
+            assert_eq!(fov(), Some("- Vertical FOV: 75 deg"));
+            assert_eq!(scale_text(), Some("UI scale: 125% (cycle)"));
+        }
+        if matches!(step, EditPreferences(13) | ReloadPreferences(true)) {
+            info!("PREFERENCES FLOW PASS {step:?}: FOV 75, scale 125, no Ready, aim or fire");
+            exit.write(AppExit::Success);
+            return;
+        }
+    }
     match step {
         Bench | Ready | ReadyAgain | BenchAgain | Reenter
             if session.raid.phase != RaidPhase::Lobby
