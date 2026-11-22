@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod activation;
 pub use activation::{ActiveItem, ActiveItems, ItemActivationError, ItemAssetBinding};
+mod visuals;
+pub use visuals::{item_visuals, ItemVisual, ITEM_VISUALS_FILE};
 
 pub const FILE: &str = "common/data/items-v01.tsv";
 pub const REVISION: &str = "0.1";
