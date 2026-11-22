@@ -11,6 +11,12 @@ use common::raid::{RaidPhase, RaidState, RaidStatus};
 
 pub(crate) mod cover;
 pub(crate) mod inventory;
+#[cfg(test)]
+pub(crate) fn add_inventory_test_receive(app: &mut App) {
+    app.add_message::<inventory::Operate>()
+        .add_message::<inventory::OperationFinished>()
+        .add_systems(PreUpdate, inventory::receive);
+}
 mod motion;
 #[cfg(test)]
 pub(crate) use motion::LocalMotionPose;

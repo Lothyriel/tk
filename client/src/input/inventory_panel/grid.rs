@@ -1290,25 +1290,97 @@ mod tests {
     }
 
     #[test]
-    fn inventory_grid_conflict_clears_preview_without_replaying_move() {
-        let (mut app, _, _) = fixture();
-        mouse(&mut app, Vec2::splat(-0.375), true);
-        mouse(&mut app, Vec2::new(-0.125, 0.125), false);
+    fn inventory_grid_rejects_invalid_moves_and_resyncs_after_authority_conflict() {
+        let (mut app, mut authority, item) = fixture();
+        crate::sync::add_inventory_test_receive(&mut app);
         let mut server = RenetServer::new(data::renet_config());
         server.add_connection(7, false);
+        let original = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        let assert_confirmed = |app: &App, expected: &InventorySnapshot| {
+            assert_eq!(
+                app.world().resource::<State>().owned_grid(1, 7),
+                Some(expected)
+            );
+        };
+        for (keys, reason) in [
+            (&[KeyCode::KeyR, KeyCode::ArrowRight][..], "Cell occupied"),
+            (&[KeyCode::ArrowDown; 3][..], "Item exceeds grid edge"),
+        ] {
+            key(&mut app, KeyCode::Enter);
+            for &press in keys {
+                key(&mut app, press);
+            }
+            let world = app.world_mut();
+            let mut labels = world.query_filtered::<&Text, With<Feedback>>();
+            assert_eq!(labels.single(world).unwrap().as_str(), reason);
+            assert_confirmed(&app, &original);
+            key(&mut app, KeyCode::Enter);
+            let panel = app.world().resource::<Panel>();
+            assert!(panel.drag.is_none() && panel.pending.is_none());
+            assert_eq!(panel.feedback, Some(reason));
+            assert_confirmed(&app, &original);
+            assert!(transfer(&mut app, &mut server).is_none());
+        }
+
+        key(&mut app, KeyCode::Enter);
+        key(&mut app, KeyCode::ArrowDown);
+        key(&mut app, KeyCode::Enter);
         let Some(InventoryRequest::Operate(op)) = transfer(&mut app, &mut server) else {
             panic!("expected move");
         };
-        app.world_mut()
-            .resource_mut::<State>()
-            .apply(InventoryUpdate {
-                session: KEY,
-                body: UpdateBody::Result {
-                    id: op.id,
-                    result: OperationResult::Conflict,
+        let panel = app.world().resource::<Panel>();
+        assert!(panel.pending.is_some());
+        assert_confirmed(&app, &original);
+        assert_eq!(op.expected, [original.version; 2]);
+        let other_item = original.items.iter().find(|(id, _)| *id != item).unwrap().0;
+        // Advance authority while the view is stale. Move only the bandage,
+        // so the attempted water move is still geometrically legal.
+        let mut writer = OperationSession::new(KEY);
+        let change = authority.apply(
+            &mut writer,
+            common::catalog::item_inventory::InventoryOperation {
+                action: InventoryAction::Move {
+                    item: other_item,
+                    destination: GridLocation {
+                        compartment: OWN,
+                        placement: placement(3, 0),
+                    },
                 },
-            });
-        app.update();
+                ..op
+            },
+            |id| id == OWN,
+        );
+        assert_eq!(change.result, OperationResult::Committed);
+        let latest = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        assert_eq!(latest.version.revision, original.version.revision + 1);
+        let reply = authority.apply(&mut OperationSession::new(KEY), op, |id| id == OWN);
+        assert_eq!(reply.result, OperationResult::Conflict);
+        assert!(reply.commit.is_none());
+        assert_eq!(authority.snapshot(OWN, |id| id == OWN).unwrap(), latest);
+        let deliver = |app: &mut App, server: &mut RenetServer, body| {
+            server.send_message(
+                7,
+                CHANNEL,
+                InventoryUpdate { session: KEY, body }.encode().unwrap(),
+            );
+            for packet in server.get_packets_to_send(7).unwrap() {
+                app.world_mut()
+                    .resource_mut::<RenetClient>()
+                    .process_packet(packet);
+            }
+            app.update();
+        };
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        deliver(
+            &mut app,
+            &mut server,
+            UpdateBody::Result {
+                id: op.id,
+                result: reply.result,
+            },
+        );
         let panel = app.world().resource::<Panel>();
         assert!(panel.pending.is_none());
         assert_eq!(panel.feedback, Some("Move rejected: inventory changed"));
@@ -1316,9 +1388,28 @@ mod tests {
             app.world_mut().resource_mut::<Panel>().take_cue(),
             Some(InventoryCue::Rejected)
         );
-        app.update();
-        assert_eq!(app.world_mut().resource_mut::<Panel>().take_cue(), None);
         assert!(app.world().resource::<State>().owned_grid(1, 7).is_none());
+        let Some(InventoryRequest::Resync {
+            session,
+            compartment,
+        }) = transfer(&mut app, &mut server)
+        else {
+            panic!("expected private grid resync");
+        };
+        assert_eq!((session, compartment), (KEY, OWN));
+        assert!(transfer(&mut app, &mut server).is_none());
+        let water = latest.items.iter().find(|(id, _)| *id == item).unwrap();
+        assert_eq!(
+            original.items.iter().find(|(id, _)| *id == item),
+            Some(water)
+        );
+        deliver(
+            &mut app,
+            &mut server,
+            UpdateBody::Snapshot(authority.snapshot(compartment, |id| id == OWN).unwrap()),
+        );
+        assert_confirmed(&app, &latest);
+        assert_eq!(app.world_mut().resource_mut::<Panel>().take_cue(), None);
         assert!(transfer(&mut app, &mut server).is_none());
     }
 
