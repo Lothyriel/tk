@@ -31,6 +31,7 @@ POV_CAPTURES = {
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
     "armed-stride": ("rest", "walk", "run", "turn", "moving-ads", "return"),
     "strafe-reversal": (),
+    "west-step": (),
     "prone": ("rest", "prone", "refused", "clear", "return"),
     "stumble": ("rest", "stumble", "contact", "return"),
     "action-fault": ("rest", "fault", "recovering", "interrupted", "persisted", "return"),
@@ -42,10 +43,12 @@ DUAL_POV = {
     "stop-lean": ("run", "left", "right", "return"),
     "armed-stride": ("turn", "moving-ads", "return"),
     "strafe-reversal": (),
+    "west-step": (),
     "prone": ("prone", "refused", "return"),
     "stumble": ("stumble", "contact", "return"),
     "action-fault": POV_CAPTURES["action-fault"],
 }
+TRACE_ONLY_POV = {"strafe-reversal", "west-step"}
 
 
 def _gait_displacement(first, last, prefix):
@@ -433,16 +436,16 @@ def main():
         parser.error("--inventory-grid requires --voxel-loot --no-capture with one client and no video")
     if args.voxel_loot and args.pov:
         parser.error("--voxel-loot requires the full raid route")
-    if args.no_capture and (args.video or (args.pov and args.pov != "strafe-reversal") or args.weapon_debug):
+    if args.no_capture and (args.video or (args.pov and args.pov not in TRACE_ONLY_POV) or args.weapon_debug):
         parser.error("--no-capture is for the plain raid or animation review, not visual evidence modes")
     if args.audio and not (args.clients == 2 and (args.no_capture or args.pov == "action-fault")):
         parser.error("--audio requires --clients 2 and either --no-capture or --pov action-fault")
     if (args.pov_hz or args.pov_drop_every) and args.pov not in {"stop-lean", "armed-stride", "strafe-reversal"}:
         parser.error("POV cadence/loss options require stop-lean, armed-stride or strafe-reversal")
-    if args.pov_peer_lossless and (args.pov not in {"armed-stride", "strafe-reversal"} or args.clients != 2):
-        parser.error("--pov-peer-lossless requires dual armed-stride or strafe-reversal")
-    if args.pov == "strafe-reversal" and not (args.clients == 2 and args.no_capture and not args.audio):
-        parser.error("strafe-reversal requires --clients 2 --no-capture without audio")
+    if args.pov_peer_lossless and (args.pov not in TRACE_ONLY_POV | {"armed-stride"} or args.clients != 2):
+        parser.error("--pov-peer-lossless requires dual armed-stride, strafe-reversal or west-step")
+    if args.pov in TRACE_ONLY_POV and not (args.clients == 2 and args.no_capture and not args.audio):
+        parser.error(f"{args.pov} requires --clients 2 --no-capture without audio")
     if args.pov and (args.animation_review or args.configure_weapons
                      or (args.video and (args.pov != "stop-lean" or args.clients != 1 or args.pov_hz))
                      or (args.clients == 2 and args.pov not in DUAL_POV)):
@@ -782,6 +785,17 @@ def main():
                     if role == "LEADER":
                         expected.insert(0, ("rest", "Standing"))
                     assert cues == expected, f"Unexpected stumble checkpoints on {role}: {cues}"
+            if args.pov == "west-step":
+                keys = ("actor", "foot", "floor", "confirmed", "presented",
+                        "floor_ms", "confirmed_ms", "presented_ms")
+                samples = re.findall(r"WEST STEP CONTACT " + " ".join(
+                    rf"{key}=(\d+)" for key in keys), peer_text)
+                assert len(samples) == 1, f"Same-foot step contact not observed exactly once: {peer}"
+                contact = dict(zip(keys, map(int, samples[0]), strict=True))
+                assert contact["foot"] in (0, 1)
+                assert contact["floor"] < contact["confirmed"] <= contact["presented"]
+                assert contact["floor_ms"] < contact["confirmed_ms"] <= contact["presented_ms"]
+                settings["west_step_contact"] = contact
             if args.pov == "action-fault":
                 for remote, kind, text in (("false", "local", client_text), ("true", "spatial", peer_text)):
                     cues = re.findall(r"POV FAULT CUE remote=(true|false) scheduled=(true|false)", text)

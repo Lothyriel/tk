@@ -30,7 +30,7 @@ pub const POV_STUMBLE_BLOCK: MapBlock = MapBlock {
 };
 
 pub fn pov_blocks() -> impl Iterator<Item = MapBlock> {
-    pov_fixture()
+    (pov_fixture() && std::env::var("TK_PLAYTEST_POV").as_deref() != Ok("west-step"))
         .then_some(POV_STEP)
         .into_iter()
         .chain(pov_side_cover())
@@ -68,6 +68,7 @@ pub fn pov_fixture() -> bool {
             | "side-cover"
             | "handling-route"
             | "armed-stride"
+            | "west-step"
             | "prone"
             | "stumble"
             | "action-fault")

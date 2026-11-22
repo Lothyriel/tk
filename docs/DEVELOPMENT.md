@@ -320,6 +320,21 @@ de frame time nem valida naturalidade em movimento.
 
 `docs/GAME_STATE.md` é o guia do jogador: só muda quando execução, controles, gameplay ou limitações relevantes mudam.
 
+### Apoio no degrau oeste em UDP (TAR-97)
+
+```sh
+python scripts/playtest.py --pov west-step --clients 2 --no-capture \
+  --viewport 900x700 --output "$OUT"
+```
+
+Use uma saída nova. Por padrão o observador descarta cada terceiro snapshot;
+use `--pov-peer-lossless` como controle sem descarte. O líder caminha até o
+degrau publicado, numa raid sem bots. Em `run-settings.json`, `west_step_contact`
+registra os snapshots e tempos do mesmo pé apoiado no piso, confirmado no
+topo e apresentado no topo enquanto a confirmação ainda vale. A rota falha
+sem os três eventos. Isso verifica contato em rede, não a naturalidade da
+passada em velocidade normal.
+
 ### Inversão lateral em pé — contrato de telemetria (TAR-97)
 
 Execute em UDP local com dois clientes nativos, sem gravar mídia:

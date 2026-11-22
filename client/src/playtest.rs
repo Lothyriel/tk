@@ -14,8 +14,10 @@ mod lobby;
 mod mechanics;
 mod physical;
 mod pov;
+mod step_observer;
 mod video;
 mod voxel_loot;
+mod west_step;
 
 pub struct Plugin;
 
@@ -87,6 +89,11 @@ impl bevy::prelude::Plugin for Plugin {
         );
         if stride_bench && std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1") {
             app.add_systems(PostUpdate, pov::trace_observer);
+        }
+        if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("west-step")
+            && std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1")
+        {
+            app.add_systems(PostUpdate, west_step::observe);
         }
         if stride_bench && let Ok(value) = std::env::var("TK_PLAYTEST_POV_HZ") {
             let hz = value.parse::<u32>().expect("POV cadence in Hz");
@@ -213,6 +220,7 @@ struct Driver {
     pov_fault: fault::Route,
     pov_stride: pov::ArmedStride,
     pov_reversal: pov::StrafeReversal,
+    west_step: west_step::Route,
     pov_turn: f32,
     pov_stop_lean_roll: f32,
     pov_lean_since: f64,
@@ -537,6 +545,15 @@ fn drive(
         }
         Step::Pov => {
             let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");
+            if preset == "west-step" {
+                let elapsed = now - driver.since;
+                assert!(elapsed < 25.0, "west step contact not observed");
+                if !peer && driver.west_step.update(elapsed, local, &mut input) {
+                    info!("POV PASS {preset} t={now:.3}");
+                    exit.write(AppExit::Success);
+                }
+                return;
+            }
             if preset == "strafe-reversal" {
                 let elapsed = now - driver.since;
                 assert!(elapsed < 12.0, "strafe reversal did not complete");
