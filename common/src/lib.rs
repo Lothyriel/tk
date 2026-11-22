@@ -15,7 +15,7 @@ pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 23;
+pub const PROTOCOL_ID: u64 = 24;
 pub const SNAPSHOT_INTERVAL: f32 = 1.0 / 60.0;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
@@ -71,6 +71,7 @@ pub struct ClientData {
     // configuration reference must fit the existing physical snapshot budget.
     pub id: ClientId,
     pub weapon_instance: WeaponInstanceId,
+    pub mechanics: catalog::MechanicalSnapshot,
     pub pos: [f32; 3],
     pub rot: CameraInput,
     pub health: f32,
@@ -78,17 +79,19 @@ pub struct ClientData {
     pub configuration: u32,
     pub ammo_in_mag: u32,
     pub reserve_ammo: u32,
-    pub weapon: WeaponKind,
-    pub weapon_slot: EquipmentSlot,
-    pub crouched: bool,
-    pub alive: bool,
-    pub mechanics: catalog::MechanicalSnapshot,
-    pub recoil: recoil::PackedRecoil,
     pub body: combat::BodyHealth,
     pub armor: combat::ArmorState,
     pub participant: raid::Participant,
     pub pose: humanoid::PoseState,
+    pub recoil: recoil::PackedRecoil,
+    pub weapon: WeaponKind,
+    pub weapon_slot: EquipmentSlot,
+    pub crouched: bool,
+    pub alive: bool,
     pub bot: bool,
+    /// Changes even if all snapshots between death and respawn were lost.
+    /// A wrap takes at least 768 seconds, beyond the stale session timeout.
+    pub life: u8,
 }
 
 impl ClientData {
@@ -104,6 +107,9 @@ impl ClientData {
 #[derive(Debug, Default, Archive, Serialize, Deserialize, Component)]
 pub struct ClientInput {
     pub lobby_sequence: u32,
+    pub mode: raid::MatchMode,
+    /// Explicit Active → Lobby command, distinct from an unready intent.
+    pub arena_leave: bool,
     pub loadout: combat::Loadout,
     pub interact: bool,
     /// Ground focus displayed when the interaction key was pressed.

@@ -212,11 +212,9 @@ fn recv_players_pos(
     for player in snapshot.players.iter() {
         if player.id == player_id.0 {
             let reset = new_raid
-                || session.local(player.id).is_some_and(|previous| {
-                    previous.pose.mode != player.pose.mode
-                        || previous.alive != player.alive
-                        || previous.participant.status != player.participant.status
-                });
+                || session
+                    .local(player.id)
+                    .is_some_and(|previous| discontinuous(previous, player));
             session.local_motion.record(
                 snapshot.simulation_time,
                 motion::LocalMotionPose {
@@ -259,7 +257,7 @@ fn recv_players_pos(
                         snap: new_raid
                             || session
                                 .local(player.id)
-                                .is_some_and(|previous| previous.pose.mode != player.pose.mode),
+                                .is_some_and(|previous| discontinuous(previous, player)),
                     });
             }
             commands.entity(*player_entity).insert((PlayerVisualState {
@@ -301,6 +299,13 @@ fn recv_players_pos(
     session.physics_pieces = snapshot.physics_pieces;
     session.simulation_time = snapshot.simulation_time;
     present_shots(&mut session, time.elapsed_secs_f64(), fresh);
+}
+
+fn discontinuous(previous: &ClientData, next: &ClientData) -> bool {
+    previous.life != next.life
+        || previous.pose.mode != next.pose.mode
+        || previous.alive != next.alive
+        || previous.participant.status != next.participant.status
 }
 
 fn present_shots(

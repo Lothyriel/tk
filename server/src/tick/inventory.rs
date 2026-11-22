@@ -17,7 +17,7 @@ use common::{
     combat::{Arsenal, BodyHealth},
     humanoid::{PhysicalMode, PoseState, aim_lean_offset},
     raid::{
-        Participant, RaidPhase, RaidState, RaidStatus, in_extraction_zone,
+        Participant, RaidState, RaidStatus, in_extraction_zone,
         item_target::{GroundTarget, PICKUP_REACH_M, first_ground_target},
     },
     replication::inventory::{CHANNEL, GroundItem, InventoryRequest, InventoryUpdate, UpdateBody},
@@ -157,7 +157,8 @@ pub(super) fn receive(
 ) {
     let state = &mut world.inventory;
     #[cfg(test)]
-    if let Some(mut fixture) = fixture
+    if raid.mode == common::raid::MatchMode::Raid
+        && let Some(mut fixture) = fixture
         && fixture.0 == raid.raid_id
         && let Some(inventory) = fixture.1.take()
     {
@@ -358,7 +359,7 @@ impl TargetSight<'_, '_> {
 
 impl Endpoint {
     pub(super) fn carried(&self, raid: &RaidState, client: u64) -> u32 {
-        if raid.phase != RaidPhase::Active || self.raid != Some(raid.raid_id) {
+        if !raid.loot_active() || self.raid != Some(raid.raid_id) {
             return 0;
         }
         let Some(authority) = &self.authority else {
@@ -373,10 +374,10 @@ impl Endpoint {
     }
 
     fn sync_world(&mut self, raid: &RaidState) {
-        if self.raid != Some(raid.raid_id) || raid.phase != RaidPhase::Active {
+        if self.raid != Some(raid.raid_id) || !raid.loot_active() {
             self.world_items.clear();
         }
-        if raid.phase == RaidPhase::Active && self.raid != Some(raid.raid_id) {
+        if raid.loot_active() && self.raid != Some(raid.raid_id) {
             let inventory = seed_world(&mut self.world_items);
             self.loot_ids = self.world_items.iter().map(|item| item.id).collect();
             self.raid = Some(raid.raid_id);
@@ -394,7 +395,7 @@ fn process(
     sight: &TargetSight,
     state: &mut Endpoint,
 ) {
-    let settled = raid.phase == RaidPhase::Active && sight.settle_drops(&mut state.world_items);
+    let settled = raid.loot_active() && sight.settle_drops(&mut state.world_items);
     if state.raid != Some(raid.raid_id) {
         state.loot_ids.clear();
         state.raid = Some(raid.raid_id);
@@ -502,7 +503,7 @@ fn process(
             .ok()
             .and_then(|(participant, grant)| {
                 grant.filter(|grant| {
-                    raid.phase == RaidPhase::Active
+                    raid.loot_active()
                         && participant.status == RaidStatus::Active
                         && grant.raid_id == raid.raid_id
                         && ((1_u64 << 63)..WORLD_SLOT_START).contains(&grant.id.0)
@@ -540,7 +541,7 @@ fn process(
         let already_held = std::mem::replace(&mut peer.pickup_held, request.is_some());
         if let Some(((epoch, item), false)) = request
             && !already_held
-            && raid.phase == RaidPhase::Active
+            && raid.loot_active()
             && epoch == raid.raid_id
             && peer.focus == Some(item)
             && sight.focus(peer.entity, &state.world_items) == Some(item)
@@ -576,7 +577,7 @@ fn process(
                     session,
                     item,
                     revision,
-                }) if session == key && raid.phase == RaidPhase::Active => {
+                }) if session == key && raid.loot_active() => {
                     let owner = CompartmentId(client);
                     if authority.revision(owner) != Some(revision)
                         || !authority
@@ -628,7 +629,7 @@ fn process(
                     send_snapshot(authority, server, client, key, compartment, can_access);
                 }
                 Ok(InventoryRequest::Operate(request)) if request.session == peer.key => {
-                    let active = raid.phase == RaidPhase::Active
+                    let active = raid.loot_active()
                         && participants
                             .get(peer.entity)
                             .is_ok_and(|(p, _)| p.status == RaidStatus::Active);
@@ -701,6 +702,7 @@ mod tests {
         item_grid::{Placement, Rotation},
         item_inventory::{InventoryAction, InventoryOperation, OperationResult},
     };
+    use common::raid::RaidPhase;
 
     #[test]
     fn ground_pickup_removes_only_after_commit_and_only_once() {

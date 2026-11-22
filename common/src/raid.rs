@@ -13,6 +13,7 @@ pub const COUNTDOWN_SECONDS: f32 = 3.0;
 pub const RAID_SECONDS: f32 = 300.0;
 pub const EXTRACTION_SECONDS: f32 = 5.0;
 pub const EXTRACTION_RADIUS: f32 = 2.5;
+pub const ARENA_RESPAWN_SECONDS: f32 = 3.0;
 
 pub fn in_extraction_zone(position: Vec3) -> bool {
     let offset = position - Vec3::from(EXTRACTION_CENTER);
@@ -29,6 +30,13 @@ pub enum RaidPhase {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+pub enum MatchMode {
+    #[default]
+    Raid,
+    ArenaSolo,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub enum RaidStatus {
     #[default]
     Waiting,
@@ -41,6 +49,8 @@ pub enum RaidStatus {
 #[derive(Debug, Clone, Resource, Archive, Serialize, Deserialize)]
 pub struct RaidState {
     pub phase: RaidPhase,
+    pub mode: MatchMode,
+    /// Countdown, raid timer, or local respawn delay in active solo Arena.
     pub seconds_left: f32,
     pub raid_id: u32,
     pub loot_available: [bool; 3],
@@ -50,6 +60,7 @@ impl Default for RaidState {
     fn default() -> Self {
         Self {
             phase: RaidPhase::Lobby,
+            mode: MatchMode::Raid,
             seconds_left: 0.0,
             raid_id: 0,
             loot_available: [true; 3],
@@ -58,12 +69,16 @@ impl Default for RaidState {
 }
 
 impl RaidState {
+    pub fn loot_active(&self) -> bool {
+        self.mode == MatchMode::Raid && self.phase == RaidPhase::Active
+    }
+
     /// Returns true only on the tick that starts a new raid.
     pub fn advance_lobby(&mut self, ready: usize, total: usize, delta: f32) -> bool {
         if !matches!(self.phase, RaidPhase::Lobby | RaidPhase::Countdown) {
             return false;
         }
-        if total == 0 || ready != total {
+        if total == 0 || ready != total || (self.mode == MatchMode::ArenaSolo && total != 1) {
             self.phase = RaidPhase::Lobby;
             self.seconds_left = 0.0;
         } else if self.phase == RaidPhase::Lobby {
@@ -73,9 +88,13 @@ impl RaidState {
             self.seconds_left = (self.seconds_left - delta).max(0.0);
             if self.seconds_left == 0.0 {
                 self.phase = RaidPhase::Active;
-                self.seconds_left = RAID_SECONDS;
+                self.seconds_left = if self.mode == MatchMode::Raid {
+                    RAID_SECONDS
+                } else {
+                    0.0
+                };
                 self.raid_id = self.raid_id.wrapping_add(1);
-                self.loot_available = [true; 3];
+                self.loot_available = [self.mode == MatchMode::Raid; 3];
                 return true;
             }
         }
@@ -135,7 +154,7 @@ impl Participant {
     }
 
     pub fn try_loot(&mut self, raid: &mut RaidState, position: Vec3, interact: bool) -> bool {
-        if raid.phase != RaidPhase::Active || self.status != RaidStatus::Active || !interact {
+        if !raid.loot_active() || self.status != RaidStatus::Active || !interact {
             return false;
         }
         for (i, loot) in LOOT_POSITIONS.iter().enumerate() {
@@ -167,7 +186,7 @@ impl Participant {
         voxel_units: u32,
     ) -> bool {
         let carried = self.carried.saturating_add(voxel_units);
-        let eligible = raid.phase == RaidPhase::Active
+        let eligible = raid.loot_active()
             && self.status == RaidStatus::Active
             && carried > 0
             && interact

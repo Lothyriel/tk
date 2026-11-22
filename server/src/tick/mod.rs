@@ -5,6 +5,7 @@ use bevy_rapier3d::prelude::*;
 use bevy_renet2::prelude::{DefaultChannel, RenetServer, ServerEvent};
 use common::{combat::*, raid::*, *};
 
+mod arena;
 mod bots;
 mod destruction;
 mod inventory;
@@ -63,6 +64,7 @@ impl bevy::prelude::Plugin for Plugin {
                     ragdoll::capture,
                     projectiles_tick,
                     destruction::release,
+                    arena::tick,
                     physical::spawn_dead,
                     objectives_tick,
                     sync_ground_state,
@@ -216,6 +218,7 @@ fn spawn_world_colliders(mut commands: Commands) {
 fn character_bundle(id: u64, position: Vec3) -> impl Bundle {
     (
         Client { id },
+        arena::Life::default(),
         ClientInput::default(),
         BodyHealth::default(),
         LastInput::default(),
@@ -334,13 +337,16 @@ fn recv_connectivity(
     mut server: ResMut<RenetServer>,
     time: Res<Time>,
     mut replication: ResMut<replication::Replication>,
-    fixture: Res<crate::kit_fixture::KitFixture>,
+    match_settings: (Res<crate::kit_fixture::KitFixture>, Res<RaidState>),
 ) {
+    let (fixture, raid) = match_settings;
     for event in events.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 replication.forget(*client_id);
-                if *client_id >= (1_u64 << 63) {
+                if *client_id >= (1_u64 << 63)
+                    || raid.mode == MatchMode::ArenaSolo && raid.phase != RaidPhase::Lobby
+                {
                     server.disconnect(*client_id);
                     continue;
                 }
@@ -402,6 +408,7 @@ fn send_world_snapshot(
             &Participant,
             Has<Bot>,
             &common::humanoid::PoseState,
+            &arena::Life,
         )>,
         Query<(&Projectile, &Transform)>,
         Query<(&physical::PhysicsPiece, &Transform)>,
@@ -424,7 +431,7 @@ fn send_world_snapshot(
     for attempt in 0..2 {
         let result = players
             .iter()
-            .try_for_each(|(_, client, _, _, _, arsenal, _, _, _)| {
+            .try_for_each(|(_, client, _, _, _, arsenal, _, _, _, _)| {
                 replication.register(client.id, arsenal)
             });
         match result {
@@ -447,38 +454,41 @@ fn send_world_snapshot(
     let players = players
         .iter()
         .map(
-            |(t, client, movement, body, armor, arsenal, participant, bot, pose)| ClientData {
-                id: client.id,
-                pos: t.translation.into(),
-                rot: t.rotation.into(),
-                crouched: movement.crouched,
-                alive: body.alive()
-                    && participant.status == RaidStatus::Active
-                    && raid.phase == RaidPhase::Active,
-                health: body.total(),
-                weapon: arsenal.current().spec().class,
-                weapon_id: arsenal.current().spec().definition,
-                configuration: replication.handle(client.id, arsenal),
-                weapon_instance: arsenal.current().instance().id,
-                weapon_slot: arsenal.active,
-                ammo_in_mag: arsenal.current().rounds(),
-                reserve_ammo: arsenal.current().reserve(),
-                mechanics: arsenal.current().mechanics().snapshot(),
-                recoil: common::recoil::PackedRecoil::pack(arsenal.recoil),
-                body: body.clone(),
-                armor: armor.clone(),
-                participant: Participant {
-                    carried: if participant.status == RaidStatus::Active && !bot {
-                        participant
-                            .carried
-                            .saturating_add(state.inventory.carried(&raid, client.id))
-                    } else {
-                        participant.carried
+            |(t, client, movement, body, armor, arsenal, participant, bot, pose, life)| {
+                ClientData {
+                    id: client.id,
+                    life: life.generation,
+                    pos: t.translation.into(),
+                    rot: t.rotation.into(),
+                    crouched: movement.crouched,
+                    alive: body.alive()
+                        && participant.status == RaidStatus::Active
+                        && raid.phase == RaidPhase::Active,
+                    health: body.total(),
+                    weapon: arsenal.current().spec().class,
+                    weapon_id: arsenal.current().spec().definition,
+                    configuration: replication.handle(client.id, arsenal),
+                    weapon_instance: arsenal.current().instance().id,
+                    weapon_slot: arsenal.active,
+                    ammo_in_mag: arsenal.current().rounds(),
+                    reserve_ammo: arsenal.current().reserve(),
+                    mechanics: arsenal.current().mechanics().snapshot(),
+                    recoil: common::recoil::PackedRecoil::pack(arsenal.recoil),
+                    body: body.clone(),
+                    armor: armor.clone(),
+                    participant: Participant {
+                        carried: if participant.status == RaidStatus::Active && !bot {
+                            participant
+                                .carried
+                                .saturating_add(state.inventory.carried(&raid, client.id))
+                        } else {
+                            participant.carried
+                        },
+                        ..participant.clone()
                     },
-                    ..participant.clone()
-                },
-                bot,
-                pose: pose.clone(),
+                    bot,
+                    pose: pose.clone(),
+                }
             },
         )
         .collect();

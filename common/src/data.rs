@@ -153,6 +153,7 @@ mod tests {
             id: 7,
             configuration: 1,
             weapon_instance: WeaponInstanceId(73),
+            life: 4,
             ..default()
         };
         player.body.anatomy.separate(Segment::LeftForearm);
@@ -189,7 +190,11 @@ mod tests {
             configuration_epoch: 1,
             destroyed_cells: crate::map::destroyed_mask(&[0, 17, 175]),
             sequence: 200,
-            raid: default(),
+            raid: raid::RaidState {
+                mode: raid::MatchMode::ArenaSolo,
+                loot_available: [true, false, true],
+                ..default()
+            },
             players: vec![player.clone()],
             projectiles: vec![],
             impact_marks: vec![ImpactMarkData {
@@ -206,6 +211,9 @@ mod tests {
         assert!(decoded.catalog_valid());
         assert_eq!(decoded.fired_projectiles[0].weapon, WeaponId::MP5);
         assert_eq!(decoded.players[0].weapon_instance, WeaponInstanceId(73));
+        assert_eq!(decoded.players[0].life, 4);
+        assert_eq!(decoded.raid.mode, raid::MatchMode::ArenaSolo);
+        assert_eq!(decoded.raid.loot_available, [true, false, true]);
         decoded.players[0].weapon_id = WeaponId(9999);
         assert!(!decoded.catalog_valid());
         decoded.players[0].weapon_id = WeaponId::M1911;
