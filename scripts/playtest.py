@@ -19,8 +19,9 @@ import sys
 import time
 
 if __package__:
-    from . import inventory_frame_windows, strafe_reversal
+    from . import crouched_lean, inventory_frame_windows, strafe_reversal
 else:
+    import crouched_lean
     import inventory_frame_windows
     import strafe_reversal
 
@@ -436,7 +437,10 @@ def main():
         parser.error("--inventory-grid requires --voxel-loot --no-capture with one client and no video")
     if args.voxel_loot and args.pov:
         parser.error("--voxel-loot requires the full raid route")
-    if args.no_capture and (args.video or (args.pov and args.pov not in TRACE_ONLY_POV) or args.weapon_debug):
+    crouched_lean_trace = args.pov == "stop-lean" and args.no_capture and args.clients == 2
+    if args.no_capture and (args.video or (
+        args.pov and args.pov not in TRACE_ONLY_POV and not crouched_lean_trace
+    ) or args.weapon_debug):
         parser.error("--no-capture is for the plain raid or animation review, not visual evidence modes")
     if args.audio and not (args.clients == 2 and (args.no_capture or args.pov == "action-fault")):
         parser.error("--audio requires --clients 2 and either --no-capture or --pov action-fault")
@@ -804,6 +808,8 @@ def main():
                     assert sinks == ([kind] if args.audio else []), f"Unexpected fault playback sinks: {sinks}"
             for name in DUAL_POV[args.pov]:
                 assert f"POV OBSERVER {name} " in peer_text, f"Missing observer cue {name}: {peer}"
+                if crouched_lean_trace:
+                    continue
                 data = (peer / f"pov-{name}.png").read_bytes()
                 assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
                 if args.viewport:
@@ -816,6 +822,8 @@ def main():
         names = tuple(f"pov-{name}" for name in POV_CAPTURES[args.pov])
         for name in names:
             assert f"POV EVIDENCE {name} " in client_text
+            if crouched_lean_trace:
+                continue
             data = (output / f"{name}.png").read_bytes()
             assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
             width, height = struct.unpack(">II", data[16:24])
@@ -830,17 +838,23 @@ def main():
         if args.pov == "strafe-reversal":
             settings["observer_reversal"] = strafe_reversal.analyze(
                 strafe_reversal.read_trace(peer / "strafe-reversal.csv"))
+        if crouched_lean_trace:
+            settings["observer_crouched_lean"] = crouched_lean.analyze(
+                crouched_lean.read_trace(peer / "crouched-lean.csv"))
         (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
         if args.video:
             subprocess.run([sys.executable, str(root / "scripts/encode_playtest_video.py"), str(output)], check=True)
         if args.pov == "strafe-reversal":
             measurement = settings["observer_reversal"]
             result = f"STRAFE REVERSAL: {measurement['coverage']}; route complete, see run-settings.json\n"
+        elif crouched_lean_trace:
+            measurement = settings["observer_crouched_lean"]
+            result = f"CROUCHED LEAN: {measurement['coverage']}; route complete, see run-settings.json\n"
         else:
             result = f"PASS: native POV {args.pov}, real UDP, evidence at {proof[1]}s\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
-        if args.pov == "strafe-reversal" and measurement["coverage"] != "measured":
+        if (args.pov == "strafe-reversal" or crouched_lean_trace) and measurement["coverage"] != "measured":
             return 1
         return
     assert "PLAYTEST PASS" in client_text, f"Missing completion proof: {output / 'client.log'}"

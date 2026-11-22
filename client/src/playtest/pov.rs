@@ -60,13 +60,14 @@ impl StrafeReversal {
 pub(super) struct ObserverFiles {
     gait: BufWriter<std::fs::File>,
     strafe: Option<BufWriter<std::fs::File>>,
+    lean: Option<BufWriter<std::fs::File>>,
 }
 
 impl ObserverFiles {
     fn open() -> Self {
         let root =
             std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").expect("playtest dir"));
-        let open = |name, suffix| {
+        let open = |name: &str, suffix: &str| {
             let mut out = BufWriter::new(std::fs::File::create(root.join(name)).unwrap());
             writeln!(out, "{GAIT_HEADER}{suffix}").unwrap();
             out
@@ -75,6 +76,14 @@ impl ObserverFiles {
             gait: open("gait-trace.csv", ""),
             strafe: (std::env::var("TK_PLAYTEST_STRAFE_TRACE").as_deref() == Ok("1"))
                 .then(|| open("strafe-reversal.csv", STRAFE_FIELDS)),
+            lean: (std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("stop-lean")
+                && std::env::var_os("TK_PLAYTEST_NO_CAPTURE").is_some())
+            .then(|| {
+                open(
+                    "crouched-lean.csv",
+                    &format!("{STRAFE_FIELDS},presented_roll"),
+                )
+            }),
         }
     }
 }
@@ -133,8 +142,15 @@ pub(super) fn trace_observer(
         .map(|foot| root.transform_point(foot.into()));
     let files = files.get_or_insert_with(ObserverFiles::open);
     let [vx, _, vz] = actor.pose.velocity;
-    for (out, strafe) in std::iter::once((&mut files.gait, false))
-        .chain(files.strafe.as_mut().map(|out| (out, true)))
+    for (out, flags, presented_roll) in std::iter::once((&mut files.gait, false, None))
+        .chain(files.strafe.as_mut().map(|out| (out, true, None)))
+        .chain(
+            files
+                .lean
+                .as_mut()
+                .zip(poses.presented_roll(actor.id))
+                .map(|(out, roll)| (out, true, Some(roll))),
+        )
     {
         write!(
             out,
@@ -159,8 +175,11 @@ pub(super) fn trace_observer(
         {
             write!(out, ",{value:.6}").unwrap();
         }
-        if strafe {
+        if flags {
             write_strafe_fields(out, actor, root.rotation).unwrap();
+        }
+        if let Some(roll) = presented_roll {
+            write!(out, ",{roll:.6}").unwrap();
         }
         writeln!(out).unwrap();
         if driver.pov_observed == 3 {

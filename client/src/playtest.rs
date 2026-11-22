@@ -648,6 +648,7 @@ fn drive(
             let stumble = preset == "stumble";
             let fault = preset == "action-fault";
             let stop_lean = preset == "stop-lean";
+            let lean_trace_only = stop_lean && std::env::var_os("TK_PLAYTEST_NO_CAPTURE").is_some();
             let observe = (fault || prone || stumble || armed || stop_lean)
                 && std::env::var("TK_PLAYTEST_CLIENTS").as_deref() == Ok("2");
             if peer && observe {
@@ -750,9 +751,10 @@ fn drive(
                     driver.pov_fault.finished()
                 } else {
                     driver.pov_observed == 3
-                }) && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
-                    .join("pov-return.png")
-                    .is_file()
+                }) && (lean_trace_only
+                    || std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
+                        .join("pov-return.png")
+                        .is_file())
                 {
                     if stop_lean {
                         assert_ne!(
@@ -913,9 +915,10 @@ fn drive(
                 || (driver.pov_stop_lean == pov::StopLean::Finish && preset != "handling-route")
                 || driver.pov_handling == pov::Handling::Finish)
                 && (!observe || now - driver.pov_lean_since > 0.5)
-                && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
-                    .join("pov-return.png")
-                    .is_file()
+                && (lean_trace_only
+                    || std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
+                        .join("pov-return.png")
+                        .is_file())
             {
                 info!("POV PASS {preset} t={now:.3}");
                 exit.write(AppExit::Success);

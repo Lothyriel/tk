@@ -349,6 +349,20 @@ topo e apresentado no topo enquanto a confirmação ainda vale. A rota falha
 sem os três eventos. Isso verifica contato em rede, não a naturalidade da
 passada em velocidade normal.
 
+### Inversão de lean agachado — telemetria (TAR-97)
+
+```sh
+python scripts/playtest.py --pov stop-lean --clients 2 --no-capture \
+  --viewport 900x700 --output "$OUT"
+```
+
+Use uma saída nova. O observador descarta cada terceiro snapshot. O sidecar
+`peer/crouched-lean.csv` registra postura confirmada, inclinação apresentada
+e contatos. `run-settings.json` separa reversão e retorno a neutro e informa
+a excursão dos pés/âncoras e o pico de rotação do tórax entre quadros.
+Sem cobertura contínua, a execução retorna erro mesmo se o percurso
+terminar. `measured` indica cobertura, não aceite visual ou de qualidade.
+
 ### Inversão lateral em pé — contrato de telemetria (TAR-97)
 
 Execute em UDP local com dois clientes nativos, sem gravar mídia:
