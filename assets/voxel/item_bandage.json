@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "id": "item_bandage",
+  "units": "metres",
+  "axes": "right_handed_y_up_negative_z_forward",
+  "provenance": "Original TK art, from the sterile gauze wrapper brief in items-v01.tsv.",
+  "materials": [
+    {"id":"paper","surface":"polymer","color":[0.86,0.85,0.79,1],"roughness":0.87,"metallic":0},
+    {"id":"crease","surface":"polymer","color":[0.63,0.66,0.63,1],"roughness":0.9,"metallic":0},
+    {"id":"seal","surface":"polymer","color":[0.19,0.38,0.34,1],"roughness":0.75,"metallic":0}
+  ],
+  "parts": [{
+    "id":"wrapper","parent":null,"movable":false,
+    "pivot":{"translation":[0,0,0],"rotation":[0,0,0,1]},
+    "boxes":[
+      {"min":[-0.038,0.004,-0.026],"max":[0.038,0.027,0.026],"material":"paper"},
+      {"min":[-0.037,0,-0.021],"max":[0.037,0.004,0.021],"material":"paper"},
+      {"min":[-0.036,0.027,-0.022],"max":[0.036,0.031,0.022],"material":"paper"},
+      {"min":[-0.05,0.009,-0.025],"max":[-0.038,0.016,0.025],"material":"crease"},
+      {"min":[0.038,0.009,-0.025],"max":[0.05,0.016,0.025],"material":"crease"},
+      {"min":[-0.013,0.031,-0.018],"max":[0.015,0.0316,0.018],"material":"seal"},
+      {"min":[-0.013,0.015,-0.0266],"max":[0.015,0.027,-0.026],"material":"seal"},
+      {"min":[0.023,0.031,-0.017],"max":[0.024,0.0315,0.017],"material":"crease"}
+    ]
+  }],
+  "sockets":[]
+}
