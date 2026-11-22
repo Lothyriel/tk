@@ -1073,6 +1073,209 @@ fn inventory_udp_contested_ground_pickup_with_snapshot_loss_and_disconnect() {
 
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
+    use super::super::super::inventory::UdpInventoryFixture;
+    use common::{
+        catalog::{
+            CompartmentId,
+            item_grid::{Footprint, Placement, PlacementError, Rotation},
+            item_inventory::{
+                Condition, GridLocation, Inventory, InventoryAction, InventoryError,
+                InventoryOperation, InventoryReplica, OperationResult, ReplicaUpdate,
+                TransactionError,
+            },
+        },
+        replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+    };
+
+    let mut harness = Harness::new();
+    let mut first = UdpPeer::new(7, harness.address, harness.now, false);
+    let mut second = UdpPeer::new(8, harness.address, harness.now, false);
+    harness.pump(&mut [&mut first, &mut second], 192);
+
+    let own = [CompartmentId(7), CompartmentId(8)];
+    let place = |x| Placement {
+        x,
+        y: 0,
+        rotation: Rotation::Upright,
+    };
+    let mut inventory = Inventory::default();
+    let [first_item, second_item] = own.map(|compartment| {
+        inventory
+            .register_compartment(compartment, Footprint::new(4, 4).unwrap(), None)
+            .unwrap();
+        inventory
+            .insert_seed(
+                "med.bandage",
+                Condition::Intact,
+                2,
+                GridLocation {
+                    compartment,
+                    placement: place(0),
+                },
+            )
+            .unwrap()
+    });
+    inventory
+        .insert_seed(
+            "med.bandage",
+            Condition::Intact,
+            1,
+            GridLocation {
+                compartment: own[1],
+                placement: place(1),
+            },
+        )
+        .unwrap();
+    harness
+        .app
+        .insert_resource(UdpInventoryFixture(1, Some(inventory)));
+    first.input.lobby_sequence = 1;
+    second.input.lobby_sequence = 1;
+    harness.pump(&mut [&mut first, &mut second], 600);
+    assert_eq!(
+        harness.app.world().resource::<RaidState>().phase,
+        RaidPhase::Active
+    );
+
+    let drain = |peer: &mut UdpPeer| {
+        std::iter::from_fn(|| peer.peer.network.receive_message(CHANNEL))
+            .map(|bytes| InventoryUpdate::decode(&bytes).unwrap())
+            .filter(|update| update.session.raid_epoch == 1)
+            .collect::<Vec<_>>()
+    };
+    let mut views = Vec::new();
+    for (index, peer) in [&mut first, &mut second].into_iter().enumerate() {
+        let compartment = own[index];
+        let [begin, initial]: [InventoryUpdate; 2] = drain(peer).try_into().unwrap();
+        let session = begin.session;
+        assert_eq!(begin.body, UpdateBody::Begin);
+        assert_eq!(initial.session, session);
+        let UpdateBody::Snapshot(snapshot) = initial.body else {
+            panic!("missing private snapshot");
+        };
+        assert_eq!(snapshot.version.id, compartment);
+        let item = [first_item, second_item][index];
+        assert!(
+            snapshot
+                .items
+                .iter()
+                .any(|(id, stack)| *id == item && stack.placement == place(0))
+        );
+        let expected_revision = snapshot.version;
+        let mut expected_items = snapshot.items.clone();
+        if index == 0 {
+            expected_items
+                .iter_mut()
+                .find(|(id, _)| *id == item)
+                .unwrap()
+                .1
+                .placement = place(1);
+        }
+        let mut replica = InventoryReplica::new(session);
+        assert_eq!(
+            replica.apply_snapshot(session, snapshot),
+            ReplicaUpdate::Applied
+        );
+        peer.peer.network.send_message(
+            CHANNEL,
+            InventoryRequest::Operate(InventoryOperation {
+                session,
+                id: 1,
+                expected: [expected_revision; 2],
+                action: InventoryAction::Move {
+                    item,
+                    destination: GridLocation {
+                        compartment,
+                        placement: place(1),
+                    },
+                },
+            })
+            .encode()
+            .unwrap(),
+        );
+        views.push((session, replica, expected_revision, expected_items));
+    }
+    assert_ne!(views[0].0, views[1].0);
+    let elapsed = |h: &Harness| h.app.world().resource::<Time<Fixed>>().elapsed();
+    let before = elapsed(&harness);
+    harness.step(&mut [&mut first, &mut second]);
+    let fixed = harness.app.world().resource::<Time<Fixed>>();
+    assert_eq!(fixed.elapsed() - before, fixed.timestep());
+
+    // The next step's client transport receive precedes its server tick.
+    // Therefore both replies read below came from the single preceding tick.
+    harness.step(&mut [&mut first, &mut second]);
+    for (index, (peer, (session, replica, revision, items))) in [&mut first, &mut second]
+        .into_iter()
+        .zip(&mut views)
+        .enumerate()
+    {
+        let mut updates = drain(peer).into_iter();
+        let committed = index == 0;
+        if committed {
+            let update = updates.next().expect("committed move must publish a delta");
+            assert_eq!(update.session, *session);
+            let UpdateBody::Delta(deltas) = update.body else {
+                panic!("expected delta")
+            };
+            assert_eq!(deltas.len(), 1);
+            assert_eq!(deltas[0].version.id, own[index]);
+            assert_eq!(
+                replica.apply_deltas(*session, deltas),
+                ReplicaUpdate::Applied
+            );
+        }
+        let result = if committed {
+            OperationResult::Committed
+        } else {
+            OperationResult::Rejected(TransactionError::Rule(InventoryError::Placement(
+                PlacementError::Occupied,
+            )))
+        };
+        let reply = updates
+            .next()
+            .expect("both moves must reply in the same tick");
+        assert_eq!(reply.session, *session);
+        assert_eq!(reply.body, UpdateBody::Result { id: 1, result });
+        assert!(updates.next().is_none());
+        let confirmed = replica.get(own[index]).unwrap();
+        assert_eq!(
+            confirmed.version.revision,
+            revision.revision + u64::from(committed)
+        );
+        assert_eq!(&confirmed.items, items);
+        assert!(replica.get(own[1 - index]).is_none());
+        peer.peer.network.send_message(
+            CHANNEL,
+            InventoryRequest::Resync {
+                session: *session,
+                compartment: own[index],
+            }
+            .encode()
+            .unwrap(),
+        );
+    }
+    harness.pump(&mut [&mut first, &mut second], 8);
+    for (index, (peer, (session, replica, _, _))) in [&mut first, &mut second]
+        .into_iter()
+        .zip(&views)
+        .enumerate()
+    {
+        let [update]: [InventoryUpdate; 1] = drain(peer).try_into().unwrap();
+        assert_eq!(update.session, *session);
+        let UpdateBody::Snapshot(snapshot) = update.body else {
+            panic!("expected confirmed snapshot")
+        };
+        assert_eq!(replica.get(own[index]), Some(&snapshot));
+    }
+    println!(
+        "TK INVENTORY UDP same fixed tick: private grid 7 committed (+1 revision), grid 8 rejected occupied (unchanged); both resync snapshots matched"
+    );
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn inventory_udp_contested_item_converges_under_loss() {
     use super::super::super::inventory::{OpenContainer, UdpInventoryFixture};
     use common::{
