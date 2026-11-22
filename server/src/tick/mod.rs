@@ -26,6 +26,65 @@ pub(super) fn configure_private_fixtures(app: &mut App) {
     app.world_mut()
         .resource_mut::<WorldState>()
         .action_fault_fixture = std::env::var("TK_FIXTURE_ACTION_FAULT").as_deref() == Ok("1");
+    if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("recovery-steps") {
+        app.add_systems(
+            FixedUpdate,
+            recovery_fixture
+                .after(simulation::advance_recoil)
+                .before(physical::physical_tick),
+        );
+    }
+}
+
+// The same synthetic balance impulse as the articulated get-up engine fixture.
+// No mode, recovery timing, pose or contacts are overridden.
+fn recovery_fixture(
+    raid: Res<RaidState>,
+    mut actors: Query<
+        (
+            &Client,
+            &Participant,
+            &Transform,
+            &mut humanoid::PoseState,
+            &arena::Life,
+        ),
+        Without<Bot>,
+    >,
+    mut ready_ticks: Local<u16>,
+    mut fired: Local<bool>,
+) {
+    if *fired || raid.phase != RaidPhase::Active {
+        return;
+    }
+    let mut ready = actors
+        .iter_mut()
+        .filter(|(_, participant, root, pose, _)| {
+            participant.status == RaidStatus::Active
+                && pose.mode == humanoid::PhysicalMode::Standing
+                && pose.grounded
+                && Vec3::from(pose.velocity).length() < 0.08
+                && root
+                    .translation
+                    .distance(Vec3::from(common::map::SPAWN_CENTER))
+                    < 1.1
+        })
+        .collect::<Vec<_>>();
+    if ready.len() != 2 {
+        *ready_ticks = 0;
+        return;
+    }
+    *ready_ticks += 1;
+    if *ready_ticks == 64 {
+        let (actor, _, _, mut pose, life) =
+            ready.drain(..).min_by_key(|(actor, ..)| actor.id).unwrap();
+        // Away from the adjacent spawn, along the walking lane.
+        pose.impulse = [0.0, 0.0, -3.0];
+        info!(
+            "RECOVERY FIXTURE raid={} actor={} life={}",
+            raid.raid_id, actor.id, life.generation
+        );
+        *fired = true;
+    }
 }
 
 pub struct Plugin;

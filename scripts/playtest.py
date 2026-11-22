@@ -27,6 +27,7 @@ else:
 
 
 POV_CAPTURES = {
+    "recovery-steps": (),
     "ads": ("rest", "ads", "return"),
     "inspect": ("rest", "inspect", "return"),
     "stop-lean": ("rest", "walk", "run", "stop", "crouch", "left", "right", "return"),
@@ -41,6 +42,7 @@ POV_CAPTURES = {
                        "neutral", "ads", "moving-ads", "hip", "inspect", "cancel", "return"),
 }
 DUAL_POV = {
+    "recovery-steps": (),
     "stop-lean": ("run", "left", "right", "return"),
     "armed-stride": ("turn", "moving-ads", "return"),
     "strafe-reversal": (),
@@ -49,7 +51,7 @@ DUAL_POV = {
     "stumble": ("stumble", "contact", "return"),
     "action-fault": POV_CAPTURES["action-fault"],
 }
-TRACE_ONLY_POV = {"strafe-reversal", "west-step"}
+TRACE_ONLY_POV = {"strafe-reversal", "west-step", "recovery-steps"}
 
 
 def _gait_displacement(first, last, prefix):
@@ -477,7 +479,7 @@ def main():
     if (args.pov_hz or args.pov_drop_every) and args.pov not in {"stop-lean", "armed-stride", "strafe-reversal"}:
         parser.error("POV cadence/loss options require stop-lean, armed-stride or strafe-reversal")
     if args.pov_peer_lossless and (args.pov not in TRACE_ONLY_POV | {"armed-stride"} or args.clients != 2):
-        parser.error("--pov-peer-lossless requires dual armed-stride, strafe-reversal or west-step")
+        parser.error("--pov-peer-lossless requires dual armed-stride or a trace-only POV")
     if args.pov in TRACE_ONLY_POV and not (args.clients == 2 and args.no_capture and not args.audio):
         parser.error(f"{args.pov} requires --clients 2 --no-capture without audio")
     if args.pov and (args.animation_review or args.configure_weapons
@@ -494,6 +496,8 @@ def main():
     root = Path(__file__).resolve().parents[1]
     output = (args.output or root / "target" / "playtest").resolve()
     output.mkdir(parents=True, exist_ok=True)
+    if args.pov == "recovery-steps" and any(output.iterdir()):
+        parser.error("recovery-steps requires a fresh output directory")
     if args.combat_hud_checkpoint and any(output.glob("combat-hud-*.png")):
         parser.error("--combat-hud-checkpoint needs fresh output for its captures")
     arena_captures = ("arena-eliminated", "arena-respawn", "arena-reentry")
@@ -688,6 +692,10 @@ def main():
                     client_env.update(TK_PLAYTEST_DIR=str(client_output), TK_PLAYTEST_ROLE=str(index))
                     if index == 1 and peer_snapshot_drop_every:
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = str(peer_snapshot_drop_every)
+                    elif index == 0 and args.pov == "recovery-steps" and peer_snapshot_drop_every:
+                        # The observer is selected by accepted actor ID, not
+                        # process index. Apply the same drop rule to both.
+                        client_env["TK_DROP_SNAPSHOT_EVERY"] = str(peer_snapshot_drop_every)
                     elif index == 0 and args.pov_drop_every:
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = str(args.pov_drop_every)
                     log = (client_output / "client.log").open("w", encoding="utf-8")
@@ -738,6 +746,37 @@ def main():
     combined = re.sub(r"\x1b\[[0-9;]*m", "", client_text + server_text)
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
+    if args.pov == "recovery-steps":
+        traces = list(output.rglob("recovery-steps.json"))
+        assert len(traces) == 1, f"Missing or ambiguous observer proof: {output}"
+        recovery = json.loads(traces[0].read_text())
+        assert 0 < recovery["fall"] < recovery["recovering"] < recovery["standing"]
+        assert recovery["distance_m"] > 0.5 and recovery["attached_ids"]
+        first, second = recovery["supports"]
+        assert {first["side"], second["side"]} == {0, 1}
+        assert recovery["standing"] < first["confirmed_start"] < second["confirmed_start"]
+        for support in (first, second):
+            assert support["confirmed_start"] <= support["presented_start"] <= support["presented_end"] < support["confirmed_end"]
+            assert support["pairs"] >= 2 and 0 < support["max_frame_seconds"] < 0.05
+        assert not list(output.rglob("*.png")), "Telemetry-only route produced media"
+        walker = output if traces[0].parent != output else output / "peer"
+        counts = {}
+        for directory, cue in ((walker, "POV PASS"), (traces[0].parent, "POV OBSERVER PASS")):
+            text = (directory / "client.log").read_text()
+            assert "panicked at" not in text and " ERROR " not in text
+            assert f"{cue} recovery-steps" in text
+            dropped = re.findall(r"SNAPSHOT LOSS dropped=(\d+) sequence=(\d+)", text)
+            assert bool(dropped) != args.pov_peer_lossless and all(int(seq) % 3 == 0 for _, seq in dropped)
+            counts[directory.relative_to(output).as_posix()] = int(dropped[-1][0]) if dropped else 0
+        fixture = re.findall(r"RECOVERY FIXTURE raid=(\d+) actor=(\d+) life=(\d+)", server_text)
+        assert fixture == [tuple(str(recovery[key]) for key in ("raid", "actor", "life"))]
+        settings["recovery_steps"] = recovery
+        settings["recovery_snapshot_drop_logged_counts"] = counts
+        (output / "run-settings.json").write_text(json.dumps(settings, indent=2))
+        result = "PASS: recovery-steps, two native UDP clients, first two alternating supports\n"
+        (output / "result.txt").write_text(result)
+        print(result, end="")
+        return
     if args.arena_pvp:
         for role, directory in enumerate((output, output / "peer")):
             text = (directory / "client.log").read_text(encoding="utf-8", errors="replace")

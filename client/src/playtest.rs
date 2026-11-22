@@ -14,6 +14,7 @@ mod lobby;
 mod mechanics;
 mod physical;
 mod pov;
+mod recovery_steps;
 mod step_observer;
 mod video;
 mod voxel_loot;
@@ -75,6 +76,9 @@ impl bevy::prelude::Plugin for Plugin {
                 asset_review::camera.after(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(PostUpdate, video::record);
+        if std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("recovery-steps") {
+            app.add_systems(PostUpdate, recovery_steps::observe);
+        }
         if combat_hud_checkpoint() {
             app.add_systems(
                 Update,
@@ -292,6 +296,7 @@ enum Step {
 
 #[derive(Default, Resource)]
 struct Driver {
+    recovery_walk: Option<f64>,
     step: Step,
     since: f64,
     extraction_capture: bool,
@@ -637,6 +642,30 @@ fn drive(
         }
         Step::Pov => {
             let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");
+            if preset == "recovery-steps" {
+                assert!(std::env::var_os("TK_PLAYTEST_NO_CAPTURE").is_some());
+                let target = session
+                    .players
+                    .iter()
+                    .filter(|p| !p.bot)
+                    .map(|p| p.id)
+                    .min();
+                if target == Some(id.0)
+                    && local.pose.mode == common::humanoid::PhysicalMode::Recovering
+                {
+                    driver.recovery_walk.get_or_insert(f64::INFINITY);
+                }
+                if let Some(start) = &mut driver.recovery_walk
+                    && local.pose.mode == common::humanoid::PhysicalMode::Standing
+                {
+                    if start.is_infinite() {
+                        *start = now;
+                    }
+                    input.camera = default();
+                    input.forward = now - *start < 1.6;
+                }
+                return;
+            }
             if preset == "west-step" {
                 let elapsed = now - driver.since;
                 assert!(elapsed < 25.0, "west step contact not observed");

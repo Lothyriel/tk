@@ -71,6 +71,7 @@ pub fn pov_fixture() -> bool {
             | "west-step"
             | "prone"
             | "stumble"
+            | "recovery-steps"
             | "action-fault")
     )
 }
