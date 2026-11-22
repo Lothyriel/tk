@@ -24,7 +24,7 @@ fn inventory_visuals_bottle_caches_blended_pet_and_opaque_trim() {
             other => panic!("unexpected bottle alpha mode {other:?}"),
         }
     }
-    assert_eq!((blended, opaque), (2, 2));
+    assert_eq!((blended, opaque), (2, 3));
     let count = materials.len();
     cache
         .load("item_water500", &mut meshes, &mut materials)

@@ -51,6 +51,29 @@ def metrics(asset):
 
 
 class VoxelBakeTests(unittest.TestCase):
+    def test_bottle_has_translucent_panels_with_visible_seams_on_all_sides(self):
+        bottle = bake.load(bake.SOURCES / "item_water500.json")
+        materials = {material["id"]: material for material in bottle["materials"]}
+        for material in ("pet", "ribs"):
+            self.assertEqual(materials[material]["alpha_mode"], "blend")
+            self.assertTrue(0 < materials[material]["color"][3] < 1)
+        self.assertEqual(materials["seam"]["color"][3], 1)
+        meshes = {mesh["material"]: mesh for mesh in bottle["parts"][0]["meshes"]}
+        # Both edges of every cardinal view contain a continuous opaque strip,
+        # while the central panel still draws as translucent PET.
+        for axis in (0, 2):
+            lateral = 2 - axis
+            for sign in (-1, 1):
+                normal = [0, 0, 0]
+                normal[axis] = sign
+                seam = [p for p, n in zip(meshes["seam"]["positions"], meshes["seam"]["normals"])
+                        if n == normal and abs(p[axis]) >= 0.029]
+                for side in (-1, 1):
+                    edge = [p for p in seam if side * p[lateral] > 0.018]
+                    self.assertGreater(max(p[1] for p in edge) - min(p[1] for p in edge), 0.15)
+                self.assertTrue(any(n == normal and abs(p[axis]) >= 0.029
+                                    for p, n in zip(meshes["pet"]["positions"], meshes["pet"]["normals"])))
+
     def test_translucency_requires_explicit_blend_and_survives_bake(self):
         asset = cube_source()
         material = asset["materials"][0]
