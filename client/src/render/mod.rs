@@ -535,10 +535,11 @@ fn spawn_lights(mut commands: Commands) {
 }
 
 fn change_fov(
-    (input, panel, menu): (
+    (input, panel, menu, preferences): (
         Res<ButtonInput<KeyCode>>,
         Option<Res<crate::input::inventory_panel::Panel>>,
         Option<Res<crate::menu::Menu>>,
+        Option<Res<crate::preferences::Preferences>>,
     ),
     time: Res<Time>,
     mut settings: ResMut<ViewSettings>,
@@ -558,6 +559,9 @@ fn change_fov(
             );
         };
 
+        if let Some(prefs) = preferences.filter(|prefs| prefs.is_changed()) {
+            settings.world_fov = f32::from(prefs.fov).to_radians();
+        }
         let world_zoom = !panel.is_some_and(|panel| panel.open)
             && !menu.is_some_and(|menu| menu.blocks_gameplay());
         if world_zoom && input.pressed(KeyCode::ArrowUp) {
@@ -1189,6 +1193,49 @@ mod view_tests {
             }
         }
     }
+    #[test]
+    fn preferences_set_world_fov_without_changing_viewmodel_lens() {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Time>()
+            .init_resource::<ViewSettings>()
+            .init_resource::<ClientSession>()
+            .init_resource::<feedback::Feedback>()
+            .insert_resource(crate::preferences::Preferences {
+                fov: 95,
+                ..default()
+            })
+            .insert_resource(PlayerId(7))
+            .add_systems(Update, change_fov);
+        let world = app
+            .world_mut()
+            .spawn((
+                WorldModelCamera,
+                Projection::from(PerspectiveProjection::default()),
+            ))
+            .id();
+        let viewmodel = app
+            .world_mut()
+            .spawn((
+                ViewModelCamera,
+                Projection::from(PerspectiveProjection::default()),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(2));
+        app.update();
+        let fov = |entity| {
+            let Some(Projection::Perspective(projection)) = app.world().get::<Projection>(entity)
+            else {
+                panic!("perspective expected")
+            };
+            projection.fov.to_degrees()
+        };
+        assert!((fov(world) - 95.0).abs() < 0.001);
+        assert!((fov(viewmodel) - 65.0).abs() < 0.001);
+    }
+
     #[test]
     fn fov_key_speed_is_time_based_instead_of_one_degree_per_render_frame() {
         let simulate = |hz: usize| {

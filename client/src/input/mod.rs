@@ -140,7 +140,10 @@ fn keyboard(
     (session, id, time): (Res<ClientSession>, Res<PlayerId>, Res<Time<Real>>),
     window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut input: ResMut<LocalInput>,
-    mut presses: Local<GameplayPress>,
+    (mut presses, preferences): (
+        Local<GameplayPress>,
+        Option<Res<crate::preferences::Preferences>>,
+    ),
     InputOverlays {
         prone_binding,
         inventory,
@@ -184,7 +187,8 @@ fn keyboard(
     if input.fire && buttons.just_pressed(MouseButton::Left) {
         input.fire_pressed_sequence = input.fire_pressed_sequence.wrapping_add(1);
     }
-    if active && keys.just_pressed(KeyCode::KeyR) {
+    let reload_key = preferences.map_or(KeyCode::KeyR, |prefs| prefs.reload.key());
+    if active && keys.just_pressed(reload_key) {
         input.reload_sequence = input.reload_sequence.wrapping_add(1);
     }
     if active && keys.just_pressed(KeyCode::KeyI) {
@@ -217,15 +221,18 @@ pub(crate) fn step_lean(roll: f32, left: bool, right: bool, dt: f32) -> f32 {
     roll + (target - roll).clamp(-max_change, max_change)
 }
 
+type MouseOverlays<'w> = (
+    Option<Res<'w, inventory_panel::Panel>>,
+    Option<Res<'w, crate::menu::Menu>>,
+    Option<Res<'w, crate::preferences::Preferences>>,
+);
+
 fn mouse(
     motion: Res<AccumulatedMouseMotion>,
     window: Single<(&Window, &CursorOptions), With<PrimaryWindow>>,
     (session, id, time): (Res<ClientSession>, Res<PlayerId>, Res<Time<Real>>),
     mut input: ResMut<LocalInput>,
-    (panel, menu): (
-        Option<Res<inventory_panel::Panel>>,
-        Option<Res<crate::menu::Menu>>,
-    ),
+    (panel, menu, preferences): MouseOverlays,
 ) {
     if panel.is_some_and(|panel| panel.open)
         || menu.is_some_and(|menu| menu.blocks_gameplay())
@@ -233,7 +240,8 @@ fn mouse(
     {
         return;
     }
-    let scale = if input.aim { 0.65 } else { 1.0 };
+    let scale =
+        preferences.map_or(1.0, |prefs| prefs.sensitivity()) * if input.aim { 0.65 } else { 1.0 };
     input.camera.yaw -= motion.delta.x * 0.003 * scale;
     input.camera.pitch = (input.camera.pitch - motion.delta.y * 0.002 * scale).clamp(-1.56, 1.56);
 }
@@ -242,6 +250,38 @@ fn mouse(
 mod tests {
     use super::*;
     use common::raid::*;
+
+    #[test]
+    fn preferences_apply_rebound_reload_and_mouse_multiplier() {
+        let mut app = input_app();
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Active;
+            session.players[0].participant.begin();
+        }
+        app.insert_resource(crate::preferences::Preferences {
+            sensitivity_percent: 200,
+            reload: crate::preferences::Reload::LeftBracket,
+            ..default()
+        })
+        .insert_resource(AccumulatedMouseMotion {
+            delta: Vec2::new(10.0, -5.0),
+        })
+        .add_systems(Update, mouse.after(keyboard));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyR);
+        app.update();
+        let input = app.world().resource::<LocalInput>();
+        assert_eq!(input.reload_sequence, 0);
+        assert!((input.camera.yaw + 0.06).abs() < 1.0e-6);
+        assert!((input.camera.pitch - 0.02).abs() < 1.0e-6);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::BracketLeft);
+        app.update();
+        assert_eq!(app.world().resource::<LocalInput>().reload_sequence, 1);
+    }
 
     fn input_app() -> App {
         let mut app = App::new();

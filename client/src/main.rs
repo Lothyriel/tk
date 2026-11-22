@@ -16,6 +16,7 @@ mod input;
 mod loadout;
 mod menu;
 mod playtest;
+mod preferences;
 mod render;
 mod sync;
 

@@ -118,7 +118,7 @@ the other combatant to the lobby, where a new pair can prepare another duel.
 | 1 / 2 | Equip your selected primary / pistol |
 | Left mouse button | Hold for rifle/SMG automatic fire; click for pistol semi-automatic fire |
 | Hold right mouse button | Aim down iron sights; release to return to hip fire |
-| R | Swap to a retained loaded magazine; feed an empty chamber |
+| R (default) | Swap to a retained loaded magazine; feed an empty chamber |
 | B | Cycle Safe/Semi/Auto as supported by the weapon |
 | I | Inspect; yields to fire, ADS, reload, sprint or weapon switch |
 | F | Collect nearby loot; hold in the exit to extract |
@@ -138,6 +138,14 @@ audio is muted. A drop request does not play a confirmation cue.
 For less first-person camera movement, launch the client with
 `TK_CAMERA_BOB=reduced` or `TK_CAMERA_BOB=off`. This changes only the
 cosmetic step motion, not stance, mouse aim, or collision.
+
+Open **Preferences** from an unready lobby or the local pause menu to change
+vertical FOV, mouse sensitivity, or the reload key (**R**, **[**, or **]**).
+**Apply and save** writes the choices to `~/.config/tk/preferences.json`
+(or `$XDG_CONFIG_HOME/tk/preferences.json`; `TK_PREFERENCES_PATH` overrides the
+file path). **Revert** restores the last applied choices in the draft;
+**Use defaults** fills the draft without applying it. Back or Esc discards
+unapplied edits.
 
 Sprint straight into a low blocking obstacle and the character briefly
 stumbles. Walking, climbing a passable step or running into a high wall

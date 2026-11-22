@@ -13,6 +13,7 @@ use common::{
     raid::{MatchMode, RaidPhase, RaidStatus, SIMULATION_HZ},
 };
 
+use crate::preferences::{Preferences, Store};
 use crate::{ClientSystems, input::inventory_panel::Panel, loadout, sync::ClientSession};
 
 pub(crate) struct Plugin;
@@ -22,7 +23,14 @@ pub(crate) struct MenuInput;
 
 impl bevy::prelude::Plugin for Plugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Menu>()
+        let (store, preferences) = if cfg!(test) {
+            (Store::default(), Preferences::default())
+        } else {
+            Store::open()
+        };
+        app.insert_resource(store)
+            .insert_resource(preferences)
+            .init_resource::<Menu>()
             .add_message::<Activation>()
             .add_message::<PointerActivation>()
             .add_observer(record_activation)
@@ -47,6 +55,7 @@ enum Surface {
     Playing,
     Inventory,
     Pause,
+    Settings,
     Waiting,
     ArenaWaiting,
     ArenaPause,
@@ -61,6 +70,9 @@ pub(crate) struct Menu {
     lobby_focus: Option<Entity>,
     pending: Option<u32>,
     transitioning_to_play: bool,
+    settings: Option<Preferences>,
+    settings_focus: Option<Entity>,
+    settings_status: &'static str,
 }
 
 impl Default for Menu {
@@ -72,6 +84,9 @@ impl Default for Menu {
             lobby_focus: None,
             pending: None,
             transitioning_to_play: false,
+            settings: None,
+            settings_focus: None,
+            settings_status: "",
         }
     }
 }
@@ -115,6 +130,16 @@ enum Action {
     Resume,
     LeaveArena,
     Quit,
+    Settings,
+    FovLess,
+    FovMore,
+    MouseLess,
+    MouseMore,
+    ReloadKey,
+    Defaults,
+    Revert,
+    ApplySettings,
+    BackSettings,
 }
 
 impl Action {
@@ -211,6 +236,16 @@ fn setup(mut commands: Commands) {
                 Action::Resume,
                 Action::LeaveArena,
                 Action::Quit,
+                Action::Settings,
+                Action::FovLess,
+                Action::FovMore,
+                Action::MouseLess,
+                Action::MouseMore,
+                Action::ReloadKey,
+                Action::Defaults,
+                Action::Revert,
+                Action::ApplySettings,
+                Action::BackSettings,
             ]
             .into_iter()
             .enumerate()
@@ -262,7 +297,7 @@ fn available(
         Surface::Lobby => action.is_some_and(|action| {
             matches!(
                 action,
-                Action::Ready | Action::Bench | Action::Mode | Action::Quit
+                Action::Ready | Action::Bench | Action::Mode | Action::Quit | Action::Settings
             ) || action.changes_kit()
         }),
         Surface::Bench => match bench {
@@ -271,9 +306,29 @@ fn available(
             }
             _ => bench.is_some(),
         },
-        Surface::Pause => matches!(action, Some(Action::Resume | Action::Quit)),
-        Surface::ArenaPause => matches!(action, Some(Action::Resume | Action::LeaveArena)),
+        Surface::ArenaPause => matches!(
+            action,
+            Some(Action::Resume | Action::LeaveArena | Action::Settings)
+        ),
         Surface::ArenaWaiting => action == Some(&Action::LeaveArena),
+        Surface::Pause => matches!(
+            action,
+            Some(Action::Resume | Action::Quit | Action::Settings)
+        ),
+        Surface::Settings => matches!(
+            action,
+            Some(
+                Action::FovLess
+                    | Action::FovMore
+                    | Action::MouseLess
+                    | Action::MouseMore
+                    | Action::ReloadKey
+                    | Action::Defaults
+                    | Action::Revert
+                    | Action::ApplySettings
+                    | Action::BackSettings
+            )
+        ),
         Surface::Debrief => matches!(action, Some(Action::Return | Action::Quit)),
         Surface::Waiting | Surface::Connection => action == Some(&Action::Quit),
         Surface::Playing | Surface::Inventory => false,
@@ -282,6 +337,9 @@ fn available(
         Some(Action::Ready | Action::Return | Action::LeaveArena) => !pending,
         Some(Action::Mode) => editable,
         Some(action) if action.changes_kit() => editable,
+        Some(Action::Settings) => {
+            matches!(surface, Surface::Pause | Surface::ArenaPause) || editable
+        }
         Some(_) => true,
         None => bench.is_some_and(|action| {
             *action == loadout::ui::Action::Close || (editable && kit.is_some())
@@ -310,6 +368,7 @@ fn route(
     mut pointer: MessageReader<PointerActivation>,
     mut activations: MessageWriter<Activation>,
     mut exit: MessageWriter<AppExit>,
+    (mut preferences, store): (ResMut<Preferences>, Res<Store>),
 ) {
     let old = menu.surface;
     let local = session.local(id.0);
@@ -327,10 +386,19 @@ fn route(
         editor.visible = false;
     }
     let lobby = connected && matches!(session.raid.phase, RaidPhase::Lobby | RaidPhase::Countdown);
+    let pending = menu.pending.is_some() || editor.pending.is_some();
+    let editable = connected && !pending && editor.editable(&session, id.0);
+    let settings_allowed = (playing && menu.paused) || (lobby && editable && !editor.visible);
     let escape = window.focused && keys.just_pressed(KeyCode::Escape) && !panel.consumed_escape;
-    let bench_shortcut = lobby && window.focused && keys.just_pressed(KeyCode::KeyV);
+    let bench_shortcut =
+        menu.settings.is_none() && lobby && window.focused && keys.just_pressed(KeyCode::KeyV);
     let mut consumed = false;
-    if escape && editor.visible {
+    if menu.settings.is_some() {
+        if escape || !settings_allowed {
+            menu.settings = None;
+            consumed = true;
+        }
+    } else if escape && editor.visible {
         editor.visible = false;
         consumed = true;
     } else if bench_shortcut {
@@ -348,6 +416,8 @@ fn route(
     }
     menu.surface = if !connected {
         Surface::Connection
+    } else if menu.settings.is_some() {
+        Surface::Settings
     } else if lobby && editor.visible {
         Surface::Bench
     } else if lobby {
@@ -378,12 +448,14 @@ fn route(
     if old != menu.surface {
         menu.selected = if old == Surface::Bench && menu.surface == Surface::Lobby {
             menu.lobby_focus.take()
+        } else if old == Surface::Settings
+            && matches!(menu.surface, Surface::Lobby | Surface::Pause)
+        {
+            menu.settings_focus.take()
         } else {
             None
         };
     }
-    let pending = menu.pending.is_some() || editor.pending.is_some();
-    let editable = connected && !pending && editor.editable(&session, id.0);
     let mut candidates: Vec<_> = widgets
         .iter()
         .filter(|(_, _, action, bench)| {
@@ -497,6 +569,64 @@ fn route(
         }
         Some(Action::Quit) => {
             exit.write(AppExit::Success);
+        }
+        Some(Action::Settings) => {
+            menu.settings_focus = Some(entity);
+            menu.settings = Some(*preferences);
+            menu.settings_status = if store.load_warning {
+                "Invalid or unreadable file; using defaults."
+            } else {
+                ""
+            };
+            menu.surface = Surface::Settings;
+            menu.selected = widgets
+                .iter()
+                .find(|(_, _, action, _)| *action == Some(&Action::FovLess))
+                .map(|(entity, ..)| entity);
+        }
+        Some(Action::BackSettings) => {
+            menu.settings = None;
+            menu.surface = if lobby {
+                Surface::Lobby
+            } else {
+                Surface::Pause
+            };
+            menu.selected = menu.settings_focus.take();
+        }
+        Some(action) if menu.surface == Surface::Settings => {
+            let draft = menu
+                .settings
+                .as_mut()
+                .expect("settings surface has a draft");
+            match action {
+                Action::FovLess => draft.fov = draft.fov.saturating_sub(5).max(20),
+                Action::FovMore => draft.fov = (draft.fov + 5).min(160),
+                Action::MouseLess => {
+                    draft.sensitivity_percent = draft.sensitivity_percent.saturating_sub(5).max(25)
+                }
+                Action::MouseMore => {
+                    draft.sensitivity_percent = (draft.sensitivity_percent + 5).min(300)
+                }
+                Action::ReloadKey => draft.reload = draft.reload.next(),
+                Action::Defaults => *draft = Preferences::default(),
+                Action::Revert => *draft = *preferences,
+                Action::ApplySettings => {
+                    menu.settings_status = if let Err(error) = store.save(*draft) {
+                        warn!("Could not save client preferences: {error}");
+                        "Could not save; applied values unchanged."
+                    } else {
+                        *preferences = *draft;
+                        "Applied and saved."
+                    };
+                    return;
+                }
+                _ => unreachable!("only settings actions are routed here"),
+            }
+            menu.settings_status = if *draft == *preferences {
+                "No unapplied changes."
+            } else {
+                "Unapplied changes."
+            };
         }
         Some(action) => change_kit(action, &mut input),
         None if bench == Some(&loadout::ui::Action::Close) => {
@@ -629,6 +759,10 @@ fn present(
                 "ARENA | Waiting for a combatant".into()
             }
         }
+        Surface::Settings => format!(
+            "LOCAL PREFERENCES\n{}\nTab / arrows: select · Enter / Space: activate",
+            menu.settings_status
+        ),
         Surface::Debrief | Surface::Waiting => {
             let p = participant.expect("connection_ready requires a local participant");
             let hint = if menu.pending.is_some() {
@@ -690,6 +824,24 @@ fn present(
                 Action::Resume => "Resume".into(),
                 Action::LeaveArena => "Leave Arena / return to lobby".into(),
                 Action::Quit => "Quit client".into(),
+                Action::Settings => "Preferences".into(),
+                Action::FovLess => {
+                    format!("− Vertical FOV: {}°", menu.settings.unwrap_or_default().fov)
+                }
+                Action::FovMore => "+ Vertical FOV".into(),
+                Action::MouseLess => format!(
+                    "− Sensitivity: {}%",
+                    menu.settings.unwrap_or_default().sensitivity_percent
+                ),
+                Action::MouseMore => "+ Sensitivity".into(),
+                Action::ReloadKey => format!(
+                    "Reload key: {} · cycle",
+                    menu.settings.unwrap_or_default().reload.label()
+                ),
+                Action::Defaults => "Use defaults in draft".into(),
+                Action::Revert => "Revert unapplied changes".into(),
+                Action::ApplySettings => "Apply and save".into(),
+                Action::BackSettings => "Back (discard draft)".into(),
             };
         }
     }
@@ -826,6 +978,48 @@ mod tests {
         keys.reset_all();
         keys.press(key);
         app.update();
+    }
+
+    #[test]
+    fn menu_preferences_draft_does_not_ready_and_apply_persists() {
+        let mut app = fixture();
+        let path =
+            std::env::temp_dir().join(format!("tk-menu-prefs-{:016x}.json", rand::random::<u64>()));
+        app.insert_resource(Store::test_path(path.clone()));
+        let settings = button(&mut app, Action::Settings);
+        let fov_more = button(&mut app, Action::FovMore);
+        let apply = button(&mut app, Action::ApplySettings);
+        let revert = button(&mut app, Action::Revert);
+        click(&mut app, settings);
+        app.update();
+        assert_eq!(app.world().resource::<Menu>().surface, Surface::Settings);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(app.world().resource::<Menu>().settings.unwrap().fov, 65);
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 0);
+        assert_eq!(app.world().resource::<Preferences>().fov, 70);
+        click(&mut app, revert);
+        app.update();
+        assert_eq!(app.world().resource::<Menu>().settings.unwrap().fov, 70);
+        click(&mut app, fov_more);
+        app.update();
+        click(&mut app, apply);
+        app.update();
+        assert_eq!(app.world().resource::<Preferences>().fov, 75);
+        assert!(path.exists());
+        key(&mut app, KeyCode::Escape);
+        assert_eq!(app.world().resource::<Menu>().selected, Some(settings));
+        app.world_mut().resource_mut::<ClientSession>().players[0]
+            .participant
+            .ready = true;
+        click(&mut app, settings);
+        key(&mut app, KeyCode::KeyV); // The existing bench remains separate.
+        key(&mut app, KeyCode::Escape);
+        click(&mut app, settings);
+        app.update();
+        assert_eq!(app.world().resource::<Menu>().surface, Surface::Lobby);
+        assert!(app.world().resource::<Menu>().settings.is_none());
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 0);
+        std::fs::remove_file(path).unwrap();
     }
 
     fn focus(app: &App, expected: Entity) {
