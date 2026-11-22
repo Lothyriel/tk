@@ -193,6 +193,38 @@ struct CachedAsset {
 #[derive(Default, Resource)]
 struct VoxelCache {
     assets: BTreeMap<String, CachedAsset>,
+    pet_probes: BTreeMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>,
+}
+
+#[derive(Clone, Copy)]
+enum PetProbe {
+    UnlitBlend,
+    LitOpaque,
+}
+
+fn pet_probe() -> Option<PetProbe> {
+    if !std::env::args().any(|arg| arg == "--playtest")
+        || std::env::var_os("TK_PLAYTEST_LOOT_INSPECT").is_none()
+    {
+        return None;
+    }
+    match std::env::var("TK_PLAYTEST_PET_PROBE").as_deref() {
+        Ok("unlit-blend") => Some(PetProbe::UnlitBlend),
+        Ok("lit-opaque") => Some(PetProbe::LitOpaque),
+        _ => None,
+    }
+}
+
+fn probe_material(source: &StandardMaterial, probe: PetProbe) -> Option<StandardMaterial> {
+    if source.alpha_mode != AlphaMode::Blend {
+        return None;
+    }
+    let mut variant = source.clone();
+    match probe {
+        PetProbe::UnlitBlend => variant.unlit = true,
+        PetProbe::LitOpaque => variant.alpha_mode = AlphaMode::Opaque,
+    }
+    Some(variant)
 }
 
 impl VoxelCache {
@@ -309,21 +341,26 @@ fn instantiate(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     models: Query<(Entity, &VoxelModel, Option<&VoxelInstance>), Changed<VoxelModel>>,
+    mut probe: Local<Option<Option<PetProbe>>>,
 ) {
+    let probe = *probe.get_or_insert_with(pet_probe);
     for (root, model, existing) in &models {
         if existing.is_some_and(|instance| instance.source == *model) {
             commands.entity(root).remove::<VoxelLoadError>();
             continue;
         }
-        let asset = match cache.load(&model.asset, &mut meshes, &mut materials) {
-            Ok(asset) => asset,
+        match cache.load(&model.asset, &mut meshes, &mut materials) {
+            Ok(_) => (),
             Err(error) => {
                 let error = VoxelLoadError(error);
                 warn!("{}", error.0);
                 commands.entity(root).insert(error);
                 continue;
             }
-        };
+        }
+        let cache = &mut *cache;
+        let asset = &cache.assets[&model.asset];
+        let probe = probe.filter(|_| model.view_model && model.asset == "item_water500");
         let layers = if model.view_model {
             RenderLayers::layer(VIEW_MODEL_RENDER_LAYER)
         } else {
@@ -358,6 +395,19 @@ fn instantiate(
             let parent = part.parent.as_deref().map_or(content, |name| parts[name]);
             commands.entity(parent).add_child(pivot);
             for surface in &part.surfaces {
+                let material = if let Some(probe) = probe
+                    && let Some(variant) = materials
+                        .get(&surface.material)
+                        .and_then(|source| probe_material(source, probe))
+                {
+                    cache
+                        .pet_probes
+                        .entry(surface.material.id())
+                        .or_insert_with(|| materials.add(variant))
+                        .clone()
+                } else {
+                    surface.material.clone()
+                };
                 let mut entity = commands.spawn((
                     Mesh3d(surface.mesh.clone()),
                     lod::SurfaceLod {
@@ -366,7 +416,7 @@ fn instantiate(
                         bounds: part.bounds.clone(),
                         deviation: part.lod_deviation,
                     },
-                    MeshMaterial3d(surface.material.clone()),
+                    MeshMaterial3d(material),
                     layers.clone(),
                     Transform::default(),
                     Visibility::Inherited,

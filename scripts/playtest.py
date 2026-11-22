@@ -126,6 +126,8 @@ def main():
                         help="Verify both PvP respawns and a disconnect with two rendered clients")
     parser.add_argument("--voxel-loot", action="store_true", help="Exercise the six voxel loot seeds instead of collecting legacy crates")
     parser.add_argument("--loot-inspect", action="store_true", help="With --voxel-loot, capture three static in-hand views of each confirmed item")
+    parser.add_argument("--pet-probe", choices=("unlit-blend", "lit-opaque"),
+                        help="Diagnose only the held bottle's translucent surfaces")
     parser.add_argument("--animation-review", action="store_true", help="Add reciprocal continuous weapon review before the ordinary dual raid")
     parser.add_argument("--weapon-kit", choices=("compact", "suppressed", "afg"),
                         help="Seed server-owned M4A1 kit and physical magazines for native acceptance")
@@ -162,6 +164,8 @@ def main():
                   or args.weapon_kit or args.configure_weapons or args.video
                   or args.clean_art or args.audio):
         parser.error("Arena routes require the matching client count (solo=1, PvP=2) and no other review mode")
+    if args.pet_probe and not args.loot_inspect:
+        parser.error("--pet-probe requires --loot-inspect")
     if args.loot_inspect and (not args.voxel_loot or args.no_capture or args.video):
         parser.error("--loot-inspect requires --voxel-loot and static captures (no --no-capture or --video)")
     if args.bench_draft and (not args.configure_weapons or args.no_capture or args.video):
@@ -233,6 +237,9 @@ def main():
     env.pop("TK_PLAYTEST_LOOT_INSPECT", None)
     if args.loot_inspect:
         env["TK_PLAYTEST_LOOT_INSPECT"] = "1"
+    env.pop("TK_PLAYTEST_PET_PROBE", None)
+    if args.pet_probe:
+        env["TK_PLAYTEST_PET_PROBE"] = args.pet_probe
     env.pop("TK_PLAYTEST_WEAPON_KIT", None)
     if args.weapon_kit:
         env["TK_PLAYTEST_WEAPON_KIT"] = args.weapon_kit
@@ -301,6 +308,7 @@ def main():
         "video": args.video, "animation_review": args.animation_review,
         "no_capture": args.no_capture, "audio": args.audio,
         "loot_inspect": args.loot_inspect,
+        "pet_probe": args.pet_probe,
         "weapon_debug": args.weapon_debug, "weapon_lod": args.weapon_lod,
         "clean_art": args.clean_art,
         "art_lighting": "neutral white, cast shadows disabled" if args.neutral_art else "raid",

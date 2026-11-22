@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn pet_probe_isolates_one_render_variable_and_keeps_opaque_trim() {
+    let source = StandardMaterial {
+        base_color: Color::srgba(0.3, 0.6, 0.7, 0.48),
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    };
+    let unlit = probe_material(&source, PetProbe::UnlitBlend).unwrap();
+    assert!(unlit.unlit);
+    assert_eq!(unlit.alpha_mode, AlphaMode::Blend);
+    assert_eq!(unlit.base_color, source.base_color);
+    let opaque = probe_material(&source, PetProbe::LitOpaque).unwrap();
+    assert!(!opaque.unlit);
+    assert_eq!(opaque.alpha_mode, AlphaMode::Opaque);
+    assert_eq!(opaque.base_color, source.base_color);
+    assert!(probe_material(&StandardMaterial::default(), PetProbe::LitOpaque).is_none());
+}
+
+#[test]
 fn beacon_authoring_shares_the_production_assembler_across_perspectives() {
     let mut app = app();
     let roots = [false, true].map(|view_model| {
