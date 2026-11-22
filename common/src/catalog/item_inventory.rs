@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 
 mod archive;
 pub use archive::ArchiveError;
+mod transaction;
+pub use transaction::{InventoryAction, InventoryChange, InventoryCommit, TransactionError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub enum Condition {
