@@ -80,13 +80,17 @@ def validate(source):
     materials = {}
     for i, material in enumerate(source["materials"]):
         path = f"materials[{i}]"
-        fields(material, "id surface color roughness metallic", path)
+        fields(material, "id surface color roughness metallic", path, "alpha_mode")
         name(material["id"], f"{path}.id")
         require(material["id"] not in materials, path, "duplicate material ID")
         require(material["surface"] in ("metal", "polymer", "wood", "rubber"),
                 f"{path}.surface", "unknown surface family")
         vector(material["color"], 4, 0, 1, f"{path}.color")
-        require(material["color"][3] == 1, f"{path}.color", "only opaque surfaces supported")
+        alpha_mode = material.get("alpha_mode", "opaque")
+        require(alpha_mode in ("opaque", "blend"), f"{path}.alpha_mode", "expected opaque or blend")
+        alpha = material["color"][3]
+        require(alpha == 1 if alpha_mode == "opaque" else 0 < alpha < 1,
+                f"{path}.color", "opaque requires alpha 1; blend requires alpha strictly between 0 and 1")
         number(material["roughness"], 0.04, 1, f"{path}.roughness")
         number(material["metallic"], 0, 1, f"{path}.metallic")
         materials[material["id"]] = material

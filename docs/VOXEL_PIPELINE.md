@@ -118,8 +118,10 @@ not dimensions silently multiplied by an import scale.
 - Boxes of the same material may overlap as a union. Overlapping different
   materials are an authoring error, rather than order-dependent paint priority.
   Adjacent different materials are valid and retain separate surfaces.
-- Materials explicitly specify opaque sRGB color, perceptual roughness and
-  metallic, plus `metal`, `polymer`, `wood` or `rubber` surface family.
+- Materials specify sRGB color, perceptual roughness and metallic, plus `metal`,
+  `polymer`, `wood` or `rubber` surface family. Opaque is the default and
+  requires alpha 1. Use `alpha_mode: "blend"` with alpha between 0 and 1 for
+  translucent surfaces; this is alpha blending, not refraction.
 - `movable` identifies independent mechanical pieces. Meshing never crosses a
   part boundary, even where two pieces touch; removing a magazine must reveal
   its previously hidden mating faces.

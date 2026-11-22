@@ -1,9 +1,9 @@
 {
   "version":1,"id":"item_water500","units":"metres","axes":"right_handed_y_up_negative_z_forward",
-  "provenance":"Original TK art from the ribbed 500 ml bottle brief. Opaque blue tint is a base pass for the voxel renderer.",
+  "provenance":"Original TK art from the ribbed 500 ml bottle brief.",
   "materials":[
-    {"id":"pet","surface":"polymer","color":[0.37,0.66,0.72,1],"roughness":0.17,"metallic":0},
-    {"id":"ribs","surface":"polymer","color":[0.54,0.78,0.80,1],"roughness":0.22,"metallic":0},
+    {"id":"pet","surface":"polymer","color":[0.37,0.66,0.72,0.48],"roughness":0.17,"metallic":0,"alpha_mode":"blend"},
+    {"id":"ribs","surface":"polymer","color":[0.54,0.78,0.80,0.62],"roughness":0.22,"metallic":0,"alpha_mode":"blend"},
     {"id":"cap","surface":"polymer","color":[0.08,0.26,0.58,1],"roughness":0.68,"metallic":0},
     {"id":"label","surface":"polymer","color":[0.87,0.89,0.82,1],"roughness":0.74,"metallic":0}
   ],

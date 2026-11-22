@@ -51,6 +51,20 @@ def metrics(asset):
 
 
 class VoxelBakeTests(unittest.TestCase):
+    def test_translucency_requires_explicit_blend_and_survives_bake(self):
+        asset = cube_source()
+        material = asset["materials"][0]
+        material["color"][3] = 0.5
+        with self.assertRaisesRegex(bake.InvalidAsset, "opaque requires alpha 1"):
+            compiled(asset)
+        material["alpha_mode"] = "blend"
+        baked = next(m for m in compiled(asset)["materials"] if m["id"] == material["id"])
+        self.assertEqual((baked["alpha_mode"], baked["color"][3]), ("blend", 0.5))
+        for alpha in (0, 1):
+            material["color"][3] = alpha
+            with self.assertRaisesRegex(bake.InvalidAsset, "blend requires alpha"):
+                compiled(asset)
+
     def test_union_removes_internal_faces_and_merges_without_losing_steps(self):
         asset = cube_source()
         asset["parts"][0]["boxes"].append(
