@@ -1,5 +1,5 @@
 //! Standalone rendered review. Uses the production voxel and icon caches.
-use super::{VoxelCache, VoxelModel, instantiate};
+use super::{Part, VoxelCache, VoxelModel, instantiate};
 use crate::render::item_icons::{self, ItemIcon};
 use bevy::{
     camera::visibility::RenderLayers,
@@ -10,6 +10,7 @@ use bevy::{
 use common::catalog::item_manifest::{S1_SEEDS, item_visuals};
 
 const BEACON: &str = "beacon_authoring";
+const BEACON_PAIR: [(bool, f32); 2] = [(false, 0.13), (true, -0.13)];
 
 pub(crate) struct Plugin;
 
@@ -43,7 +44,7 @@ impl bevy::prelude::Plugin for Plugin {
             })
             .add_plugins(item_icons::Plugin)
             .add_systems(Startup, setup)
-            .add_systems(Update, (instantiate, review))
+            .add_systems(Update, (instantiate, review, resize_beacon_frame))
             .add_systems(Last, benchmark_frames);
     }
 }
@@ -59,10 +60,90 @@ struct Settings {
 #[derive(Component)]
 struct Prop;
 
+#[derive(Component)]
+struct BeaconCamera;
+
+#[derive(Resource)]
+struct BeaconFrame(Vec<Vec3>);
+
+fn beacon_pair_corners(parts: &[Part]) -> BeaconFrame {
+    let mut corners = Vec::new();
+    for part in parts {
+        let mut pose = part.pivot;
+        let mut parent = part.parent.as_deref();
+        while let Some(id) = parent {
+            let ancestor = parts.iter().find(|p| p.id == id).expect("baked parent");
+            pose = ancestor.pivot.mul_transform(pose);
+            parent = ancestor.parent.as_deref();
+        }
+        let [x0, y0, z0] = part.bounds.min;
+        let [x1, y1, z1] = part.bounds.max;
+        for x in [x0, x1] {
+            for y in [y0, y1] {
+                for z in [z0, z1] {
+                    let point = pose.transform_point(Vec3::new(x, y, z));
+                    // Use one frame for all three angles, so the pair doesn't
+                    // appear to change scale when comparing silhouettes.
+                    for angle in [0.0, 90.0_f32, 180.0] {
+                        let rotated = Quat::from_rotation_y(angle.to_radians()) * point;
+                        corners.extend(BEACON_PAIR.map(|(_, x)| rotated + Vec3::X * x));
+                    }
+                }
+            }
+        }
+    }
+    BeaconFrame(corners)
+}
+
+fn fit_beacon(frame: &BeaconFrame, lens: &PerspectiveProjection, aspect: f32) -> Transform {
+    let (min, max) = frame.0.iter().fold(
+        (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+        |(min, max), &point| (min.min(point), max.max(point)),
+    );
+    let center = (min + max) * 0.5;
+    let mut camera = Transform::from_xyz(0.0, 0.30, -1.0).looking_at(Vec3::ZERO, Vec3::Y);
+    let inverse = camera.rotation.inverse();
+    // Use 85% of each half-frustum; include each corner's depth rather than
+    // fitting only the box projected onto the plane through its center.
+    let half_height = (lens.fov * 0.5).tan() * 0.85;
+    let half_width = half_height * aspect;
+    let distance = frame.0.iter().fold(0.0_f32, |distance, &point| {
+        let p = inverse * (point - center);
+        distance.max(
+            p.z + (p.x.abs() / half_width)
+                .max(p.y.abs() / half_height)
+                .max(lens.near),
+        )
+    });
+    camera.translation = center + camera.rotation * Vec3::Z * distance;
+    camera
+}
+
+fn window_aspect(window: &Window) -> f32 {
+    window.physical_width().max(1) as f32 / window.physical_height().max(1) as f32
+}
+
+fn resize_beacon_frame(
+    frame: Option<Res<BeaconFrame>>,
+    windows: Query<&Window, (With<PrimaryWindow>, Changed<Window>)>,
+    mut cameras: Query<(&Projection, &mut Transform), With<BeaconCamera>>,
+) {
+    let (Some(frame), Ok(window)) = (frame, windows.single()) else {
+        return;
+    };
+    for (lens, mut camera) in &mut cameras {
+        if let Projection::Perspective(lens) = lens {
+            *camera = fit_beacon(&frame, lens, window_aspect(window));
+        }
+    }
+}
+
 fn setup(
     mut commands: Commands,
     settings: Res<Settings>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    mut cache: ResMut<VoxelCache>,
+    (mut meshes, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
 ) {
     if settings.benchmark
         && let Ok(mut window) = windows.single_mut()
@@ -70,8 +151,16 @@ fn setup(
         window.present_mode = PresentMode::AutoNoVsync;
     }
     let beacon = settings.focus.as_deref() == Some(BEACON);
+    let lens = PerspectiveProjection::default();
     let camera = if beacon {
-        Transform::from_xyz(0.0, 0.16, -0.52).looking_at(Vec3::ZERO, Vec3::Y)
+        let asset = cache
+            .load(BEACON, &mut meshes, &mut materials)
+            .expect("beacon review requires the integrated baked asset");
+        let frame = beacon_pair_corners(&asset.parts);
+        let aspect = windows.single().map_or(lens.aspect_ratio, window_aspect);
+        let camera = fit_beacon(&frame, &lens, aspect);
+        commands.insert_resource(frame);
+        camera
     } else if let Some(id) = &settings.focus {
         let half = Vec3::from_array(item_visuals()[id].collider_half_extents());
         // Frame the enclosing sphere, so the same distance works for all
@@ -85,7 +174,11 @@ fn setup(
     };
     let mut world = commands.spawn((Camera3d::default(), camera));
     if beacon {
-        world.insert(Msaa::Off);
+        world.insert((
+            Msaa::Off,
+            BeaconCamera,
+            Projection::Perspective(lens.clone()),
+        ));
         commands.spawn((
             Camera3d::default(),
             Msaa::Off,
@@ -96,8 +189,10 @@ fn setup(
             },
             RenderLayers::layer(super::VIEW_MODEL_RENDER_LAYER),
             camera,
+            BeaconCamera,
+            Projection::Perspective(lens),
         ));
-        for (view_model, x) in [(false, 0.13), (true, -0.13)] {
+        for (view_model, x) in BEACON_PAIR {
             commands.spawn((
                 VoxelModel {
                     asset: BEACON.into(),
@@ -176,12 +271,12 @@ fn setup(
         });
     commands.spawn((
         Text::new(if beacon {
-            "Beacon authoring review: world (left) / view-model (right)  |  1 Front  2 Side  3 Back  |  F12 Screenshot".into()
+            "Beacon | World (L) / View model (R)\n1 Front | 2 Side | 3 Back | F12 Capture".into()
         } else {
             format!(
-            "Item review: {}  |  1 Front  2 Side  3 Back  |  F12 Screenshot",
-            settings.focus.as_deref().unwrap_or("all seeds")
-        )
+                "Item review: {}  |  1 Front  2 Side  3 Back  |  F12 Screenshot",
+                settings.focus.as_deref().unwrap_or("all seeds")
+            )
         }),
         Node {
             position_type: PositionType::Absolute,
@@ -252,5 +347,58 @@ fn benchmark_frames(
             samples[569],
         );
         exit.write(AppExit::Success);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::camera::CameraProjection;
+
+    #[test]
+    fn beacon_pair_fits_portrait_at_each_review_angle() {
+        // Representative baked bounds, including the tile's parent-relative
+        // pivot. The beacon asset itself is on the integration branch.
+        let part = |id: &str, parent: Option<&str>, pivot, min, max| Part {
+            id: id.into(),
+            parent: parent.map(str::to_owned),
+            pivot: Transform::from_translation(pivot),
+            movable: false,
+            surfaces: vec![],
+            bounds: super::super::Bounds { min, max },
+            lod_deviation: 0.0,
+        };
+        let frame = beacon_pair_corners(&[
+            part(
+                "body",
+                None,
+                Vec3::ZERO,
+                [-0.07, -0.06, -0.04],
+                [0.07, 0.06, 0.04],
+            ),
+            part(
+                "tile",
+                Some("body"),
+                Vec3::new(0.0, 0.03, -0.04),
+                [-0.04, -0.025, -0.012],
+                [0.04, 0.025, 0.0],
+            ),
+        ]);
+        assert_eq!(frame.0.len(), 2 * 8 * 3 * 2);
+        for (width, height) in [(936.0, 1007.0), (600.0, 1007.0), (1280.0, 800.0)] {
+            let mut lens = PerspectiveProjection::default();
+            lens.update(width, height);
+            let camera = fit_beacon(&frame, &lens, width / height);
+            let clip_from_world = lens.get_clip_from_view() * camera.to_matrix().inverse();
+            for point in &frame.0 {
+                let clip = clip_from_world * point.extend(1.0);
+                assert!(clip.w > lens.near);
+                let ndc = clip.xyz() / clip.w;
+                assert!(
+                    ndc.x.abs() <= 0.851 && ndc.y.abs() <= 0.851,
+                    "{width}×{height}: {ndc:?}"
+                );
+            }
+        }
     }
 }
