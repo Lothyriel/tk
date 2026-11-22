@@ -20,7 +20,10 @@ pub const POV_STEP: MapBlock = MapBlock {
 pub const POV_MARKER: [f32; 3] = [0.0, 1.02, -2.392];
 
 pub fn pov_side_cover() -> impl Iterator<Item = MapBlock> {
-    let enabled = std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("side-cover");
+    let enabled = matches!(
+        std::env::var("TK_PLAYTEST_POV").as_deref(),
+        Ok("side-cover" | "handling-route")
+    );
     [-1.0, 1.0]
         .into_iter()
         .filter(move |_| enabled)
@@ -34,7 +37,7 @@ pub fn pov_side_cover() -> impl Iterator<Item = MapBlock> {
 pub fn pov_fixture() -> bool {
     matches!(
         std::env::var("TK_PLAYTEST_POV").as_deref(),
-        Ok("ads" | "inspect" | "stop-lean" | "side-cover")
+        Ok("ads" | "inspect" | "stop-lean" | "side-cover" | "handling-route")
     )
 }
 

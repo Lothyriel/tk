@@ -281,9 +281,111 @@ impl Ads {
     }
 }
 
+/// The second half of the combined route, after StopLean returns to neutral.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) enum Handling {
+    #[default]
+    Aim,
+    Release,
+    Inspect,
+    Cancel,
+    Swap,
+    Finish,
+}
+
+impl Handling {
+    pub(super) fn advance(
+        &mut self,
+        elapsed: f64,
+        ready: bool,
+        player: &common::ClientData,
+        fov: f32,
+    ) -> Result<Option<&'static str>, &'static str> {
+        use common::{EquipmentSlot, catalog::ManipulationKind};
+        if elapsed > 20.0 {
+            return Err("handling route timed out before confirmed return");
+        }
+        let mechanics = player.mechanics;
+        let ads = player.pose.ads;
+        let idle = mechanics.equipped && mechanics.kind.is_none();
+        let hip = ads < 0.02 && (fov - 70.0).abs() < 2.0;
+        let (next, capture) = match self {
+            Self::Aim if ready && ads > 0.95 && (fov - 44.0).abs() < 1.0 => {
+                (Self::Release, "pov-ads")
+            }
+            Self::Release if ready && idle && hip => (Self::Inspect, "pov-hip"),
+            Self::Inspect
+                if ready
+                    && mechanics.kind == Some(ManipulationKind::Inspect)
+                    && (0.25..0.6).contains(&mechanics.fraction) =>
+            {
+                (Self::Cancel, "pov-inspect")
+            }
+            // Re-aiming interrupts inspect. Require new ADS before switching
+            // so the swap cannot mask a missing cancellation.
+            Self::Cancel if ready && idle && ads > 0.25 => (Self::Swap, "pov-cancel"),
+            Self::Swap if ready && idle && hip && player.weapon_slot == EquipmentSlot::Sidearm => {
+                (Self::Finish, "pov-return")
+            }
+            _ => return Ok(None),
+        };
+        *self = next;
+        Ok(Some(capture))
+    }
+
+    pub(super) fn input(&self, input: &mut common::ClientInput) {
+        input.crouch = true;
+        input.aim = matches!(self, Self::Aim | Self::Cancel);
+        if matches!(self, Self::Swap | Self::Finish) {
+            input.weapon = common::EquipmentSlot::Sidearm;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn handling_route_cancels_inspect_before_requesting_swap() {
+        use common::{EquipmentSlot, catalog::ManipulationKind};
+        let mut route = Handling::default();
+        let mut player = common::ClientData::default();
+        let mut input = common::ClientInput::default();
+        player.mechanics.equipped = true;
+        player.pose.ads = 1.0;
+        assert_eq!(route.advance(5.0, true, &player, 50.0), Ok(None));
+        assert_eq!(route.advance(5.1, true, &player, 44.0), Ok(Some("pov-ads")));
+        player.pose.ads = 0.0;
+        assert_eq!(route.advance(5.5, true, &player, 70.0), Ok(Some("pov-hip")));
+        player.mechanics.kind = Some(ManipulationKind::Inspect);
+        player.mechanics.fraction = 0.3;
+        assert_eq!(
+            route.advance(6.4, true, &player, 70.0),
+            Ok(Some("pov-inspect"))
+        );
+        route.input(&mut input);
+        assert!(input.aim);
+        assert_eq!(input.weapon, EquipmentSlot::Primary);
+        player.pose.ads = 0.3;
+        assert_eq!(route.advance(6.5, true, &player, 65.0), Ok(None));
+        player.mechanics.kind = None;
+        assert_eq!(
+            route.advance(6.6, true, &player, 65.0),
+            Ok(Some("pov-cancel"))
+        );
+        route.input(&mut input);
+        assert!(!input.aim);
+        assert_eq!(input.weapon, EquipmentSlot::Sidearm);
+        player.pose.ads = 0.0;
+        assert_eq!(route.advance(7.0, true, &player, 70.0), Ok(None));
+        player.weapon_slot = EquipmentSlot::Sidearm;
+        assert_eq!(route.advance(7.1, false, &player, 70.0), Ok(None));
+        assert_eq!(
+            route.advance(7.5, true, &player, 70.0),
+            Ok(Some("pov-return"))
+        );
+    }
 
     #[test]
     fn pov_stop_lean_requires_braking_and_both_confirmed_roll_signs() {
