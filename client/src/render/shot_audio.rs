@@ -17,6 +17,8 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 const RATE: u32 = 24_000;
 const MAX_VOICES: usize = 12;
+// Leave room for confirmed handling contacts even during a saturated burst.
+const SHOT_VOICE_LIMIT: usize = MAX_VOICES - 2;
 
 pub(super) struct Plugin;
 
@@ -268,8 +270,8 @@ fn present(
             active += 1;
         }
     }
-    let mut play = |cue: &Handle<SynthShot>, position: Vec3, remote: bool, volume: f32| {
-        if muted.0 || active >= MAX_VOICES || !position.is_finite() {
+    let mut play = |cue: &Handle<SynthShot>, position: Vec3, remote: bool, volume: f32, limit| {
+        if muted.0 || active >= limit || !position.is_finite() {
             return;
         }
         commands.spawn((
@@ -291,7 +293,7 @@ fn present(
             InventoryCue::Confirmed => 0,
             InventoryCue::Rejected => 1,
         };
-        play(&ui.0[index], Vec3::ZERO, false, 0.13);
+        play(&ui.0[index], Vec3::ZERO, false, 0.13, SHOT_VOICE_LIMIT);
     }
     for shot in &session.shots {
         if !history.shots.observe(shot.id) {
@@ -310,6 +312,7 @@ fn present(
             Vec3::from(shot.muzzle),
             remote,
             gain * if remote { 0.45 } else { 0.25 },
+            SHOT_VOICE_LIMIT,
         );
     }
     history
@@ -329,6 +332,7 @@ fn present(
                 Vec3::from(actor.pos),
                 remote,
                 if remote { 0.24 } else { 0.17 },
+                MAX_VOICES,
             );
         }
     }
@@ -394,7 +398,7 @@ mod tests {
                 let world = app.world_mut();
                 peak_voices = peak_voices.max(world.query::<&Voice>().iter(world).count());
             }
-            assert_eq!(peak_voices, if muted { 0 } else { MAX_VOICES });
+            assert_eq!(peak_voices, if muted { 0 } else { SHOT_VOICE_LIMIT });
             times.sort_by(f64::total_cmp);
             [50, 95, 99].map(|p| times[(FRAMES * p).div_ceil(100) - 1])
         };
@@ -588,7 +592,7 @@ mod tests {
         assert_eq!(count(&mut app), 1);
         app.world_mut().resource_mut::<ClientSession>().shots = (2..30).map(shot).collect();
         app.update();
-        assert_eq!(count(&mut app), MAX_VOICES);
+        assert_eq!(count(&mut app), SHOT_VOICE_LIMIT);
         app.world_mut().resource_mut::<Muted>().0 = true;
         app.world_mut().resource_mut::<ClientSession>().shots = vec![shot(30)];
         app.update();
@@ -596,6 +600,76 @@ mod tests {
         app.world_mut().resource_mut::<Muted>().0 = false;
         app.update();
         assert_eq!(count(&mut app), 0, "unmuting must not replay old shots");
+    }
+
+    #[test]
+    fn shot_audio_keeps_room_for_confirmed_contacts_during_a_burst() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<ClientSession>()
+            .insert_resource(PlayerId(7))
+            .insert_resource(Muted(false))
+            .insert_resource(Cues(std::array::from_fn(|_| Handle::default())))
+            .add_systems(Update, present);
+        let actors = |phase| {
+            (7..10)
+                .map(|id| common::ClientData {
+                    id,
+                    alive: true,
+                    pos: [id as f32, 0.0, 0.0],
+                    mechanics: MechanicalSnapshot {
+                        kind: Some(ManipulationKind::EmptyReload),
+                        phase: Some(phase),
+                        action_id: 1,
+                        fraction: if phase == ManipulationPhase::Remove {
+                            0.15
+                        } else {
+                            0.30
+                        },
+                        ..default()
+                    },
+                    ..default()
+                })
+                .collect()
+        };
+        app.world_mut().resource_mut::<ClientSession>().players = actors(ManipulationPhase::Remove);
+        app.update();
+        app.world_mut().resource_mut::<ClientSession>().shots = (1..=24)
+            .map(|id| common::FiredProjectileData {
+                id,
+                shooter: 11,
+                weapon: common::WeaponId::M4A1,
+                time: 0.0,
+                muzzle: [0.0, 1.0, 0.0],
+                direction: [0.0, 0.0, -1.0],
+                ejection: None,
+                audio_signature: 100,
+            })
+            .collect();
+        let voices = |app: &mut App| {
+            let world = app.world_mut();
+            world
+                .query_filtered::<&Transform, With<Voice>>()
+                .iter(world)
+                .map(|transform| transform.translation.x)
+                .collect::<Vec<_>>()
+        };
+        app.update();
+        assert_eq!(voices(&mut app), vec![0.0; 10]);
+        app.world_mut().resource_mut::<ClientSession>().players = actors(ManipulationPhase::Insert);
+        app.update();
+        let positions = voices(&mut app);
+        assert_eq!(positions.len(), 12);
+        assert!(positions.contains(&7.0) && positions.contains(&8.0));
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs(1));
+        app.update();
+        assert!(
+            voices(&mut app).is_empty(),
+            "expired voices must not replay dropped events"
+        );
     }
 
     #[test]
