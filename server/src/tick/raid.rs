@@ -207,6 +207,7 @@ pub(super) fn lobby_tick(
 pub(super) fn objectives_tick(
     time: Res<Time>,
     mut raid: ResMut<RaidState>,
+    world: Res<super::WorldState>,
     mut players: Query<
         (
             &Client,
@@ -248,11 +249,12 @@ pub(super) fn objectives_tick(
                     client.id, player.carried
                 );
             }
-            if player.tick_extraction(
+            if player.tick_extraction_with_loot(
                 &raid,
                 transform.translation,
                 input.interact && input.pickup_focus.is_none(),
                 time.delta_secs(),
+                world.inventory.carried(&raid, client.id),
             ) {
                 info!("Player {} extracted; secured={}", client.id, player.secured);
             }

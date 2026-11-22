@@ -67,6 +67,19 @@ pub(super) struct Endpoint {
     window_tick: u8,
     peers: BTreeMap<u64, Peer>,
     world_items: Vec<WorldItem>,
+    // Production S1 seeds each have quantity one and distinct definitions;
+    // no other inventory items are issued. Preserve this provenance as the
+    // instances move. Mixed-provenance stacks will require unit attribution.
+    loot_ids: Vec<ItemInstanceId>,
+}
+
+impl std::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InventoryEndpoint")
+            .field("raid", &self.raid)
+            .field("world_items", &self.world_items)
+            .finish_non_exhaustive()
+    }
 }
 
 fn seed_world(items: &mut Vec<WorldItem>) -> Inventory {
@@ -137,9 +150,10 @@ pub(super) fn receive(
     raid: Res<RaidState>,
     participants: Query<(&Participant, Option<&OpenContainer>)>,
     sight: TargetSight,
-    mut state: Local<Endpoint>,
+    mut world: ResMut<super::WorldState>,
     #[cfg(test)] fixture: Option<ResMut<UdpInventoryFixture>>,
 ) {
+    let state = &mut world.inventory;
     #[cfg(test)]
     if let Some(mut fixture) = fixture
         && fixture.0 == raid.raid_id
@@ -148,17 +162,11 @@ pub(super) fn receive(
         assert_ne!(state.raid, Some(raid.raid_id));
         state.raid = Some(raid.raid_id);
         state.authority = Some(InventoryAuthority::new(u64::from(raid.raid_id), inventory));
+        state.loot_ids.clear();
         state.peers.clear();
     }
     state.sync_world(&raid);
-    process(
-        &mut server,
-        &lobby,
-        &raid,
-        &participants,
-        &sight,
-        &mut state,
-    );
+    process(&mut server, &lobby, &raid, &participants, &sight, state);
 }
 
 #[derive(SystemParam)]
@@ -242,12 +250,28 @@ impl TargetSight<'_, '_> {
 }
 
 impl Endpoint {
+    pub(super) fn carried(&self, raid: &RaidState, client: u64) -> u32 {
+        if raid.phase != RaidPhase::Active || self.raid != Some(raid.raid_id) {
+            return 0;
+        }
+        let Some(authority) = &self.authority else {
+            return 0;
+        };
+        self.loot_ids
+            .iter()
+            .filter_map(|&id| authority.inventory().get(id))
+            .filter(|item| item.location.compartment == CompartmentId(client))
+            .map(|item| u32::from(item.quantity))
+            .sum()
+    }
+
     fn sync_world(&mut self, raid: &RaidState) {
         if self.raid != Some(raid.raid_id) || raid.phase != RaidPhase::Active {
             self.world_items.clear();
         }
         if raid.phase == RaidPhase::Active && self.raid != Some(raid.raid_id) {
             let inventory = seed_world(&mut self.world_items);
+            self.loot_ids = self.world_items.iter().map(|item| item.id).collect();
             self.raid = Some(raid.raid_id);
             self.authority = Some(InventoryAuthority::new(u64::from(raid.raid_id), inventory));
             self.peers.clear();
@@ -264,6 +288,7 @@ fn process(
     state: &mut Endpoint,
 ) {
     if state.raid != Some(raid.raid_id) {
+        state.loot_ids.clear();
         state.raid = Some(raid.raid_id);
         state.authority = Some(InventoryAuthority::new(
             u64::from(raid.raid_id),
