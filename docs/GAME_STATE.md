@@ -83,6 +83,11 @@ Start additional clients in separate terminals to test multiplayer. All connecte
 
 There is no respawn during a raid. Destroyed head/thorax tissue, a destroyed brain, severe blood loss or the five-minute timeout loses carried loot. Secured loot lasts for the current connection/server session.
 
+The combat HUD shows the sum of regional HP and up to three injuries, ordered
+by lowest remaining fraction. Blood loss and life-threatening conditions are
+separate from HP. Chamber state and inserted-magazine rounds follow the active
+weapon; an absent magazine is distinct from an empty one.
+
 ### Arena Solo
 
 With one connected player, select **Mode: Arena Solo** in kit preparation.

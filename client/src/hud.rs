@@ -7,6 +7,8 @@ use common::{combat::*, map::*, raid::*, *};
 
 use crate::{ClientSystems, sync::ClientSession};
 
+mod combat;
+
 pub struct Plugin;
 
 impl bevy::prelude::Plugin for Plugin {
@@ -42,8 +44,8 @@ fn setup(mut commands: Commands) {
             position_type: PositionType::Absolute,
             top: Val::Px(18.0),
             left: Val::Px(18.0),
-            max_width: Val::Px(510.0),
-            padding: UiRect::all(Val::Px(18.0)),
+            max_width: Val::Px(320.0),
+            padding: UiRect::all(Val::Px(12.0)),
             ..default()
         },
         GlobalZIndex(200),
@@ -218,34 +220,8 @@ fn describe(
             text.push_str(&format!("\n\nSecured this session: {}\nCollect orange crates. Return to the green exit.\nHold F inside the exit for 5s with loot.\nGear locks when ready. Esc: cursor.", p.secured));
         }
         RaidPhase::Active if p.status == RaidStatus::Active => {
-            let body = &local.body;
+            combat::append_readout(&mut text, local);
             if arena {
-                let magazine = if local.mechanics.magazine_inserted {
-                    local
-                        .ammo_in_mag
-                        .saturating_sub(u32::from(local.mechanics.chambered))
-                        .to_string()
-                } else {
-                    "absent".into()
-                };
-                text.push_str(&format!(
-                    "{} | Chamber {} | Magazine {}\nHead {:.0} | Thorax {:.0} | Blood {:.0}%{}",
-                    local.weapon_id.spec().name,
-                    if local.mechanics.chambered {
-                        "loaded"
-                    } else {
-                        "empty"
-                    },
-                    magazine,
-                    body.parts[0],
-                    body.parts[1],
-                    body.anatomy.blood,
-                    if local.reload_remaining() > 0.0 {
-                        " | Reloading"
-                    } else {
-                        ""
-                    },
-                ));
                 if !aiming && local.pose.ads <= 0.02 {
                     text.push_str("\nEsc: pause or leave Arena");
                 }
@@ -256,78 +232,25 @@ fn describe(
                 local.pos[2] - EXTRACTION_CENTER[2],
             )
             .length();
-            // Keep the verbose controls and diagnostics clear of the sight
-            // during entry and until the replicated ADS pose has lowered.
-            if aiming || local.pose.ads > 0.02 {
-                text.push_str(&format!(
-                    "{:02}:{:02} | Head {:.0} | Thorax {:.0}\n{} / {:?} | {} + {}\nBlood {:.0}% (-{:.2}/s) | Loot {}",
-                    session.raid.seconds_left as u32 / 60,
-                    session.raid.seconds_left as u32 % 60,
-                    body.parts[0],
-                    body.parts[1],
-                    local.weapon_id.spec().name,
-                    p.loadout.ammo,
-                    local.ammo_in_mag,
-                    local.reserve_ammo,
-                    body.anatomy.blood,
-                    body.anatomy.bleed_rate(),
-                    p.carried,
-                ));
-                if body.anatomy.capacity(Region::RightArm) <= 0.0 {
-                    text.push_str("\nTrigger arm disabled");
-                }
-                if local.reload_remaining() > 0.0 {
-                    text.push_str("\nReloading");
-                }
-                append_exit(&mut text, exit, p);
-                return text;
-            }
-            let nearest = LOOT_POSITIONS
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| session.raid.loot_available[*i])
-                .map(|(_, pos)| Vec3::from(*pos).distance(Vec3::from(local.pos)))
-                .fold(f32::INFINITY, f32::min);
             text.push_str(&format!(
-                "IN RAID   {:02}:{:02}\nHead {:>2.0}/35  Thorax {:>2.0}/85  Arms {:>2.0}/60  Legs {:>2.0}/70\nVest {:.0} | Helmet {:.0} | Last hit: {:?}\n{} / {:?}   {} + {} reserve {}\nLoot {} | Secured {} | Exit {:.1}m\nPosition x {:.1} / z {:.1} | Exit x 0 / z 15\n",
-                session.raid.seconds_left as u32 / 60, session.raid.seconds_left as u32 % 60,
-                body.parts[0], body.parts[1], body.parts[2], body.parts[3],
-                local.armor.vest, local.armor.helmet, body.last_hit,
-                local.weapon_id.spec().name, p.loadout.ammo, local.ammo_in_mag, local.reserve_ammo,
-                if local.reload_remaining() > 0.0 { "[RELOADING]" } else { "" },
-                p.carried, p.secured, exit, local.pos[0], local.pos[2],
+                "\n{:02}:{:02}  |  Loot {}  |  Exit {:.1}m",
+                session.raid.seconds_left as u32 / 60,
+                session.raid.seconds_left as u32 % 60,
+                p.carried,
+                exit,
             ));
-            if nearest.is_finite() {
-                text.push_str(&format!("Nearest orange crate: {:.1}m [F]\n", nearest));
+            if !aiming && local.pose.ads <= 0.02 {
+                let nearest = LOOT_POSITIONS
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| session.raid.loot_available[*i])
+                    .map(|(_, pos)| Vec3::from(*pos).distance(Vec3::from(local.pos)))
+                    .fold(f32::INFINITY, f32::min);
+                if nearest.is_finite() {
+                    text.push_str(&format!("\nNearest orange crate: {nearest:.1}m [F]"));
+                }
             }
-            text.push_str(&format!(
-                "Selector {:?} [B] | Chamber {} | Magazine {} | {:?} {:?} | Inspect [I]\n",
-                local.mechanics.mode,
-                if local.mechanics.chambered {
-                    "loaded"
-                } else {
-                    "empty"
-                },
-                if local.mechanics.magazine_inserted {
-                    local
-                        .ammo_in_mag
-                        .saturating_sub(u32::from(local.mechanics.chambered))
-                        .to_string()
-                } else {
-                    "absent".into()
-                },
-                local.mechanics.kind,
-                local.mechanics.phase
-            ));
-            let a = &body.anatomy;
-            if a.capacity(Region::RightArm) <= 0.0 {
-                text.push_str("TRIGGER ARM DISABLED: firing and reload unavailable\n");
-            }
-            text.push_str(&format!("L/R arm {:.0}/{:.0} | L/R leg {:.0}/{:.0} | Abdomen {:.0}\nBlood {:.0}% (-{:.2}/s) Vigor {:.0}% | {:?}\nInjury {:?} / {:?} | Handling {:.0}% | Support {:.0}/{:.0}%\n",
-                a.regions[3],a.regions[4],a.regions[5],a.regions[6],a.regions[2],a.blood,a.bleed_rate(),a.vigor,local.pose.mode,
-                a.last_region,a.last_organ,a.handling()*100.0,local.pose.left_support*100.0,local.pose.right_support*100.0));
             append_exit(&mut text, exit, p);
-            text.push_str("WASD move | Shift run | Ctrl crouch | Space jump\nLMB fire | Hold RMB aim | R reload | 1 primary / 2 pistol\nF loot / extract | Wood penetrable; concrete stops rounds. Esc: local pause.");
         }
         _ => {
             text.push_str(&format!(
@@ -366,27 +289,48 @@ mod tests {
 
     #[test]
     fn raid_hud_distinguishes_chamber_inserted_rounds_and_detached_magazine() {
+        use common::catalog::{MagazineSnapshot, ManipulationKind, ManipulationPhase};
         let mut session = ClientSession::default();
         session.raid.phase = RaidPhase::Active;
-        let mut local = ClientData {
-            id: 7,
-            ammo_in_mag: 31,
-            ..default()
-        };
+        let mut local = ClientData { id: 7, ..default() };
         local.participant.begin();
         local.mechanics.chambered = true;
         local.mechanics.magazine_inserted = true;
+        local.mechanics.magazine = MagazineSnapshot::new(0, 30);
         session.players.push(local);
         assert!(
             describe(&session, &Loadout::default(), 7, "", false)
                 .contains("Chamber loaded | Magazine 30")
         );
-        session.players[0].mechanics.magazine_inserted = false;
-        session.players[0].ammo_in_mag = 1;
+        session.players[0].mechanics.magazine = MagazineSnapshot::new(0, 29);
+        assert!(describe(&session, &Loadout::default(), 7, "", false).contains("Magazine 29"));
+        let mechanics = &mut session.players[0].mechanics;
+        mechanics.kind = Some(ManipulationKind::TacticalReload);
+        mechanics.magazine_inserted = false;
+        mechanics.reload_target = MagazineSnapshot::new(1, 20);
         assert!(
             describe(&session, &Loadout::default(), 7, "", false)
                 .contains("Chamber loaded | Magazine absent")
         );
+        let mechanics = &mut session.players[0].mechanics;
+        mechanics.phase = Some(ManipulationPhase::Feed);
+        mechanics.magazine_inserted = true;
+        let text = describe(&session, &Loadout::default(), 7, "", false);
+        assert!(text.contains("Reloading") && text.contains("Chamber loaded | Magazine 20"));
+        let player = &mut session.players[0];
+        player.weapon_id = WeaponId::M1911;
+        player.weapon_slot = EquipmentSlot::Sidearm;
+        player.mechanics.kind = None;
+        player.mechanics.phase = None;
+        player.mechanics.magazine = MagazineSnapshot::new(0, 0);
+        player.mechanics.chambered = false;
+        player.reserve_ammo = 77; // Not a usable count for the magazine.
+        let text = describe(&session, &Loadout::default(), 7, "", false);
+        assert!(text.contains("Pistol") && !text.contains("M4A1"));
+        assert!(text.contains("Chamber empty | Magazine 0"));
+        assert!(!text.contains("Reloading") && !text.contains("77"));
+        session.players[0].mechanics.magazine = MagazineSnapshot::default();
+        assert!(describe(&session, &Loadout::default(), 7, "", false).contains("Magazine unknown"));
     }
 
     #[test]
@@ -404,12 +348,39 @@ mod tests {
         local.participant.carried = 1;
         session.players.push(local);
         let text = describe(&session, &Loadout::default(), 7, "", true);
-        assert!(text.contains("23 + 47") && text.contains("EXIT: HOLD F"));
-        assert!(!text.contains("WASD"));
+        assert!(text.contains("HP 445/445") && text.contains("EXIT: HOLD F"));
+        assert!(!text.contains("Nearest orange crate"));
         session.players[0].pose.ads = 0.1;
         assert_eq!(describe(&session, &Loadout::default(), 7, "", false), text);
         session.players[0].pose.ads = 0.0;
-        assert!(describe(&session, &Loadout::default(), 7, "", false).contains("WASD"));
+        assert!(
+            describe(&session, &Loadout::default(), 7, "", false).contains("Nearest orange crate")
+        );
+    }
+
+    #[test]
+    fn combat_hud_clears_previous_match_values_on_death_lobby_or_stale_connection() {
+        let mut session = ClientSession::default();
+        session.raid.phase = RaidPhase::Active;
+        let mut local = ClientData { id: 7, ..default() };
+        local.participant.begin();
+        local.body.anatomy.regions[0] = 5.0;
+        session.players.push(local);
+        let view = |session: &ClientSession, connection| {
+            describe(session, &Loadout::default(), 7, connection, false)
+        };
+        assert!(view(&session, "").contains("Head: Critical"));
+        let assert_no_combat = |text: String| {
+            for field in ["HP ", "Blood ", "Head: ", "Chamber ", "Magazine "] {
+                assert!(!text.contains(field), "stale field {field}: {text}");
+            }
+        };
+        assert_no_combat(view(&session, "CONNECTION STALE"));
+        session.players[0].participant.status = RaidStatus::Dead;
+        assert_no_combat(view(&session, ""));
+        session.raid.phase = RaidPhase::Lobby;
+        session.players[0].participant.return_to_lobby();
+        assert_no_combat(view(&session, ""));
     }
 
     #[test]
