@@ -1071,6 +1071,30 @@ fn inventory_udp_contested_ground_pickup_with_snapshot_loss_and_disconnect() {
     );
 }
 
+#[derive(Default)]
+struct ApplicationPayload {
+    messages: usize,
+    bytes: usize,
+    max_message_bytes: usize,
+}
+
+impl ApplicationPayload {
+    fn record(&mut self, bytes: usize) {
+        self.messages += 1;
+        self.bytes += bytes;
+        self.max_message_bytes = self.max_message_bytes.max(bytes);
+    }
+
+    fn report(&self, phase: &str, direction: &str, expected: usize, limit: usize) {
+        assert_eq!(self.messages, expected, "{phase} {direction}");
+        assert!(self.max_message_bytes <= limit, "{phase} {direction}");
+        println!(
+            "TK INVENTORY UDP PAYLOAD phase={phase} direction={direction} messages={} bytes={} max_message_bytes={}",
+            self.messages, self.bytes, self.max_message_bytes
+        );
+    }
+}
+
 #[test]
 #[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
 fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
@@ -1085,7 +1109,10 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
                 TransactionError,
             },
         },
-        replication::inventory::{CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody},
+        replication::inventory::{
+            CHANNEL, InventoryRequest, InventoryUpdate, MAX_REQUEST_BYTES, MAX_UPDATE_BYTES,
+            UpdateBody,
+        },
     };
 
     let mut harness = Harness::new();
@@ -1138,16 +1165,36 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
         RaidPhase::Active
     );
 
-    let drain = |peer: &mut UdpPeer| {
+    // Count serialized application messages at the peers, not UDP datagrams.
+    // Filter the lobby epoch out of bootstrap; no loss or replay is injected.
+    let drain = |peer: &mut UdpPeer, payload: &mut ApplicationPayload| {
         std::iter::from_fn(|| peer.peer.network.receive_message(CHANNEL))
-            .map(|bytes| InventoryUpdate::decode(&bytes).unwrap())
-            .filter(|update| update.session.raid_epoch == 1)
+            .filter_map(|bytes| {
+                let update = InventoryUpdate::decode(&bytes).unwrap();
+                if update.session.raid_epoch != 1 {
+                    return None;
+                }
+                payload.record(bytes.len());
+                Some(update)
+            })
             .collect::<Vec<_>>()
     };
+    let send = |peer: &mut UdpPeer, request: InventoryRequest, payload: &mut ApplicationPayload| {
+        let bytes = request.encode().unwrap();
+        assert!(peer.peer.network.can_send_message(CHANNEL, bytes.len()));
+        payload.record(bytes.len());
+        peer.peer.network.send_message(CHANNEL, bytes);
+    };
+    let mut bootstrap = ApplicationPayload::default();
+    let mut move_requests = ApplicationPayload::default();
+    let mut move_updates = ApplicationPayload::default();
+    let mut resync_requests = ApplicationPayload::default();
+    let mut resync_updates = ApplicationPayload::default();
     let mut views = Vec::new();
     for (index, peer) in [&mut first, &mut second].into_iter().enumerate() {
         let compartment = own[index];
-        let [begin, initial]: [InventoryUpdate; 2] = drain(peer).try_into().unwrap();
+        let [begin, initial]: [InventoryUpdate; 2] =
+            drain(peer, &mut bootstrap).try_into().unwrap();
         let session = begin.session;
         assert_eq!(begin.body, UpdateBody::Begin);
         assert_eq!(initial.session, session);
@@ -1177,8 +1224,8 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
             replica.apply_snapshot(session, snapshot),
             ReplicaUpdate::Applied
         );
-        peer.peer.network.send_message(
-            CHANNEL,
+        send(
+            peer,
             InventoryRequest::Operate(InventoryOperation {
                 session,
                 id: 1,
@@ -1190,9 +1237,8 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
                         placement: place(1),
                     },
                 },
-            })
-            .encode()
-            .unwrap(),
+            }),
+            &mut move_requests,
         );
         views.push((session, replica, expected_revision, expected_items));
     }
@@ -1211,7 +1257,7 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
         .zip(&mut views)
         .enumerate()
     {
-        let mut updates = drain(peer).into_iter();
+        let mut updates = drain(peer, &mut move_updates).into_iter();
         let committed = index == 0;
         if committed {
             let update = updates.next().expect("committed move must publish a delta");
@@ -1246,14 +1292,13 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
         );
         assert_eq!(&confirmed.items, items);
         assert!(replica.get(own[1 - index]).is_none());
-        peer.peer.network.send_message(
-            CHANNEL,
+        send(
+            peer,
             InventoryRequest::Resync {
                 session: *session,
                 compartment: own[index],
-            }
-            .encode()
-            .unwrap(),
+            },
+            &mut resync_requests,
         );
     }
     harness.pump(&mut [&mut first, &mut second], 8);
@@ -1262,7 +1307,7 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
         .zip(&views)
         .enumerate()
     {
-        let [update]: [InventoryUpdate; 1] = drain(peer).try_into().unwrap();
+        let [update]: [InventoryUpdate; 1] = drain(peer, &mut resync_updates).try_into().unwrap();
         assert_eq!(update.session, *session);
         let UpdateBody::Snapshot(snapshot) = update.body else {
             panic!("expected confirmed snapshot")
@@ -1272,6 +1317,11 @@ fn inventory_udp_parallel_private_moves_commit_and_reject_in_one_tick() {
     println!(
         "TK INVENTORY UDP same fixed tick: private grid 7 committed (+1 revision), grid 8 rejected occupied (unchanged); both resync snapshots matched"
     );
+    bootstrap.report("active_bootstrap", "received", 4, MAX_UPDATE_BYTES);
+    move_requests.report("same_tick_move", "submitted", 2, MAX_REQUEST_BYTES);
+    move_updates.report("same_tick_move", "received", 3, MAX_UPDATE_BYTES);
+    resync_requests.report("resync", "submitted", 2, MAX_REQUEST_BYTES);
+    resync_updates.report("resync", "received", 2, MAX_UPDATE_BYTES);
 }
 
 #[test]
