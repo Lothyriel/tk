@@ -207,6 +207,78 @@ fn voluntary_prone_toggle_crawls_aims_and_exits_only_on_fresh_clear_edge() {
 }
 
 #[test]
+fn voluntary_prone_from_crouch_preserves_floor_and_restores_standing_control() {
+    let (mut app, actor, peer) = physical_fixture();
+    app.world_mut()
+        .get_mut::<Transform>(peer)
+        .unwrap()
+        .translation
+        .x -= 4.0;
+    let heights = |app: &App, crouched, prone, half_height: f32, eye_above_floor: f32| {
+        let world = app.world();
+        let root = world.get::<Transform>(actor).unwrap();
+        let movement = world.get::<MovementState>(actor).unwrap();
+        let pose = world.get::<PoseState>(actor).unwrap();
+        assert_eq!((movement.crouched, movement.prone), (crouched, prone));
+        assert_eq!(pose.prone, prone);
+        assert_eq!(pose.crouch, f32::from(crouched));
+        assert_eq!(pose.mode, common::humanoid::PhysicalMode::Standing);
+        assert!(pose.grounded);
+        let capsule = world.get::<Collider>(actor).unwrap().as_capsule().unwrap();
+        let segment = capsule.segment();
+        let min_y = segment.a().y.min(segment.b().y) - capsule.radius();
+        assert!((min_y + half_height).abs() < 0.001);
+        let floor = root.translation.y + min_y;
+        assert!((floor - 0.10).abs() < 0.025, "capsule bottom at {floor}");
+        let eye = simulation::neutral_eye(root, movement);
+        assert!((eye.y - floor - eye_above_floor).abs() < 0.002);
+        eye.y
+    };
+    app.world_mut()
+        .get_mut::<ClientInput>(actor)
+        .unwrap()
+        .crouch = true;
+    held_steps(&mut app, actor, 8);
+    let crouch_eye = heights(&app, true, false, 0.60, 0.97);
+
+    // Keep crouch held on entry so a standing intermediate cannot pass.
+    app.world_mut()
+        .get_mut::<ClientInput>(actor)
+        .unwrap()
+        .prone_sequence = 1;
+    held_steps(&mut app, actor, 1);
+    assert!(app.world().get::<PoseState>(actor).unwrap().prone);
+    held_steps(&mut app, actor, 40);
+    let prone_eye = heights(&app, false, true, 0.23, 0.33);
+    assert!(crouch_eye - prone_eye > 0.60);
+    {
+        let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+        input.crouch = false;
+        input.prone_sequence = 2;
+    }
+    held_steps(&mut app, actor, 8);
+    let stand_eye = heights(&app, false, false, 0.90, 1.45);
+    assert!(stand_eye - crouch_eye > 0.45);
+
+    let stand = app.world().get::<Transform>(actor).unwrap().translation;
+    {
+        let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+        input.forward = true;
+        input.run = true;
+    }
+    held_steps(&mut app, actor, 32);
+    let world = app.world();
+    let pose = world.get::<PoseState>(actor).unwrap();
+    assert!(!pose.prone && pose.grounded && pose.velocity[2] < -4.0);
+    assert!(stand.z - world.get::<Transform>(actor).unwrap().translation.z > 0.65);
+    app.world_mut().get_mut::<ClientInput>(actor).unwrap().jump = true;
+    held_steps(&mut app, actor, 8);
+    let world = app.world();
+    assert!(!world.get::<PoseState>(actor).unwrap().grounded);
+    assert!(world.get::<Transform>(actor).unwrap().translation.y > stand.y + 0.15);
+}
+
+#[test]
 fn voluntary_prone_yields_to_involuntary_fall() {
     let (mut app, actor, _) = physical_fixture();
     app.world_mut()
