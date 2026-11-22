@@ -7,6 +7,7 @@ use common::{combat::*, raid::*, *};
 
 mod bots;
 mod destruction;
+mod inventory;
 mod live_body;
 mod locomotion;
 mod metrics;
@@ -72,7 +73,9 @@ impl bevy::prelude::Plugin for Plugin {
                 )
                     .chain()
                     .after(PhysicsSet::Writeback),
-            );
+            )
+            // Inventory I/O does not participate in the Rapier schedule.
+            .add_systems(FixedLast, inventory::receive.after(metrics::end));
     }
 }
 

@@ -82,6 +82,28 @@ impl InventoryAuthority {
         &self.inventory
     }
 
+    pub fn register_compartment(
+        &mut self,
+        id: CompartmentId,
+        size: Footprint,
+    ) -> Result<(), InventoryError> {
+        self.inventory.register_compartment(id, size, None)
+    }
+
+    /// Do not discard owned items on disconnect. Their lifecycle is managed
+    /// by the raid; an unused grid can be reclaimed immediately.
+    pub fn remove_empty_compartment(&mut self, id: CompartmentId) {
+        if !self
+            .inventory
+            .items
+            .values()
+            .any(|item| item.location.compartment == id)
+        {
+            self.inventory.compartments.remove(&id);
+            self.revisions.remove(&id);
+        }
+    }
+
     pub fn revision(&self, id: CompartmentId) -> Option<u64> {
         self.inventory
             .compartments
