@@ -93,7 +93,10 @@ fn update(
     input: Res<LocalInput>,
     id: Res<PlayerId>,
     client: Res<RenetClient>,
-    inventory: Res<crate::sync::inventory::State>,
+    (inventory, panel): (
+        Res<crate::sync::inventory::State>,
+        Res<crate::input::inventory_panel::Panel>,
+    ),
     mut hud: Single<&mut Text, With<RaidHud>>,
 ) {
     let connection = if client.is_disconnected() {
@@ -109,7 +112,27 @@ fn update(
         String::new()
     };
     let mut text = describe(&session, &input.loadout, id.0, &connection, input.aim);
-    if connection.is_empty()
+    if connection.is_empty() && panel.open {
+        use common::catalog::item_manifest::planned_items;
+        text = String::from("RAID INVENTORY\nUp/Down: select   Delete: drop   Tab/Esc: close\n");
+        match inventory.owned_grid(session.raid.raid_id, id.0) {
+            Some(grid) if grid.items.is_empty() => text.push_str("\nEmpty"),
+            Some(grid) => {
+                for (instance, item) in &grid.items {
+                    let marker = if panel.selected == Some(*instance) {
+                        ">"
+                    } else {
+                        " "
+                    };
+                    let name = planned_items()
+                        .get(item.definition.as_str())
+                        .map_or(item.definition.as_str(), |entry| entry.name);
+                    text.push_str(&format!("\n{marker} {name} ×{}", item.quantity));
+                }
+            }
+            None => text.push_str("\nWaiting for inventory"),
+        }
+    } else if connection.is_empty()
         && session.raid.phase == RaidPhase::Active
         && session
             .local(id.0)

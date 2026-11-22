@@ -4,10 +4,10 @@ use bevy::prelude::*;
 use bevy_renet2::prelude::RenetClient;
 use common::{
     catalog::{
-        CompartmentId,
+        CompartmentId, ItemInstanceId,
         item_inventory::{
-            InventoryAction, InventoryOperation, InventoryReplica, OperationResult, ReplicaUpdate,
-            SessionKey, VersionedCompartment,
+            InventoryAction, InventoryOperation, InventoryReplica, InventorySnapshot,
+            OperationResult, ReplicaUpdate, SessionKey, VersionedCompartment,
         },
     },
     replication::inventory::{CHANNEL, GroundItem, InventoryRequest, InventoryUpdate, UpdateBody},
@@ -39,6 +39,30 @@ pub(crate) struct OperationFinished {
 }
 
 impl State {
+    pub(crate) fn owned_grid(&self, raid: u32, client: u64) -> Option<&InventorySnapshot> {
+        let id = CompartmentId(client);
+        if self.session?.raid_epoch != u64::from(raid) || self.resync.contains_key(&id) {
+            return None;
+        }
+        self.replica.as_ref()?.get(id)
+    }
+
+    pub(crate) fn drop_request(
+        &self,
+        raid: u32,
+        client: u64,
+        item: ItemInstanceId,
+    ) -> Option<InventoryRequest> {
+        let grid = self.owned_grid(raid, client)?;
+        (self.pending.is_none() && grid.items.iter().any(|(id, _)| *id == item)).then_some(
+            InventoryRequest::Drop {
+                session: self.session?,
+                item,
+                revision: grid.version.revision,
+            },
+        )
+    }
+
     pub(crate) fn ground(&self) -> (&[GroundItem], Option<SessionKey>) {
         (&self.ground, self.session)
     }
