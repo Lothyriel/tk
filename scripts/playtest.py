@@ -106,6 +106,8 @@ def main():
                         help="Require this exact POV or clean-art framebuffer (WIDTHxHEIGHT)")
     parser.add_argument("--pov-hz", type=int, choices=range(15, 241), metavar="HZ",
                         help="Cap the stop-lean client update rate and write the actual camera trace")
+    parser.add_argument("--pov-drop-every", type=int, choices=range(2, 61), metavar="N",
+                        help="Discard every Nth received snapshot on the stop-lean POV leader")
     parser.add_argument("--no-capture", action="store_true",
                         help="Run the raid without framebuffer readbacks for profiling")
     parser.add_argument("--audio", action="store_true",
@@ -119,6 +121,8 @@ def main():
         parser.error("--audio requires --no-capture and --clients 2")
     if args.pov_hz and args.pov != "stop-lean":
         parser.error("--pov-hz requires --pov stop-lean")
+    if args.pov_drop_every and args.pov != "stop-lean":
+        parser.error("--pov-drop-every requires --pov stop-lean")
     if args.pov and (args.animation_review or args.configure_weapons
                      or (args.video and (args.pov != "stop-lean" or args.clients != 1 or args.pov_hz))
                      or (args.clients == 2 and args.pov != "stop-lean")):
@@ -202,6 +206,7 @@ def main():
         "client_sha256": hashlib.sha256(client_path.read_bytes()).hexdigest(),
         "clients": args.clients, "transport": "real UDP 127.0.0.1:19080",
         "peer_snapshot_drop_every": 3 if args.clients == 2 else 0,
+        "leader_snapshot_drop_every": args.pov_drop_every or 0,
         "resolution": [1280, 800], "world_fov_degrees": 70,
         "requested_viewport": args.viewport,
         "requested_pov_hz": args.pov_hz,
@@ -232,6 +237,8 @@ def main():
                     client_env.update(TK_PLAYTEST_DIR=str(client_output), TK_PLAYTEST_ROLE=str(index))
                     if index == 1:
                         client_env["TK_DROP_SNAPSHOT_EVERY"] = "3"
+                    elif args.pov_drop_every:
+                        client_env["TK_DROP_SNAPSHOT_EVERY"] = str(args.pov_drop_every)
                     log = (client_output / "client.log").open("w", encoding="utf-8")
                     logs.append(log)
                     processes.append(subprocess.Popen([str(client_path), "--playtest"], cwd=root,
@@ -267,6 +274,11 @@ def main():
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
     if args.pov:
+        if args.pov_drop_every:
+            dropped = re.findall(r"SNAPSHOT LOSS dropped=(\d+) sequence=(\d+)", client_text)
+            assert dropped, "Missing snapshot discard evidence on the POV leader"
+            assert all(int(seq) % args.pov_drop_every == 0 for _, seq in dropped)
+            settings["leader_snapshot_drop_logged_count"] = int(dropped[-1][0])
         if args.clients == 2:
             peer = output / "peer"
             peer_text = (peer / "client.log").read_text(encoding="utf-8", errors="replace")
