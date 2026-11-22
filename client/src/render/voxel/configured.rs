@@ -212,7 +212,7 @@ struct Piece {
 }
 
 #[derive(Default, Resource)]
-pub(super) struct HandAssets {
+pub(in crate::render) struct HandAssets {
     handles: Option<(
         Handle<Mesh>,
         Handle<Mesh>,
@@ -222,7 +222,7 @@ pub(super) struct HandAssets {
 }
 
 impl HandAssets {
-    fn load(
+    pub(in crate::render) fn load(
         &mut self,
         meshes: &mut Assets<Mesh>,
         materials: &mut Assets<StandardMaterial>,
