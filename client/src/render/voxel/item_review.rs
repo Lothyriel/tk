@@ -24,11 +24,16 @@ impl bevy::prelude::Plugin for Plugin {
             Ok("front") | Err(_) => 0.0,
             Ok(value) => panic!("unknown item review angle: {value}"),
         };
+        let focus = std::env::var("TK_ITEM_REVIEW_FOCUS").ok();
+        if let Some(id) = &focus {
+            assert!(S1_SEEDS.contains(&id.as_str()), "unknown review item: {id}");
+        }
         app.init_resource::<VoxelCache>()
             .insert_resource(Settings {
                 angle,
                 benchmark,
                 screenshot,
+                focus,
             })
             .add_plugins(item_icons::Plugin)
             .add_systems(Startup, setup)
@@ -42,6 +47,7 @@ struct Settings {
     angle: f32,
     benchmark: bool,
     screenshot: Option<std::path::PathBuf>,
+    focus: Option<String>,
 }
 
 #[derive(Component)]
@@ -57,10 +63,18 @@ fn setup(
     {
         window.present_mode = PresentMode::AutoNoVsync;
     }
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, 0.85, -1.65).looking_at(Vec3::new(0.0, 0.08, 0.0), Vec3::Y),
-    ));
+    let camera = if let Some(id) = &settings.focus {
+        let half = Vec3::from_array(item_visuals()[id].collider_half_extents());
+        // Frame the enclosing sphere, so the same distance works for all
+        // review angles without changing the authored scale.
+        let radius = half.length();
+        let center = Vec3::Y * half.y;
+        Transform::from_translation(center + Vec3::new(0.0, 1.6, -3.2) * radius)
+            .looking_at(center, Vec3::Y)
+    } else {
+        Transform::from_xyz(0.0, 0.85, -1.65).looking_at(Vec3::new(0.0, 0.08, 0.0), Vec3::Y)
+    };
+    commands.spawn((Camera3d::default(), camera));
     commands.spawn((
         DirectionalLight {
             illuminance: 9000.0,
@@ -73,9 +87,16 @@ fn setup(
         ..default()
     });
     for (index, id) in S1_SEEDS.into_iter().enumerate() {
+        if settings.focus.as_deref().is_some_and(|focus| focus != id) {
+            continue;
+        }
         let binding = &item_visuals()[id];
         let center = Vec3::from_array(binding.collider_center());
-        let pad = Vec3::new((index as f32 - 2.5) * -0.21, 0.0, 0.0);
+        let pad = if settings.focus.is_some() {
+            Vec3::ZERO
+        } else {
+            Vec3::new((index as f32 - 2.5) * -0.21, 0.0, 0.0)
+        };
         let offset = Vec3::new(center.x, binding.min[1], center.z);
         commands
             .spawn((
@@ -104,6 +125,9 @@ fn setup(
         })
         .with_children(|row| {
             for id in S1_SEEDS {
+                if settings.focus.as_deref().is_some_and(|focus| focus != id) {
+                    continue;
+                }
                 row.spawn((
                     ItemIcon(id.into()),
                     Node {
@@ -115,7 +139,10 @@ fn setup(
             }
         });
     commands.spawn((
-        Text::new("Item review  |  1 Front  2 Side  3 Back  |  F12 Screenshot"),
+        Text::new(format!(
+            "Item review: {}  |  1 Front  2 Side  3 Back  |  F12 Screenshot",
+            settings.focus.as_deref().unwrap_or("all seeds")
+        )),
         Node {
             position_type: PositionType::Absolute,
             top: px(18),
