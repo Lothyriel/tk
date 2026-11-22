@@ -1,4 +1,6 @@
 //! Deterministic raid rules. Live state is mutated by the server, snapshots are read by clients.
+pub mod item_target;
+
 use bevy::prelude::*;
 use rkyv::{Archive, Deserialize, Serialize};
 
