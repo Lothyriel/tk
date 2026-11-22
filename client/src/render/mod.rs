@@ -384,12 +384,15 @@ fn spawn_ammo_hud(mut commands: Commands) {
     commands.spawn((
         AmmoHud,
         Text::new("30"),
+        BackgroundColor(crate::hud::HUD_BACKDROP),
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(20.0),
             bottom: Val::Px(18.0),
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
             ..default()
         },
+        Pickable::IGNORE,
         TextFont::from_font_size(28.0),
         TextColor(Color::WHITE),
         GlobalZIndex(100),

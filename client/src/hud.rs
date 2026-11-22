@@ -10,6 +10,7 @@ use crate::{ClientSystems, input::inventory_panel::GridFont, sync::ClientSession
 mod combat;
 
 const RAID_TEXT_COLOR: Color = Color::srgb(0.9, 0.97, 1.0);
+pub(crate) const HUD_BACKDROP: Color = Color::srgba(0.015, 0.025, 0.04, 0.88);
 
 pub struct Plugin;
 
@@ -45,7 +46,7 @@ fn setup(mut commands: Commands) {
             Text::new("TK / EXTRACTION ALPHA\nConnecting to server..."),
             TextFont::from_font_size(16.0),
             TextColor(RAID_TEXT_COLOR),
-            BackgroundColor(Color::srgba(0.015, 0.025, 0.04, 0.88)),
+            BackgroundColor(HUD_BACKDROP),
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(18.0),
@@ -66,8 +67,8 @@ fn setup(mut commands: Commands) {
         MetricsHud,
         Text::new("FPS --\nFRAME -- ms"),
         TextFont::from_font_size(14.0),
-        TextColor(Color::srgb(0.9, 0.97, 1.0)),
-        BackgroundColor(Color::srgba(0.015, 0.025, 0.04, 0.72)),
+        TextColor(RAID_TEXT_COLOR),
+        BackgroundColor(HUD_BACKDROP),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(18.0),
@@ -322,6 +323,18 @@ fn append_exit(text: &mut String, distance: f32, participant: &Participant) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_backdrop_meets_text_contrast_over_white() {
+        let luminance = |c: LinearRgba| 0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue;
+        let panel = HUD_BACKDROP.to_linear();
+        // White maximizes the panel luminance under linear alpha blending.
+        let background = luminance(panel) * panel.alpha + (1.0 - panel.alpha);
+        for foreground in [RAID_TEXT_COLOR, Color::WHITE] {
+            let contrast = (luminance(foreground.to_linear()) + 0.05) / (background + 0.05);
+            assert!(contrast >= 4.5, "HUD contrast is {contrast:.2}:1");
+        }
+    }
 
     #[test]
     fn raid_hud_distinguishes_chamber_inserted_rounds_and_detached_magazine() {
