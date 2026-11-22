@@ -24,6 +24,26 @@ struct ArchiveDocument {
     items: Vec<ArchiveItem>,
 }
 
+impl ArchiveDocument {
+    fn migrate_legacy(mut self) -> Result<Self, ArchiveError> {
+        match self.schema_version {
+            0 => {
+                // v0 used a pre-namespace ID. v1 is canonical-only; unknown
+                // references are left intact for validation, never defaulted.
+                for item in &mut self.items {
+                    if item.definition == "bandage" {
+                        item.definition = "med.bandage".into();
+                    }
+                }
+                self.schema_version = LEGACY_SCHEMA;
+                Ok(self)
+            }
+            LEGACY_SCHEMA => Ok(self),
+            version => Err(ArchiveError::UnsupportedSchema(version)),
+        }
+    }
+}
+
 #[derive(Archive, Serialize, Deserialize)]
 struct ArchiveCompartment {
     id: CompartmentId,
@@ -137,10 +157,7 @@ impl Inventory {
         } else {
             let doc =
                 data::try_decode::<ArchiveDocument>(bytes).map_err(|_| ArchiveError::Malformed)?;
-            if !matches!(doc.schema_version, 0 | LEGACY_SCHEMA) {
-                return Err(ArchiveError::UnsupportedSchema(doc.schema_version));
-            }
-            (doc, None)
+            (doc.migrate_legacy()?, None)
         };
         if doc.catalog_revision != item_manifest::REVISION {
             return Err(ArchiveError::UnknownRevision(doc.catalog_revision));
@@ -157,14 +174,8 @@ impl Inventory {
             if i.id.0 == 0 || i.id.0 > doc.last_id || result.items.contains_key(&i.id) {
                 return Err(ArchiveError::InvalidId(i.id));
             }
-            // The v0 fixture uses the same fields and a pre-namespace ID.
-            // v1 is canonical-only; unknown references never become defaults.
-            let definition = match (doc.schema_version, i.definition.as_str()) {
-                (0, "bandage") => "med.bandage",
-                (_, id) => id,
-            };
             let invalid = |err| ArchiveError::InvalidItem(i.id, err);
-            let mut item = ItemInstance::seed(definition, i.condition, i.quantity, i.location)
+            let mut item = ItemInstance::seed(&i.definition, i.condition, i.quantity, i.location)
                 .map_err(invalid)?;
             if let Some(contents) = &contents {
                 item = item.with_contents(contents[index]).map_err(invalid)?;
@@ -242,11 +253,33 @@ mod tests {
     }
 
     #[test]
+    fn item_archive_migrates_v0_to_canonical_v1_deterministically() {
+        let v0 = data::encode(&fixture());
+        let migrate = || {
+            data::try_decode::<ArchiveDocument>(&v0)
+                .unwrap()
+                .migrate_legacy()
+                .unwrap()
+        };
+        let v1 = migrate();
+        assert_eq!(v1.schema_version, 1);
+        assert_eq!(v1.items[0].definition, "med.bandage");
+        let encoded = data::encode(&v1);
+        assert_eq!(data::encode(&migrate()), encoded);
+        let original = Inventory::import_archive(&v0).unwrap();
+        let canonical = Inventory::import_archive(&encoded).unwrap();
+        assert_eq!(
+            original.export_archive().unwrap(),
+            canonical.export_archive().unwrap()
+        );
+    }
+
+    #[test]
     fn item_archive_roundtrips_contents_and_rejects_incompatible_payload() {
         let mut inventory = Inventory::default();
         let compartment = CompartmentId(1);
         inventory
-            .register_compartment(compartment, Footprint::new(4, 4).unwrap(), None)
+            .register_compartment(compartment, Footprint::new(8, 4).unwrap(), None)
             .unwrap();
         let location = GridLocation {
             compartment,
@@ -260,9 +293,27 @@ mod tests {
         let id = inventory
             .insert_seed_with_contents("food.water500", Condition::Intact, 1, location, water)
             .unwrap();
+        for (x, seed, quantity, contents) in [
+            (
+                1,
+                "med.bandage",
+                2,
+                ItemContents::Dressing { sealed: false },
+            ),
+            (2, "ammo.mag_ar30", 1, ItemContents::EmptyMagazine),
+            (3, "elec.ssd", 1, ItemContents::None),
+            (4, "value.watch_mechanical", 1, ItemContents::None),
+            (5, "carry.daypack", 1, ItemContents::None),
+        ] {
+            let mut location = location;
+            location.placement.x = x;
+            inventory
+                .insert_seed_with_contents(seed, Condition::Damaged, quantity, location, contents)
+                .unwrap();
+        }
         let exported = inventory.export_archive().unwrap();
         let restored = Inventory::import_archive(&exported).unwrap();
-        assert_eq!(restored.get(id), inventory.get(id));
+        assert_eq!(restored.items, inventory.items);
         assert_eq!(restored.get(id).unwrap().mass_g(), 205);
         let mut doc =
             data::try_decode::<ContentDocument>(exported.strip_prefix(MAGIC).unwrap()).unwrap();
