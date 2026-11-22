@@ -2028,40 +2028,40 @@ mod tests {
 
     #[test]
     fn inventory_grid_split_clamps_quantity_and_waits_for_confirmed_stack() {
+        for quantity in [1, 2] {
+            assert_split_choice(quantity);
+        }
+    }
+
+    fn assert_split_choice(quantity: u16) {
         let (mut app, mut authority, item) = fixture_with_stacks(true);
+        let original = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        let mut server = RenetServer::new(data::renet_config());
+        server.add_connection(7, false);
+        let feedback = |app: &mut App| {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<&Text, With<Feedback>>();
+            query.single(world).unwrap().as_str().to_owned()
+        };
         let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
         keys.reset_all();
         keys.press(KeyCode::ShiftLeft);
         keys.press(KeyCode::Enter);
         app.update();
         key(&mut app, KeyCode::ArrowLeft);
-        assert_eq!(
-            app.world()
-                .resource::<Panel>()
-                .drag
-                .unwrap()
-                .split
-                .unwrap()
-                .quantity,
-            1
-        );
-        key(&mut app, KeyCode::ArrowRight);
-        key(&mut app, KeyCode::ArrowRight);
-        assert_eq!(
-            app.world()
-                .resource::<Panel>()
-                .drag
-                .unwrap()
-                .split
-                .unwrap()
-                .quantity,
-            2
-        );
+        assert!(feedback(&mut app).starts_with("Split 1 / 2 ·"));
+        if quantity == 2 {
+            key(&mut app, KeyCode::ArrowRight);
+            key(&mut app, KeyCode::ArrowRight);
+        }
+        assert!(feedback(&mut app).starts_with(&format!("Split {quantity} / 2 ·")));
+        assert!(transfer(&mut app, &mut server).is_none());
         key(&mut app, KeyCode::Enter);
         key(&mut app, KeyCode::ArrowDown);
+        assert!(feedback(&mut app).starts_with(&format!("Place split ×{quantity} ·")));
+        assert!(app.world().resource::<Panel>().pending.is_none());
+        assert!(transfer(&mut app, &mut server).is_none());
         key(&mut app, KeyCode::Enter);
-        let mut server = RenetServer::new(data::renet_config());
-        server.add_connection(7, false);
         let Some(InventoryRequest::Operate(op)) = transfer(&mut app, &mut server) else {
             panic!("expected Split");
         };
@@ -2069,7 +2069,7 @@ mod tests {
             op.action,
             InventoryAction::Split {
                 item,
-                quantity: 2,
+                quantity,
                 destination: GridLocation {
                     compartment: OWN,
                     placement: placement(0, 1)
@@ -2077,25 +2077,50 @@ mod tests {
             }
         );
         assert_eq!(
-            app.world()
-                .resource::<State>()
-                .owned_grid(1, 7)
-                .unwrap()
-                .items[0]
-                .1
-                .quantity,
-            3
+            app.world().resource::<State>().owned_grid(1, 7),
+            Some(&original)
         );
+        assert!(app.world().resource::<Panel>().pending.is_some());
         apply_stack_operation(&mut app, &mut authority, op);
         assert_eq!(
             app.world().resource::<Panel>().feedback,
             Some("Split confirmed")
         );
         let snapshot = authority.snapshot(OWN, |id| id == OWN).unwrap();
+        assert_eq!(snapshot.version.revision, original.version.revision + 1);
         assert_eq!(snapshot.items.len(), 3);
-        assert!(snapshot.items.iter().any(|(id, stack)| *id != item
-            && stack.placement == placement(0, 1)
-            && stack.quantity == 2));
+        let mut source = original
+            .items
+            .iter()
+            .find(|(id, _)| *id == item)
+            .unwrap()
+            .1
+            .clone();
+        source.quantity = 3 - quantity;
+        for (id, stack) in &original.items {
+            let expected = if *id == item { &source } else { stack };
+            assert!(
+                snapshot
+                    .items
+                    .iter()
+                    .any(|(next, stack)| next == id && stack == expected)
+            );
+        }
+        let (child, split) = snapshot
+            .items
+            .iter()
+            .find(|(id, _)| original.items.iter().all(|(old, _)| old != id))
+            .unwrap();
+        let mut expected = source;
+        expected.quantity = quantity;
+        expected.placement = placement(0, 1);
+        assert_ne!(*child, item);
+        assert_eq!(split, &expected);
+        assert_eq!(
+            app.world().resource::<State>().owned_grid(1, 7),
+            Some(&snapshot)
+        );
+        assert!(app.world().resource::<Panel>().pending.is_none());
         assert!(transfer(&mut app, &mut server).is_none());
     }
 
