@@ -350,7 +350,7 @@ def main():
     parser.add_argument("--arena-solo", action="store_true",
                         help="Verify both solo Arena respawns and a clean second session over UDP")
     parser.add_argument("--arena-then-raid", action="store_true",
-                        help="After Arena Solo return, deploy a normal raid and verify no respawn")
+                        help="After Arena return, check solo raid no-respawn or PvP-to-raid continuity")
     parser.add_argument("--arena-pvp", action="store_true",
                         help="Verify both PvP respawns and a disconnect with two rendered clients")
     parser.add_argument("--voxel-loot", action="store_true", help="Exercise the six voxel loot seeds instead of collecting legacy crates")
@@ -420,8 +420,8 @@ def main():
     ):
         parser.error("--combat-hud-checkpoint requires --animation-review --clients 2 and an explicit --viewport with static capture")
     arena = args.arena_solo or args.arena_pvp
-    if args.arena_then_raid and not (args.arena_solo and args.no_capture):
-        parser.error("--arena-then-raid requires --arena-solo --no-capture")
+    if args.arena_then_raid and not (arena and args.no_capture):
+        parser.error("--arena-then-raid requires --arena-solo or --arena-pvp, with --no-capture")
     if arena and (args.arena_solo and args.arena_pvp
                   or args.clients != (1 if args.arena_solo else 2)
                   or args.pov or args.voxel_loot or args.animation_review
@@ -692,6 +692,7 @@ def main():
         "route": ("deploy -> two pickups -> partial merge -> stop" if args.inventory_grid_partial_merge
                   else "deploy -> fragment backpack -> check water HUD -> confirmed Move -> check water HUD"
                   if args.inventory_grid_pickup_hint
+                  else "arena-pvp -> leave -> two-player raid deploy" if args.arena_pvp and args.arena_then_raid
                   else "arena-solo -> return -> ordinary raid dead debrief" if args.arena_then_raid
                   else "arena-solo" if args.arena_solo else "arena-pvp" if args.arena_pvp
                   else "deploy -> dual loose item pickup -> stop" if args.loot_contest else args.pov
@@ -800,11 +801,22 @@ def main():
         print(result, end="")
         return
     if args.arena_pvp:
+        handoffs = []
         for role, directory in enumerate((output, output / "peer")):
             text = (directory / "client.log").read_text(encoding="utf-8", errors="replace")
             assert "panicked at" not in text and " ERROR " not in text, directory
             cues = [f"ARENA PVP DEATH role={role} target={i} life=0" for i in range(2)]
-            cues += [f"ARENA PVP RETURNS role={role} lives=1/1", "ARENA PVP PASS"]
+            cues += [f"ARENA PVP RETURNS role={role} lives=1/1"]
+            if args.arena_then_raid:
+                cues += [f"ARENA PVP RAID LOBBY role={role}", f"ARENA PVP RAID PASS role={role}"]
+                checkpoints = re.findall(
+                    rf"ARENA PVP RAID PASS role={role} arena=(\d+) raid=(\d+) ids=(\d+)/(\d+) snapshot=\d+",
+                    text,
+                )
+                assert len(checkpoints) == 1, f"Missing or repeated handoff: {directory}"
+                handoffs.append(checkpoints[0])
+            else:
+                cues += ["ARENA PVP PASS"]
             offsets = [text.index(cue) for cue in cues]
             assert offsets == sorted(offsets), f"Unexpected PvP transitions: {directory}"
             if not args.no_capture:
@@ -813,7 +825,12 @@ def main():
                     assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
                     if args.viewport:
                         assert struct.unpack(">II", data[16:24]) == args.viewport
-        result = "PASS: native Arena PvP, real UDP, both deaths and returns, clean lobby after disconnect\n"
+        if args.arena_then_raid:
+            assert handoffs[0] == handoffs[1], f"Clients disagree on handoff epoch or roster: {output}"
+            assert not list(output.rglob("*.png")), f"No-capture route produced media: {output}"
+            result = "PASS: two native UDP clients kept their identities through Arena PvP -> ordinary raid\n"
+        else:
+            result = "PASS: native Arena PvP, real UDP, both deaths and returns, clean lobby after disconnect\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
         print(result, end="")
         return

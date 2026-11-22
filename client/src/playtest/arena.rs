@@ -258,6 +258,96 @@ pub(super) struct Duel {
     lives: [Option<u8>; 2],
     saw_death: [bool; 2],
     finished_at: Option<f64>,
+    handoff: Option<PvpHandoff>,
+}
+
+struct PvpHandoff {
+    arena: u32,
+    ids: [u64; 2],
+    snapshot: u64,
+    ready: bool,
+    deployed_at: Option<f32>,
+    proven_at: Option<f64>,
+}
+
+impl PvpHandoff {
+    fn tick(
+        &mut self,
+        session: &ClientSession,
+        input: &mut LocalInput,
+        role: usize,
+        leave: bool,
+    ) -> bool {
+        assert!(session.last_sequence >= self.snapshot);
+        for id in self.ids {
+            let actor = session.local(id).expect("original player missing");
+            assert!(!actor.bot);
+        }
+        assert_eq!(session.players.iter().filter(|actor| !actor.bot).count(), 2);
+        if session.raid.mode == MatchMode::ArenaPvp && session.raid.phase == RaidPhase::Active {
+            assert_eq!(session.raid.raid_id, self.arena);
+            if role == 0 && leave && !input.arena_leave {
+                input.arena_leave = true;
+                input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
+            }
+            return false;
+        }
+        input.mode = MatchMode::Raid;
+        input.arena_leave = false;
+        if !self.ready {
+            assert_eq!(session.raid.phase, RaidPhase::Lobby);
+            assert_eq!(session.raid.raid_id, self.arena);
+            if session.raid.mode != MatchMode::Raid {
+                return false;
+            }
+            assert!(session.last_sequence > self.snapshot);
+            assert_eq!(session.players.len(), 2);
+            assert!(session.physics_pieces.is_empty());
+            // The other player may have already readied. Our own ready must be cleared.
+            assert!(!session.local(self.ids[role]).unwrap().participant.ready);
+            for id in self.ids {
+                let actor = session.local(id).unwrap();
+                assert_eq!(actor.participant.status, RaidStatus::Waiting);
+                assert_eq!((actor.life, actor.respawn_ticks), (0, 0));
+            }
+            info!(
+                "ARENA PVP RAID LOBBY role={role} arena={} ids={}/{} snapshot={}",
+                self.arena, self.ids[0], self.ids[1], session.last_sequence
+            );
+            input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
+            self.ready = true;
+            return false;
+        }
+        assert_eq!(session.raid.mode, MatchMode::Raid);
+        if session.raid.phase != RaidPhase::Active {
+            assert!(self.deployed_at.is_none());
+            return false;
+        }
+        assert_eq!(session.raid.raid_id, self.arena.wrapping_add(1));
+        assert!(session.raid.loot_active());
+        assert_eq!(
+            session.players.iter().filter(|actor| actor.bot).count(),
+            common::map::BOT_POSITIONS.len()
+        );
+        assert!(session.physics_pieces.is_empty());
+        assert!(input.arena_life.is_none());
+        for id in self.ids {
+            let actor = session.local(id).unwrap();
+            assert!(session.playing(id));
+            assert_eq!((actor.life, actor.respawn_ticks), (0, 0));
+            assert!(!actor.participant.ready);
+            assert_eq!(actor.participant.carried, 0);
+        }
+        let since = *self.deployed_at.get_or_insert(session.simulation_time);
+        if session.simulation_time - since < 0.5 {
+            return false;
+        }
+        info!(
+            "ARENA PVP RAID PASS role={role} arena={} raid={} ids={}/{} snapshot={}",
+            self.arena, session.raid.raid_id, self.ids[0], self.ids[1], session.last_sequence
+        );
+        true
+    }
 }
 
 pub(super) fn pvp(
@@ -272,12 +362,35 @@ pub(super) fn pvp(
     let now = time.elapsed_secs_f64();
     assert!(
         now < 65.0,
-        "PvP route timed out; deaths={:?}",
-        duel.saw_death
+        "PvP route timed out; deaths={:?}, phase={:?}, mode={:?}",
+        duel.saw_death,
+        session.raid.phase,
+        session.raid.mode
     );
     let peer = std::env::var("TK_PLAYTEST_ROLE").as_deref() == Ok("1");
     let role = usize::from(peer);
     input.fire = false;
+    let raid_after = std::env::var_os("TK_PLAYTEST_ARENA_THEN_RAID").is_some();
+    let leave = duel.finished_at.is_some_and(|at| now - at > 1.0);
+    if let Some(handoff) = &mut duel.handoff {
+        if let Some(at) = handoff.proven_at {
+            // Give the other client time to finish reading the same raid.
+            if now - at > 1.0 {
+                exit.write(AppExit::Success);
+            }
+            return;
+        }
+        assert!(network.is_connected());
+        assert_eq!(id.0, handoff.ids[role]);
+        assert!(
+            now - session.last_received < 1.0,
+            "Authoritative snapshots stopped"
+        );
+        if handoff.tick(&session, &mut input, role, leave) {
+            handoff.proven_at = Some(now);
+        }
+        return;
+    }
     if peer && duel.finished_at.is_some_and(|at| now - at > 1.0) {
         if !network.is_disconnected() {
             network.disconnect();
@@ -292,6 +405,10 @@ pub(super) fn pvp(
         return;
     };
     if session.raid.phase == RaidPhase::Lobby {
+        assert!(
+            !raid_after || !duel.ready_sent,
+            "PvP ended before both returns were observed"
+        );
         if !duel.ready_sent {
             input.mode = MatchMode::ArenaPvp;
             input.lobby_sequence = input.lobby_sequence.wrapping_add(1);
@@ -347,6 +464,16 @@ pub(super) fn pvp(
             assert_eq!(player.body.parts, [35.0, 85.0, 60.0, 70.0]);
             capture(&mut commands, "pvp-both-returned");
             duel.finished_at = Some(now);
+            if raid_after {
+                duel.handoff = Some(PvpHandoff {
+                    arena: session.raid.raid_id,
+                    ids: [roster[0].id, roster[1].id],
+                    snapshot: session.last_sequence,
+                    ready: false,
+                    deployed_at: None,
+                    proven_at: None,
+                });
+            }
             info!(
                 "ARENA PVP RETURNS role={role} lives={}/{}",
                 roster[0].life, roster[1].life

@@ -216,6 +216,17 @@ para o lobby e inicia uma raid normal. Após a morte, confere a permanência
 no debrief, a ausência de respawn e o texto do menu por mais que o atraso
 de respawn da Arena. Não verifica interação física com os menus.
 
+Para conferir a continuidade dos dois clientes de Arena PvP até uma raid
+normal, sem repetir o teste de morte da raid:
+
+```sh
+python scripts/playtest.py --arena-pvp --clients 2 --arena-then-raid \
+  --no-capture --viewport 1280x800 --output "$OUT"
+```
+
+A rota usa a saída normal da Arena, sem desconectar, e compara as
+identidades e a época da nova raid nos dois clientes.
+
 #### Dica de espaço no HUD em UDP solo
 
 Para verificar a dica de espaço no HUD com os itens normais da raid:
