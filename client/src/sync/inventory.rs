@@ -22,6 +22,7 @@ pub(crate) struct State {
     last_operation: u64,
     pending: Option<InventoryOperation>,
     ground: Vec<GroundItem>,
+    focus: Option<common::catalog::ItemInstanceId>,
 }
 
 /// Intent from the inventory UI. Compartments are in source/destination order.
@@ -40,6 +41,14 @@ pub(crate) struct OperationFinished {
 impl State {
     pub(crate) fn ground(&self) -> (&[GroundItem], Option<SessionKey>) {
         (&self.ground, self.session)
+    }
+
+    pub(crate) fn focused_ground(&self, raid: u32) -> Option<&GroundItem> {
+        if self.session?.raid_epoch != u64::from(raid) {
+            return None;
+        }
+        let focus = self.focus?;
+        self.ground.iter().find(|item| item.id == focus)
     }
 
     pub(crate) fn apply(&mut self, update: InventoryUpdate) -> Option<OperationFinished> {
@@ -93,7 +102,13 @@ impl State {
                     })
                 {
                     self.ground = items;
+                    self.focus = self
+                        .focus
+                        .filter(|id| self.ground.iter().any(|item| item.id == *id));
                 }
+            }
+            UpdateBody::GroundFocus(focus) => {
+                self.focus = focus.filter(|id| self.ground.iter().any(|item| item.id == *id));
             }
             // An acknowledgment never substitutes for a confirmed delta.
             UpdateBody::Result { id, result } => {

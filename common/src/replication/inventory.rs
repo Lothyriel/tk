@@ -14,7 +14,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 pub const CHANNEL: u8 = 6;
 pub const MAX_REQUEST_BYTES: usize = 256;
 pub const MAX_UPDATE_BYTES: usize = 16 * 1024;
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 
 #[derive(Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub enum InventoryRequest {
@@ -39,6 +39,7 @@ pub enum UpdateBody {
     Delta(Vec<CompartmentDelta>),
     Result { id: u64, result: OperationResult },
     Ground(Vec<GroundItem>),
+    GroundFocus(Option<ItemInstanceId>),
 }
 
 #[derive(Clone, Debug, PartialEq, Archive, Serialize, Deserialize)]

@@ -558,6 +558,54 @@ fn physical_fixture() -> (App, Entity, Entity) {
     (app, a, b)
 }
 
+#[test]
+fn ground_focus_checks_real_cover_reach_and_actor_state() {
+    use bevy::ecs::system::RunSystemOnce;
+    use common::catalog::{CompartmentId, ItemInstanceId};
+    use common::humanoid::{PhysicalMode, PoseState};
+
+    let (mut app, actor, _) = physical_fixture();
+    let eye = simulation::neutral_eye(
+        app.world().get::<Transform>(actor).unwrap(),
+        app.world().get::<MovementState>(actor).unwrap(),
+    );
+    app.world_mut()
+        .get_mut::<ClientInput>(actor)
+        .unwrap()
+        .camera = CameraInput::default();
+    let focus = |app: &mut App, distance: f32| {
+        app.world_mut()
+            .run_system_once(move |sight: inventory::TargetSight| {
+                sight.focus(
+                    actor,
+                    &[inventory::WorldItem {
+                        id: ItemInstanceId(1),
+                        source: CompartmentId(u64::MAX),
+                        center: eye + Vec3::NEG_Z * distance,
+                        half_extents: Vec3::splat(0.1),
+                    }],
+                )
+            })
+            .unwrap()
+    };
+    assert_eq!(focus(&mut app, 1.5), Some(ItemInstanceId(1)));
+    assert_eq!(focus(&mut app, 3.0), None);
+    let wall = app
+        .world_mut()
+        .spawn((
+            Collider::cuboid(0.4, 0.4, 0.05),
+            Transform::from_translation(eye + Vec3::NEG_Z * 0.75),
+        ))
+        .id();
+    steps(&mut app, 3);
+    assert_eq!(focus(&mut app, 1.5), None);
+    app.world_mut().entity_mut(wall).despawn();
+    steps(&mut app, 3);
+    assert_eq!(focus(&mut app, 1.5), Some(ItemInstanceId(1)));
+    app.world_mut().get_mut::<PoseState>(actor).unwrap().mode = PhysicalMode::Fallen;
+    assert_eq!(focus(&mut app, 1.5), None);
+}
+
 fn normal_shot(app: &mut App, shooter: Entity, target: Vec3) {
     let t = *app.world().get::<Transform>(shooter).unwrap();
     let eye = t.translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
@@ -3308,5 +3356,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
     assert_eq!(cover.cuts.len(), 1);
     assert_eq!(cover.cuts[0].cell, cell.id);
     assert_eq!(cover.raid_id, snapshot.raid.raid_id);
-    assert_eq!(PROTOCOL_ID, 20);
+    assert_eq!(PROTOCOL_ID, 21);
 }

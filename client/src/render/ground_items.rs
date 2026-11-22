@@ -109,6 +109,12 @@ mod tests {
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].1, item_visuals()[S1_SEEDS[3]].asset_key);
         assert_eq!(first[0].2, Vec3::from_array(item.root));
+        apply(&mut app, key, UpdateBody::GroundFocus(Some(item.id)));
+        assert_eq!(
+            app.world().resource::<State>().focused_ground(1),
+            Some(&item)
+        );
+        assert!(app.world().resource::<State>().focused_ground(2).is_none());
         apply(&mut app, key, ground());
         for invalid in [
             vec![item.clone(), item.clone()],
@@ -130,6 +136,7 @@ mod tests {
         assert_eq!(sample(&mut app), first);
         apply(&mut app, key, UpdateBody::Ground(vec![]));
         assert!(sample(&mut app).is_empty());
+        assert!(app.world().resource::<State>().focused_ground(1).is_none());
         apply(&mut app, next, UpdateBody::Begin);
         apply(&mut app, key, ground());
         assert!(sample(&mut app).is_empty());

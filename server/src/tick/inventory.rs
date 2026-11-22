@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
+use bevy_rapier3d::prelude::*;
 use bevy_renet2::prelude::RenetServer;
 use common::{
-    Lobby,
+    CameraInput, ClientInput, Lobby, MovementState,
     catalog::{
         CompartmentId, ItemInstanceId,
         item_grid::{Footprint, Placement, Rotation},
@@ -12,7 +13,12 @@ use common::{
         },
         item_manifest::{S1_SEEDS, item_visuals, planned_items},
     },
-    raid::{Participant, RaidPhase, RaidState, RaidStatus},
+    combat::{Arsenal, BodyHealth},
+    humanoid::{PhysicalMode, PoseState, aim_lean_offset},
+    raid::{
+        Participant, RaidPhase, RaidState, RaidStatus,
+        item_target::{GroundTarget, PICKUP_REACH_M, first_ground_target},
+    },
     replication::inventory::{CHANNEL, GroundItem, InventoryRequest, InventoryUpdate, UpdateBody},
 };
 
@@ -48,6 +54,7 @@ struct Peer {
     remaining: u8,
     open: Option<CompartmentId>,
     ground_count: usize,
+    focus: Option<ItemInstanceId>,
 }
 
 #[derive(Default)]
@@ -127,6 +134,7 @@ pub(super) fn receive(
     lobby: Res<Lobby>,
     raid: Res<RaidState>,
     participants: Query<(&Participant, Option<&OpenContainer>)>,
+    sight: TargetSight,
     mut state: Local<Endpoint>,
     #[cfg(test)] fixture: Option<ResMut<UdpInventoryFixture>>,
 ) {
@@ -141,7 +149,86 @@ pub(super) fn receive(
         state.peers.clear();
     }
     state.sync_world(&raid);
-    process(&mut server, &lobby, &raid, &participants, &mut state);
+    process(
+        &mut server,
+        &lobby,
+        &raid,
+        &participants,
+        &sight,
+        &mut state,
+    );
+}
+
+#[derive(SystemParam)]
+pub(super) struct TargetSight<'w, 's> {
+    context: ReadRapierContext<'w, 's>,
+    actors: Query<
+        'w,
+        's,
+        (
+            &'static ClientInput,
+            &'static Transform,
+            &'static MovementState,
+            &'static Participant,
+            &'static PoseState,
+            &'static BodyHealth,
+            &'static Arsenal,
+        ),
+    >,
+}
+
+impl TargetSight<'_, '_> {
+    pub(super) fn focus(&self, entity: Entity, items: &[WorldItem]) -> Option<ItemInstanceId> {
+        if items.is_empty() {
+            return None;
+        }
+        let (input, root, movement, participant, pose, body, arsenal) =
+            self.actors.get(entity).ok()?;
+        if participant.status != RaidStatus::Active
+            || !body.alive()
+            || !matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
+        {
+            return None;
+        }
+        let camera = arsenal.recoil.camera(CameraInput {
+            roll: pose.aim_roll,
+            ..input.camera
+        });
+        let direction = Dir3::new(Quat::from(&camera) * Vec3::NEG_Z).ok()?;
+        let eye = super::simulation::neutral_eye(root, movement)
+            + root.rotation * aim_lean_offset(pose.aim_roll);
+        if !eye.is_finite() {
+            return None;
+        }
+        let obstruction = self
+            .context
+            .single()
+            .ok()?
+            .cast_ray(
+                eye,
+                *direction,
+                PICKUP_REACH_M,
+                true,
+                QueryFilter::new()
+                    .groups(CollisionGroups::new(
+                        Group::ALL,
+                        Group::GROUP_1 | Group::GROUP_4,
+                    ))
+                    .exclude_collider(entity)
+                    .exclude_sensors(),
+            )
+            .map(|(_, distance)| distance);
+        first_ground_target(
+            eye,
+            direction,
+            obstruction,
+            items.iter().map(|item| GroundTarget {
+                id: item.id,
+                center: item.center,
+                half_extents: item.half_extents,
+            }),
+        )
+    }
 }
 
 impl Endpoint {
@@ -163,6 +250,7 @@ fn process(
     lobby: &Lobby,
     raid: &RaidState,
     participants: &Query<(&Participant, Option<&OpenContainer>)>,
+    sight: &TargetSight,
     state: &mut Endpoint,
 ) {
     if state.raid != Some(raid.raid_id) {
@@ -219,6 +307,7 @@ fn process(
                     remaining: REQUESTS_PER_WINDOW,
                     open: None,
                     ground_count: 0,
+                    focus: None,
                 },
             );
             send(server, client, key, UpdateBody::Begin);
@@ -245,6 +334,11 @@ fn process(
                 .collect();
             send(server, client, peer.key, UpdateBody::Ground(items));
             peer.ground_count = state.world_items.len();
+        }
+        let focus = sight.focus(entity, &state.world_items);
+        if peer.focus != focus && server.is_connected(client) {
+            send(server, client, peer.key, UpdateBody::GroundFocus(focus));
+            peer.focus = focus;
         }
         if refill {
             peer.remaining = REQUESTS_PER_WINDOW;
@@ -457,8 +551,16 @@ mod tests {
             move |mut server: ResMut<RenetServer>,
                   lobby: Res<Lobby>,
                   raid: Res<RaidState>,
-                  participants: Query<(&Participant, Option<&OpenContainer>)>| {
-                process(&mut server, &lobby, &raid, &participants, &mut endpoint);
+                  participants: Query<(&Participant, Option<&OpenContainer>)>,
+                  sight: TargetSight| {
+                process(
+                    &mut server,
+                    &lobby,
+                    &raid,
+                    &participants,
+                    &sight,
+                    &mut endpoint,
+                );
             },
         );
         let pull = |app: &mut App, client: u64, peer: &mut RenetClient| {

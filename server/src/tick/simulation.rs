@@ -138,7 +138,7 @@ pub(super) fn physx_tick(
     }
 }
 
-fn neutral_eye(transform: &Transform, movement: &MovementState) -> Vec3 {
+pub(super) fn neutral_eye(transform: &Transform, movement: &MovementState) -> Vec3 {
     let stance = if movement.crouched {
         PLAYER_CROUCH_VIEW_OFFSET
     } else {
