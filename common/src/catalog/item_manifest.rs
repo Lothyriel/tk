@@ -2,6 +2,9 @@
 use super::item_grid::Footprint;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod activation;
+pub use activation::{ActiveItem, ActiveItems, ItemActivationError, ItemAssetBinding};
+
 pub const FILE: &str = "common/data/items-v01.tsv";
 pub const REVISION: &str = "0.1";
 const SOURCE: &str = include_str!("../../data/items-v01.tsv");
@@ -145,6 +148,7 @@ mod tests {
             (format!("{row}\n{row}"), "id (malformed or duplicate)"),
             (row.replace("1x2", "0x2"), "grade"),
             (row.replace("530", "NaN"), "massa_g"),
+            (row.replace("530", "-1"), "massa_g"),
             (row.replace("U Shape", "V:missing Shape"), "missing base"),
             (row.replace("U Shape", "V:water Shape"), "cycle"),
         ] {

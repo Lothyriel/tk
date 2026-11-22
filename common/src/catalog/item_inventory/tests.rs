@@ -144,3 +144,58 @@ fn item_inventory_only_accepts_seed_definitions_and_bounded_quantities() {
     }
     assert!(inventory.items.is_empty());
 }
+
+#[test]
+fn item_inventory_generated_split_move_merge_preserves_cells_and_mass() {
+    for x in 0..4 {
+        for y in 0..4 {
+            for total in 2..=3 {
+                for part in 1..total {
+                    let mut inventory = fixture();
+                    let source = at(1, x, y);
+                    let other_grid = at(2, x, y);
+                    let id = inventory
+                        .insert_seed("med.bandage", Condition::Intact, total, source)
+                        .unwrap();
+                    let split = inventory.split(id, part, other_grid).unwrap();
+                    assert_eq!(
+                        inventory.move_item(split, source),
+                        Err(InventoryError::Placement(PlacementError::Occupied))
+                    );
+                    let free = at(1, (x + 1) % 4, y);
+                    inventory.move_item(split, free).unwrap();
+                    let cells: BTreeMap<_, _> = inventory
+                        .items
+                        .values()
+                        .map(|item| {
+                            let location = item.location;
+                            (
+                                (
+                                    location.compartment,
+                                    location.placement.x,
+                                    location.placement.y,
+                                ),
+                                item.quantity,
+                            )
+                        })
+                        .collect();
+                    assert_eq!(
+                        cells,
+                        BTreeMap::from([
+                            ((CompartmentId(1), x, y), total - part),
+                            ((CompartmentId(1), (x + 1) % 4, y), part),
+                        ])
+                    );
+                    assert_eq!(
+                        inventory.items.values().map(|i| i.mass_g()).sum::<u64>(),
+                        35 * u64::from(total)
+                    );
+                    assert_eq!(inventory.merge(split, id), Ok(part));
+                    assert_eq!(inventory.get(id).unwrap().quantity, total);
+                    assert_eq!(inventory.get(id).unwrap().mass_g(), 35 * u64::from(total));
+                    assert!(inventory.get(split).is_none());
+                }
+            }
+        }
+    }
+}
