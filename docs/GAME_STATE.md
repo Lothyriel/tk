@@ -175,7 +175,8 @@ Removing an optional parent also removes its draft descendants; Apply commits
 the whole selection atomically. **Discard draft** restores the confirmed kit.
 Use **Back to lobby** or Esc to close the workbench and restore focus to its
 lobby button. Ready/countdown/raid lock edits; a pending kit confirmation also
-blocks readiness and equipment changes.
+blocks readiness and equipment changes. Countdown closes the workbench and
+prevents reopening it, keeping **Cancel ready** available in the lobby.
 
 For a compact M4A1, select PMAG20, CTR position0, MOE SL, DD10.3 and A2.
 For a suppressed M4A1, select magazine30, CTR position5, RAS, FN14.5, SFMB,

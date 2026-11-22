@@ -310,6 +310,7 @@ fn available(
     bench: Option<&loadout::ui::Action>,
     editable: bool,
     pending: bool,
+    countdown: bool,
     kit: Option<&common::catalog::WeaponKit>,
 ) -> (bool, bool) {
     let shown = match surface {
@@ -368,6 +369,7 @@ fn available(
     };
     let enabled = match action {
         Some(Action::Ready | Action::Return | Action::LeaveArena) => !pending,
+        Some(Action::Bench) => !countdown,
         Some(Action::Mode) => editable,
         Some(action) if action.changes_kit() => editable,
         Some(Action::Settings) => {
@@ -427,13 +429,22 @@ fn route(
         editor.visible = false;
     }
     let lobby = connected && matches!(session.raid.phase, RaidPhase::Lobby | RaidPhase::Countdown);
+    let countdown = session.raid.phase == RaidPhase::Countdown;
     let pending = menu.pending.is_some() || editor.pending.is_some();
     let editable = connected && !pending && editor.editable(&session, id.0);
     let settings_allowed = (playing && menu.paused) || (lobby && editable && !editor.visible);
     let escape = window.focused && keys.just_pressed(KeyCode::Escape) && !panel.consumed_escape;
-    let bench_shortcut =
-        menu.settings.is_none() && lobby && window.focused && keys.just_pressed(KeyCode::KeyV);
-    let mut consumed = false;
+    let bench_shortcut = menu.settings.is_none()
+        && lobby
+        && !countdown
+        && window.focused
+        && keys.just_pressed(KeyCode::KeyV);
+    // Do not cover Cancel ready with the read-only bench during countdown.
+    let mut consumed = countdown && editor.visible;
+    if consumed {
+        editor.visible = false;
+        menu.lobby_focus = None;
+    }
     if menu.settings.is_some() {
         if escape || !settings_allowed {
             menu.settings = None;
@@ -509,6 +520,7 @@ fn route(
                 *bench,
                 editable,
                 pending,
+                countdown,
                 editor.draft.as_ref(),
             );
             connection_action_visible(*action, connection.is_some(), client.is_disconnected())
@@ -577,6 +589,7 @@ fn route(
         bench,
         editable,
         pending,
+        countdown,
         editor.draft.as_ref(),
     )
     .1
@@ -802,6 +815,7 @@ fn present(
     let ready = participant.is_some_and(|p| p.ready);
     let pending = menu.pending.is_some() || editor.pending.is_some();
     let editable = !pending && editor.editable(&session, id.0);
+    let countdown = session.raid.phase == RaidPhase::Countdown;
     ***status = match menu.surface {
         Surface::Lobby => format!(
             "KIT PREPARATION | {}\n{}\nTab / arrows: select | Enter / Space: activate",
@@ -893,12 +907,20 @@ fn present(
         _ => String::new(),
     };
     for (action, children, mut node) in &mut main {
-        node.display = if available(menu.surface, Some(action), None, editable, pending, None).0
-            && connection_action_visible(
-                Some(action),
-                connection.is_some(),
-                client.is_disconnected(),
-            ) {
+        node.display = if available(
+            menu.surface,
+            Some(action),
+            None,
+            editable,
+            pending,
+            countdown,
+            None,
+        )
+        .0 && connection_action_visible(
+            Some(action),
+            connection.is_some(),
+            client.is_disconnected(),
+        ) {
             Display::Flex
         } else {
             Display::None
@@ -971,6 +993,7 @@ fn present(
             bench,
             editable,
             pending,
+            countdown,
             editor.draft.as_ref(),
         );
         let selected = shown && menu.selected == Some(entity);
@@ -1398,6 +1421,63 @@ mod tests {
         click(&mut app, ready);
         app.update();
         assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 4);
+    }
+
+    #[test]
+    fn menu_countdown_keeps_cancel_ready_accessible_from_workbench() {
+        let mut app = fixture();
+        let ready = button(&mut app, Action::Ready);
+        let bench = button(&mut app, Action::Bench);
+        click(&mut app, ready);
+        app.update();
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 1);
+        key(&mut app, KeyCode::KeyV);
+        assert!(app.world().resource::<loadout::Editor>().visible);
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Countdown;
+            session.players[0].participant.last_command = 1;
+            session.players[0].participant.ready = true;
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.update();
+        assert_eq!(app.world().resource::<Menu>().surface, Surface::Lobby);
+        focus(&app, ready);
+        for use_shortcut in [false, true] {
+            if use_shortcut {
+                key(&mut app, KeyCode::KeyV);
+            } else {
+                app.world_mut()
+                    .resource_mut::<ButtonInput<KeyCode>>()
+                    .reset_all();
+                click(&mut app, bench);
+                app.update();
+            }
+            assert_eq!(app.world().resource::<Menu>().surface, Surface::Lobby);
+            assert!(!app.world().resource::<loadout::Editor>().visible);
+            focus(&app, ready);
+        }
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 1);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(app.world().resource::<LocalInput>().lobby_sequence, 2);
+        assert!(
+            app.world()
+                .resource::<ClientSession>()
+                .local(7)
+                .unwrap()
+                .participant
+                .ready
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.phase = RaidPhase::Lobby;
+            session.players[0].participant.last_command = 2;
+            session.players[0].participant.ready = false;
+        }
+        key(&mut app, KeyCode::KeyV);
+        assert_eq!(app.world().resource::<Menu>().surface, Surface::Bench);
     }
 
     #[test]
