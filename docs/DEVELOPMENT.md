@@ -413,6 +413,22 @@ topo e apresentado no topo enquanto a confirmação ainda vale. A rota falha
 sem os três eventos. Isso verifica contato em rede, não a naturalidade da
 passada em velocidade normal.
 
+### Verificação offline de lacuna da câmera (TAR-8)
+
+Com dois CSVs já salvos por `TK_CAMERA_GAP_TRACE`, um controle e uma
+recuperação após uma única lacuna:
+
+```sh
+python scripts/camera_gap.py <controle/camera-gap.csv> <lacuna/camera-gap.csv>
+```
+
+O verificador exige quadros consecutivos do mesmo jogador e raid (permite
+o prelúdio de lobby), retenção exatamente na posição confirmada na precisão
+do CSV e reset no primeiro snapshot novo após uma lacuna superior a 250 ms.
+Reporta deslocamento de recuperação e FPS mediano da raid, não apenas das
+fases de movimento. Não inicia o jogo, não verifica a causa da lacuna e não
+comprova jitter variável, latência no fio ou aceite perceptual de 100 ms.
+
 ### Inversão de lean agachado — telemetria (TAR-97)
 
 ```sh
