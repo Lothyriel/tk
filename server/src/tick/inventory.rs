@@ -1096,6 +1096,129 @@ mod tests {
     }
 
     #[test]
+    fn s1_ground_pickup_waits_for_contiguous_space_in_the_backpack() {
+        let mut endpoint = Endpoint::default();
+        let raid = RaidState {
+            raid_id: 1,
+            phase: RaidPhase::Active,
+            ..default()
+        };
+        endpoint.sync_world(&raid);
+        let [bandage, _, water, ssd, watch, daypack] =
+            std::array::from_fn(|seed| endpoint.world_items[seed].id);
+        let owner = CompartmentId(7);
+        let key = SessionKey {
+            raid_epoch: 1,
+            session_epoch: 1,
+        };
+        let mut session = OperationSession::new(key);
+        let authority = endpoint.authority.as_mut().unwrap();
+        authority
+            .register_compartment(owner, Footprint::new(4, 4).unwrap())
+            .unwrap();
+        let pickup = |endpoint: &mut Endpoint, item| {
+            commit_ground_pickup(
+                endpoint.authority.as_mut().unwrap(),
+                &mut endpoint.world_items,
+                item,
+                owner,
+            )
+        };
+        let mut sequence = 0;
+        let mut move_to = |endpoint: &mut Endpoint, item, x, y| {
+            let authority = endpoint.authority.as_mut().unwrap();
+            sequence += 1;
+            let request = InventoryOperation {
+                session: key,
+                id: sequence,
+                expected: [VersionedCompartment {
+                    id: owner,
+                    revision: authority.revision(owner).unwrap(),
+                }; 2],
+                action: InventoryAction::Move {
+                    item,
+                    destination: GridLocation {
+                        compartment: owner,
+                        placement: Placement {
+                            x,
+                            y,
+                            rotation: Rotation::Upright,
+                        },
+                    },
+                },
+            };
+            assert_eq!(
+                apply_operation(
+                    authority,
+                    &mut endpoint.loot_ids,
+                    &mut session,
+                    request,
+                    |c| c == owner
+                )
+                .result,
+                OperationResult::Committed,
+            );
+        };
+
+        // The 3×3 daypack leaves an L-shaped border. Split that border
+        // into isolated free cells with three ordinary 1×1 picks and moves.
+        assert!(pickup(&mut endpoint, daypack).is_some());
+        for (item, x, y) in [(bandage, 3, 1), (ssd, 1, 3), (watch, 3, 3)] {
+            assert!(pickup(&mut endpoint, item).is_some());
+            move_to(&mut endpoint, item, x, y);
+        }
+        assert_eq!(endpoint.carried(&raid, owner.0), 5);
+        let water_slot = endpoint
+            .world_items
+            .iter()
+            .find(|entry| entry.id == water)
+            .unwrap()
+            .source;
+        let backpack_before = endpoint.fixture_snapshot(owner);
+        let ground_before = endpoint.fixture_snapshot(water_slot);
+        let original = *endpoint
+            .authority
+            .as_ref()
+            .unwrap()
+            .inventory()
+            .get(water)
+            .unwrap();
+
+        assert!(pickup(&mut endpoint, water).is_none());
+        assert_eq!(endpoint.fixture_snapshot(owner), backpack_before);
+        assert_eq!(endpoint.fixture_snapshot(water_slot), ground_before);
+        assert!(
+            endpoint
+                .world_items
+                .iter()
+                .any(|entry| entry.id == water && entry.source == water_slot)
+        );
+        assert_eq!(endpoint.carried(&raid, owner.0), 5);
+
+        // Free a contiguous pair at (3,2) and (3,3), without dropping a stack.
+        move_to(&mut endpoint, watch, 0, 3);
+        let ready = endpoint.fixture_snapshot(owner);
+        assert!(pickup(&mut endpoint, water).is_some());
+        let after = endpoint.fixture_snapshot(owner);
+        assert_eq!(after.version.revision, ready.version.revision + 1);
+        assert!(!endpoint.world_items.iter().any(|entry| entry.id == water));
+        assert!(endpoint.fixture_snapshot(water_slot).items.is_empty());
+        let water_entry = endpoint
+            .authority
+            .as_ref()
+            .unwrap()
+            .inventory()
+            .get(water)
+            .unwrap();
+        assert_eq!(water_entry.location.compartment, owner);
+        assert_eq!(water_entry.definition, original.definition);
+        assert_eq!(water_entry.quantity, original.quantity);
+        assert_eq!(water_entry.condition, original.condition);
+        assert_eq!(water_entry.contents, original.contents);
+        assert_eq!(endpoint.carried(&raid, owner.0), 6);
+    }
+
+    #[test]
     fn world_item_seeds_spawn_once_per_raid_and_leave_on_debrief() {
         let mut endpoint = Endpoint::default();
         let mut raid = RaidState {
