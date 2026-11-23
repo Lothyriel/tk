@@ -636,6 +636,16 @@ pub(super) fn advance(
         let speed = Vec2::new(response.travel.x, response.travel.z).length();
         response.landing +=
             (player.pose.landing - response.landing) * (1.0 - (-time.delta_secs() * 8.0).exp());
+        // Use the same snapshot time as the local weapon. A separate RMB
+        // animation can zoom or hide the reticle while the weapon is still
+        // physically raising, lowering, or waiting for a server action.
+        if local
+            && session.last_sequence != 0
+            && let Some(motion) = session.local_motion.sample(now)
+        {
+            response.ads = motion.ads;
+            continue;
+        }
         let requested = if local {
             if local_input
                 .as_ref()

@@ -53,7 +53,7 @@ impl bevy::prelude::Plugin for Plugin {
                         .before(feedback::animate_local),
                     sync_local_player_rotation,
                     sync_local_view,
-                    sync_local_alive_visibility,
+                    sync_local_alive_visibility.after(feedback::advance),
                     ensure_weapon_view
                         .before(feedback::animate_local)
                         .before(sync_view_weapon_visibility),
@@ -213,14 +213,14 @@ const BARREL_LASER_LENGTH: f32 = 25.0;
 #[derive(Resource)]
 struct ViewSettings {
     world_fov: f32,
-    current_fov: f32,
+    smoothed_world_fov: f32,
     bob_strength: f32,
 }
 impl Default for ViewSettings {
     fn default() -> Self {
         Self {
             world_fov: 70.0_f32.to_radians(),
-            current_fov: 70.0_f32.to_radians(),
+            smoothed_world_fov: 70.0_f32.to_radians(),
             bob_strength: std::env::var("TK_CAMERA_BOB")
                 .ok()
                 .as_deref()
@@ -625,7 +625,7 @@ fn change_fov(
         Single<&mut Projection, With<ViewModelCamera>>,
     )>,
 ) {
-    {
+    let fov = {
         let mut world_projection = projections.p0();
         let Projection::Perspective(perspective) = world_projection.as_mut() else {
             unreachable!(
@@ -653,11 +653,12 @@ fn change_fov(
             .get(&id.0)
             .and_then(|r| r.displayed)
             .unwrap_or_else(|| session.local(id.0).map_or(WeaponKind::Rifle, |p| p.weapon));
-        let target = aimed_fov(settings.world_fov, weapon, ads);
-        settings.current_fov +=
-            (target - settings.current_fov) * (1.0 - (-time.delta_secs() * 14.0).exp());
-        perspective.fov = settings.current_fov;
-    }
+        settings.smoothed_world_fov += (settings.world_fov - settings.smoothed_world_fov)
+            * (1.0 - (-time.delta_secs() * 14.0).exp());
+        let fov = aimed_fov(settings.smoothed_world_fov, weapon, ads);
+        perspective.fov = fov;
+        fov
+    };
 
     let mut view_projection = projections.p1();
     let Projection::Perspective(view_model_perspective) = view_projection.as_mut() else {
@@ -666,7 +667,7 @@ fn change_fov(
         );
     };
     // Both cameras project the same physical bore and world ray.
-    view_model_perspective.fov = settings.current_fov;
+    view_model_perspective.fov = fov;
 }
 
 fn fit_view_aspect(
@@ -1395,6 +1396,80 @@ mod view_tests {
             }
         }
     }
+    #[test]
+    fn ads_lenses_and_reticle_follow_the_presented_weapon_across_rmb_edges() {
+        let mut session = ClientSession {
+            last_sequence: 3,
+            ..default()
+        };
+        session.players.push(common::ClientData {
+            id: 7,
+            alive: true,
+            ..default()
+        });
+        for (time, ads) in [(0.0, 0.0), (0.04, 1.0), (0.08, 0.0)] {
+            session.local_motion.record(
+                time,
+                crate::sync::LocalMotionPose { ads, ..default() },
+                f64::from(time),
+                false,
+            );
+        }
+
+        let mut app = App::new();
+        app.insert_resource(session)
+            .insert_resource(PlayerId(7))
+            .init_resource::<Time>()
+            .init_resource::<Time<Real>>()
+            .init_resource::<LocalInput>()
+            .init_resource::<ViewSettings>()
+            .init_resource::<feedback::Feedback>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_systems(
+                Update,
+                (feedback::advance, change_fov, sync_local_alive_visibility).chain(),
+            );
+        app.world_mut().spawn((
+            LocalPlayer,
+            PlayerVisualState {
+                alive: true,
+                ..default()
+            },
+        ));
+        let dot = app
+            .world_mut()
+            .spawn((Crosshair, Visibility::Inherited))
+            .id();
+        let world = app
+            .world_mut()
+            .spawn((WorldModelCamera, Projection::default()))
+            .id();
+        let view = app
+            .world_mut()
+            .spawn((ViewModelCamera, Projection::default()))
+            .id();
+        for (elapsed, pressed, fov, visibility) in [
+            (0.049, true, 70.0_f32, Visibility::Inherited),
+            (0.090, false, 44.0, Visibility::Hidden),
+            (0.131, false, 70.0, Visibility::Inherited),
+        ] {
+            let elapsed = std::time::Duration::from_secs_f64(elapsed);
+            let mut clock = app.world_mut().resource_mut::<Time<Real>>();
+            let delta = elapsed - clock.elapsed();
+            clock.advance_by(delta);
+            app.world_mut().resource_mut::<LocalInput>().aim = pressed;
+            app.update();
+            for camera in [world, view] {
+                let Projection::Perspective(lens) = app.world().get::<Projection>(camera).unwrap()
+                else {
+                    panic!("expected a perspective camera");
+                };
+                assert!((lens.fov.to_degrees() - fov).abs() < 0.01);
+            }
+            assert_eq!(*app.world().get::<Visibility>(dot).unwrap(), visibility);
+        }
+    }
+
     #[test]
     fn preferences_set_matching_world_and_viewmodel_lenses() {
         let mut app = App::new();
