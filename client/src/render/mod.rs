@@ -58,7 +58,9 @@ impl bevy::prelude::Plugin for Plugin {
                     .before(sync_view_weapon_visibility),
                 sync_view_weapon_visibility.after(feedback::advance),
                 sync_ammo_hud,
-                sync_barrel_laser.after(feedback::advance),
+                sync_barrel_laser
+                    .after(voxel::configured::PoseConfigured)
+                    .after(sync_view_weapon_visibility),
                 sync_loot_visuals,
                 sync_barrier_visuals,
             )
@@ -306,7 +308,6 @@ fn weapon_view_model(
     weapon: WeaponKind,
     visibility: Visibility,
 ) -> impl Bundle {
-    let spec = weapon.spec();
     let laser_mesh = meshes.add(Cuboid::new(0.008, 0.008, BARREL_LASER_LENGTH));
     let laser_material = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.0, 0.0),
@@ -321,12 +322,12 @@ fn weapon_view_model(
         WeaponViewModel { weapon },
         Transform::default(),
         visibility,
-        children![
-            (
-                WeaponMeshRoot,
-                Transform::from_translation(view_model_translation(weapon)),
-                Visibility::Inherited,
-                children![(
+        children![(
+            WeaponMeshRoot,
+            Transform::from_translation(view_model_translation(weapon)),
+            Visibility::Inherited,
+            children![
+                (
                     feedback::Flash,
                     Mesh3d(meshes.add(Cuboid::new(0.075, 0.075, 0.12))),
                     MeshMaterial3d(materials.add(StandardMaterial {
@@ -339,20 +340,18 @@ fn weapon_view_model(
                     Visibility::Hidden,
                     RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
                     NotShadowCaster,
-                )],
-            ),
-            (
-                BarrelLaser,
-                Mesh3d(laser_mesh),
-                MeshMaterial3d(laser_material),
-                Transform::from_translation(
-                    Vec3::from(spec.barrel_offset)
-                        + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5),
                 ),
-                RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
-                NotShadowCaster,
-            ),
-        ],
+                (
+                    BarrelLaser,
+                    Mesh3d(laser_mesh),
+                    MeshMaterial3d(laser_material),
+                    Transform::default(),
+                    Visibility::Hidden,
+                    RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
+                    NotShadowCaster,
+                )
+            ],
+        ),],
     )
 }
 
@@ -818,13 +817,25 @@ fn sync_ammo_hud(
     }
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+struct LaserState<'w> {
+    id: Res<'w, PlayerId>,
+    feedback: Res<'w, feedback::Feedback>,
+    session: Res<'w, ClientSession>,
+}
+
 fn sync_barrel_laser(
     player_state: Single<&PlayerVisualState, With<LocalPlayer>>,
     weapon_views: Query<&WeaponViewModel>,
-    mut lasers: Query<(&ChildOf, &mut Transform, &mut Visibility), With<BarrelLaser>>,
-    id: Res<PlayerId>,
-    feedback: Res<feedback::Feedback>,
-    session: Res<ClientSession>,
+    roots: Query<
+        (&ChildOf, &voxel::configured::ConfiguredPose, &Visibility),
+        (With<WeaponMeshRoot>, Without<BarrelLaser>),
+    >,
+    mut lasers: Query<
+        (&ChildOf, &mut Transform, &mut Visibility),
+        (With<BarrelLaser>, Without<WeaponMeshRoot>),
+    >,
+    state: LaserState,
     mut clean_art: Local<Option<bool>>,
 ) {
     let clean_art = *clean_art.get_or_insert_with(|| {
@@ -832,19 +843,31 @@ fn sync_barrel_laser(
             && std::env::var_os("TK_PLAYTEST_CLEAN_ART").is_some()
     });
     for (parent, mut transform, mut visibility) in lasers.iter_mut() {
-        let Ok(weapon_view) = weapon_views.get(parent.0) else {
+        let Ok((view, pose, root_visibility)) = roots.get(parent.0) else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        let Ok(weapon_view) = weapon_views.get(view.0) else {
+            *visibility = Visibility::Hidden;
             continue;
         };
 
-        let ads = feedback.responses.get(&id.0).map_or(0.0, |r| r.ads);
-        transform.translation = common::weapon_animation::barrel_offset(weapon_view.weapon, ads)
-            + Vec3::new(0.0, 0.0, -BARREL_LASER_LENGTH * 0.5);
-        *visibility = if !clean_art
+        let ads = state
+            .feedback
+            .responses
+            .get(&state.id.0)
+            .map_or(0.0, |r| r.ads);
+        *transform = pose.muzzle.mul_transform(Transform::from_translation(
+            Vec3::NEG_Z * BARREL_LASER_LENGTH * 0.5,
+        ));
+        *visibility = if *root_visibility != Visibility::Hidden
+            && !clean_art
             && player_state.alive
             && player_state.weapon == weapon_view.weapon
             && ads < 0.1
-            && session
-                .local(id.0)
+            && state
+                .session
+                .local(state.id.0)
                 .is_none_or(|p| p.reload_remaining() <= 0.0)
         {
             Visibility::Inherited
@@ -879,6 +902,76 @@ fn sync_loot_visuals(
 #[cfg(test)]
 mod view_tests {
     use super::*;
+    #[test]
+    fn barrel_laser_tracks_accepted_configured_outlet() {
+        use common::humanoid::handling::{ArmSolution, HandlingSolution};
+        let mut app = App::new();
+        app.init_resource::<ClientSession>()
+            .init_resource::<feedback::Feedback>()
+            .insert_resource(PlayerId(7))
+            .add_systems(Update, sync_barrel_laser);
+        app.world_mut().spawn((
+            LocalPlayer,
+            PlayerVisualState {
+                alive: true,
+                weapon: WeaponKind::Rifle,
+                ..default()
+            },
+        ));
+        let view = app
+            .world_mut()
+            .spawn(WeaponViewModel {
+                weapon: WeaponKind::Rifle,
+            })
+            .id();
+        let arm = ArmSolution {
+            elbow: Vec3::ZERO,
+            wrist: Transform::default(),
+        };
+        let muzzle =
+            Transform::from_xyz(0.3, -0.2, -0.8).with_rotation(Quat::from_rotation_y(0.25));
+        let root = app
+            .world_mut()
+            .spawn((
+                WeaponMeshRoot,
+                ChildOf(view),
+                Visibility::Inherited,
+                voxel::configured::ConfiguredPose {
+                    solution: HandlingSolution {
+                        root: Transform::default(),
+                        support: arm,
+                        trigger: arm,
+                    },
+                    shoulders: [Vec3::ZERO; 2],
+                    muzzle,
+                },
+            ))
+            .id();
+        let laser = app
+            .world_mut()
+            .spawn((
+                BarrelLaser,
+                ChildOf(root),
+                Transform::default(),
+                Visibility::Hidden,
+            ))
+            .id();
+        app.update();
+        let transform = app.world().get::<Transform>(laser).unwrap();
+        let near_end = transform.transform_point(Vec3::Z * BARREL_LASER_LENGTH * 0.5);
+        assert!(near_end.distance(muzzle.translation) < 1e-5);
+        assert!((transform.rotation * Vec3::NEG_Z).distance(muzzle.rotation * Vec3::NEG_Z) < 1e-5);
+        assert_eq!(
+            *app.world().get::<Visibility>(laser).unwrap(),
+            Visibility::Inherited
+        );
+        *app.world_mut().get_mut::<Visibility>(root).unwrap() = Visibility::Hidden;
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(laser).unwrap(),
+            Visibility::Hidden
+        );
+    }
     #[test]
     fn catalog_view_models_are_instantiated_on_demand_and_reused() {
         let mut app = App::new();
