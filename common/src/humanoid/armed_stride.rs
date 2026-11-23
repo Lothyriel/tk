@@ -22,6 +22,7 @@ impl Carry {
 /// The socket determines the pose gains, not the cadence or the contact.
 pub fn sample(state: &PoseState, support: Transform, action: WeaponAction) -> Carry {
     if state.prone
+        || state.vault != 0
         || state.physical.is_some()
         || !matches!(state.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
     {
@@ -29,7 +30,11 @@ pub fn sample(state: &PoseState, support: Transform, action: WeaponAction) -> Ca
     }
     let speed = state.velocity[0].hypot(state.velocity[2]);
     let ease = crate::weapon_animation::ease;
-    let sprint = ease((speed - PLAYER_WALK_SPEED) / (PLAYER_RUN_SPEED - PLAYER_WALK_SPEED));
+    let sprint = if state.sprinting {
+        ease((speed - PLAYER_WALK_SPEED) / (PLAYER_RUN_SPEED - PLAYER_WALK_SPEED))
+    } else {
+        0.0
+    };
     // Fade against the *presented* action, not its switch/inspect/reload edge.
     let action_weight = (action.root.translation.length() / 0.11)
         .max(action.root.rotation.angle_between(Quat::IDENTITY) / 0.26)

@@ -160,7 +160,8 @@ pub fn preferred_root(
     action: WeaponAction,
 ) -> Transform {
     let aim = Quat::from_rotation_x(state.aim_pitch);
-    let rotation = aim * action.root.rotation;
+    let vault = vault_weight(state.vault);
+    let rotation = aim * Quat::from_rotation_x(vault * 0.25) * action.root.rotation;
     Transform::from_translation(
         chest
             + Vec3::Y * (0.13 + state.ads * 0.07)
@@ -168,6 +169,7 @@ pub fn preferred_root(
                 * (Vec3::new(0.10, 0.0, -0.18)
                     .lerp(Vec3::new(0.035, 0.0, -0.20), state.ads.clamp(0.0, 1.0))
                     + action.root.translation)
+            + Vec3::new(0.0, -0.10, 0.06) * vault
             - rotation * trigger.translation,
     )
     .with_rotation(rotation)

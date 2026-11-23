@@ -180,9 +180,10 @@ pub(super) fn corpse(
             // A foot loaded against a step has a longer contact lever than a
             // wrist. Extra passive ankle drag prevents late limit oscillation
             // after the torso settles, without a positional spring or velocity
-            // clamp (and still permits the captured running momentum).
+            // clamp (and still permits the captured running momentum). The
+            // inertial sprint's later stride poses also load the toe on steps.
             let drag = if matches!(segment, Segment::LeftFoot | Segment::RightFoot) {
-                4.0
+                5.0
             } else {
                 2.5
             };
@@ -244,8 +245,8 @@ pub(super) fn physical_tick(
             && arsenal.current().mechanics().equipped()
             && arsenal.active == input.weapon
             && body.anatomy.capacity(Region::RightArm) > 0.0
-            && !(input.run
-                && !movement.prone
+            && pose.vault == 0
+            && !(movement.sprinting
                 && Vec2::new(pose.velocity[0], pose.velocity[2]).length() > 0.5);
         pose.ads += ((if aiming { 1.0 } else { 0.0 }) - pose.ads) * (1.0 - (-dt * 14.0).exp());
         // Objectives may enter debrief in the same tick as the last fatal hit.
@@ -263,7 +264,7 @@ pub(super) fn physical_tick(
         }
         body.anatomy.tick(
             dt,
-            input.run && !movement.prone && Vec3::from(pose.velocity).length() > 1.0,
+            movement.sprinting && Vec3::from(pose.velocity).length() > 1.0,
         );
         if articulated {
             pose.mode_time += dt;
@@ -301,6 +302,7 @@ pub(super) fn physical_tick(
         pose.reload_empty = mechanics.kind == Some(common::catalog::ManipulationKind::EmptyReload);
         pose.velocity = local.into();
         pose.grounded = movement.grounded;
+        pose.sprinting = movement.sprinting;
         pose.crouch = if movement.crouched { 1.0 } else { 0.0 };
         pose.prone = movement.prone;
         let speed = Vec2::new(local.x, local.z).length();
@@ -346,6 +348,25 @@ pub(super) fn physical_tick(
         }
         pose.left_support = supports[0];
         pose.right_support = supports[1];
+        // The rounded capsule can land securely on a lip while both vertical
+        // foot rays remain just outside its face. Confirm that real support
+        // with the actual envelope, rather than lengthening anatomical rays.
+        let capsule_supported = movement.grounded
+            && !movement.prone
+            && supports[0] + supports[1] < 0.24
+            && context
+                .cast_shape(
+                    t.translation,
+                    t.rotation,
+                    -Vec3::Y,
+                    &*collider,
+                    ShapeCastOptions::with_max_time_of_impact(0.08),
+                    filter.groups(CollisionGroups::new(
+                        Group::ALL,
+                        Group::GROUP_1 | Group::GROUP_3,
+                    )),
+                )
+                .is_some_and(|(_, hit)| hit.details.is_some_and(|d| d.normal1.y > 0.65));
         let impulse = Vec3::from(pose.impulse);
         let horizontal = Vec2::new(impulse.x, impulse.z).length();
         pose.lean[0] = (pose.lean[0]
@@ -364,8 +385,21 @@ pub(super) fn physical_tick(
                 * 9.0)
             .clamp(-1.0, 1.0);
         if matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling) {
+            // A grounded KCC may touch an edge before either anatomical probe
+            // acquires it. Require sustained missing support; takeoff and vault
+            // assistance are deliberately airborne. Injury still acts at once.
+            if movement.grounded
+                && movement.velocity.y <= 0.1
+                && pose.vault == 0
+                && supports[0] + supports[1] < 0.24
+                && !capsule_supported
+            {
+                movement.unsupported_time += dt;
+            } else {
+                movement.unsupported_time = 0.0;
+            }
             let support_loss = movement.grounded
-                && (supports[0] + supports[1] < 0.24 || l.min(r) < 0.15 && speed > 0.25);
+                && (movement.unsupported_time >= 0.12 || l.min(r) < 0.15 && speed > 0.25);
             let trunk = (body.anatomy.muscle[Region::Thorax as usize]
                 .min(body.anatomy.muscle[Region::Abdomen as usize])
                 / 100.0)

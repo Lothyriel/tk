@@ -18,6 +18,7 @@ mod raid;
 mod replication;
 mod simulation;
 mod stumble;
+mod traversal;
 use bots::{Bot, bot_tick};
 use raid::{lobby_tick, objectives_tick};
 use simulation::{physx_tick, projectiles_tick, sync_ground_state, weapons_tick};
@@ -111,6 +112,7 @@ impl bevy::prelude::Plugin for Plugin {
                     replication::commands,
                     bot_tick,
                     simulation::advance_recoil,
+                    locomotion::prepare,
                     physical::physical_tick,
                     live_body::begin_falls,
                     live_body::advance,
@@ -308,7 +310,7 @@ fn character_bundle(id: u64, position: Vec3) -> impl Bundle {
             ..default()
         },
         MovementState::default(),
-        stumble::Contact::default(),
+        (stumble::Contact::default(), traversal::State::default()),
         common::humanoid::PoseState::default(),
         locomotion::Gait::default(),
         ragdoll::Motion::default(),

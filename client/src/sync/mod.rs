@@ -255,6 +255,7 @@ fn recv_players_pos(
                     velocity: player.pose.velocity.into(),
                     acceleration: player.pose.acceleration.into(),
                     turn_rate: player.pose.turn_rate,
+                    vault: player.pose.vault_progress(),
                 },
                 time.elapsed_secs_f64(),
                 reset,

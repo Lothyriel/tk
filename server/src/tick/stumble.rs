@@ -88,8 +88,9 @@ pub(super) fn detect(
         if pose.mode != PhysicalMode::Standing
             || !pose.grounded
             || !sweep.grounded
+            || pose.vault != 0
             || movement.crouched
-            || !input.run
+            || !movement.sprinting
             || !input.forward
             || desired.length() < (PLAYER_WALK_SPEED + 0.25) * time.delta_secs()
         {

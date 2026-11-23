@@ -18,6 +18,7 @@ mod physical;
 mod pov;
 mod recovery_steps;
 mod step_observer;
+mod vault;
 mod video;
 mod voxel_loot;
 mod west_step;
@@ -322,6 +323,7 @@ struct Driver {
     pov_stop_lean: pov::StopLean,
     pov_prone: pov::Prone,
     pov_stumble: pov::Stumble,
+    vault: vault::Route,
     pov_fault: fault::Route,
     pov_stride: pov::ArmedStride,
     pov_reversal: pov::StrafeReversal,
@@ -689,6 +691,37 @@ fn drive(
         }
         Step::Pov => {
             let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");
+            if preset == "vault" {
+                assert!(std::env::var_os("TK_PLAYTEST_NO_CAPTURE").is_some());
+                let actor = if peer {
+                    let Some(actor) = session.players.iter().find(|p| p.id != id.0 && !p.bot)
+                    else {
+                        return;
+                    };
+                    actor
+                } else {
+                    local
+                };
+                let elapsed = now - driver.since;
+                if driver.vault.update(
+                    elapsed,
+                    session.last_sequence,
+                    session.raid.raid_id,
+                    actor,
+                    peer,
+                ) {
+                    let output =
+                        std::path::PathBuf::from(std::env::var("TK_PLAYTEST_DIR").unwrap());
+                    std::fs::write(output.join("vault.json"), driver.vault.report().to_string())
+                        .unwrap();
+                    info!("POV PASS vault peer={peer} t={now:.3}");
+                    exit.write(AppExit::Success);
+                }
+                if !peer {
+                    driver.vault.input(elapsed, actor, &mut input);
+                }
+                return;
+            }
             if preset == "recovery-steps" {
                 assert!(std::env::var_os("TK_PLAYTEST_NO_CAPTURE").is_some());
                 let target = session

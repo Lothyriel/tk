@@ -39,8 +39,11 @@ pub fn pov_blocks() -> impl Iterator<Item = MapBlock> {
                 .then_some(POV_PRONE_CANOPY),
         )
         .chain(
-            (std::env::var("TK_PLAYTEST_POV").as_deref() == Ok("stumble"))
-                .then_some(POV_STUMBLE_BLOCK),
+            matches!(
+                std::env::var("TK_PLAYTEST_POV").as_deref(),
+                Ok("stumble" | "vault")
+            )
+            .then_some(POV_STUMBLE_BLOCK),
         )
 }
 
@@ -74,6 +77,7 @@ pub fn pov_fixture() -> bool {
             | "west-step"
             | "prone"
             | "stumble"
+            | "vault"
             | "recovery-steps"
             | "action-fault")
     )

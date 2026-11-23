@@ -470,6 +470,22 @@ de frame time nem valida naturalidade em movimento.
 
 `docs/GAME_STATE.md` é o guia do jogador: só muda quando execução, controles, gameplay ou limitações relevantes mudam.
 
+### Vault em UDP (TAR-106)
+
+```sh
+python scripts/playtest.py --pov vault --clients 2 --no-capture \
+  --viewport 600x400 --output "$OUT"
+```
+
+Use saída nova e ambos os binários do protocolo 30. O líder aproxima-se do
+obstáculo baixo e mantém Space até depois da aterrissagem. Ambos os clientes
+registram `vault.json`, com a mesma raid/ator/vida e snapshots ordenados de
+início, fim da assistência e aterrissagem no outro lado. O percurso exige
+retorno ao repouso sem nova ação ou queda; por padrão o observador descarta
+cada terceiro snapshot. Repita com `--pov-peer-lossless` para o controle.
+Não gera mídia nem certifica naturalidade da animação. Casos de bloqueio,
+interrupção, limites e inércia ficam nas fixtures Rapier de `movement::`.
+
 ### Apoio no degrau oeste em UDP (TAR-97)
 
 ```sh

@@ -94,7 +94,8 @@ fn obstacle_stumble_rearms_only_after_separating_and_can_resume_running() {
         input.forward = false;
         input.backward = true;
     }
-    assert_eq!(sample(&mut app, actor, 45).0, 0);
+    // Backpedaling now accelerates to 2.3 m/s; allow the same physical separation.
+    assert_eq!(sample(&mut app, actor, 90).0, 0);
     assert!(app.world().get::<Transform>(actor).unwrap().translation.z > origin.z - 0.5);
     {
         let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();

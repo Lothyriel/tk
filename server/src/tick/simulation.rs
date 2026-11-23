@@ -35,6 +35,7 @@ pub(super) fn physx_tick(
         Option<&KinematicCharacterControllerOutput>,
         &mut Transform,
         Has<super::live_body::Body>,
+        Option<&mut super::traversal::State>,
     )>,
 ) {
     let Ok(context) = context.single() else {
@@ -55,9 +56,14 @@ pub(super) fn physx_tick(
         output,
         mut transform,
         articulated,
+        mut traversal,
     ) in &mut query
     {
         let now = time.elapsed_secs();
+        // Consume every edge, even during traversal, prone, stale or inactive
+        // control. A press rejected in air must not replay after landing.
+        let jump_pressed = input.jump && !movement.jump_queued;
+        movement.jump_queued = input.jump;
         let distance = input.prone_sequence.wrapping_sub(movement.prone_sequence);
         let toggle = distance != 0 && distance < (1 << 31);
         if toggle {
@@ -66,6 +72,24 @@ pub(super) fn physx_tick(
             movement.prone_sequence = input.prone_sequence;
         }
         controller.autostep = (!movement.prone).then(super::character_autostep);
+        controller.snap_to_ground = Some(CharacterLength::Absolute(0.2));
+        if let Some(state) = traversal.as_deref_mut()
+            && (state.raid != raid.raid_id
+                || now - last.received_at > 0.5
+                || input.crouch
+                || movement.prone
+                || !matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
+                || body.anatomy.speed() <= 0.4
+                || raid.phase != RaidPhase::Active
+                || player.status != RaidStatus::Active
+                || !body.alive())
+        {
+            state.motion = None;
+            state.raid = raid.raid_id;
+        }
+        if traversal.as_ref().is_none_or(|s| s.motion.is_none()) {
+            pose.vault = 0;
+        }
         if raid.phase != RaidPhase::Active || player.status != RaidStatus::Active || !body.alive() {
             movement.velocity = Vec3::ZERO;
             controller.translation = None;
@@ -81,6 +105,18 @@ pub(super) fn physx_tick(
             movement.velocity.z *= (-delta * 3.0).exp();
             movement.velocity.y -= PLAYER_GRAVITY * delta;
             controller.translation = Some(movement.velocity * delta);
+            continue;
+        }
+        if let Some(state) = traversal.as_deref_mut()
+            && super::traversal::advance(
+                state,
+                &context,
+                entity,
+                &transform,
+                delta,
+                (&mut movement, &mut pose, &mut controller),
+            )
+        {
             continue;
         }
         let grounded = output.is_some_and(|o| o.grounded);
@@ -119,9 +155,7 @@ pub(super) fn physx_tick(
         {
             set_crouched_state(&mut movement, &mut collider, &mut transform, false);
         }
-        let x = (input.right as i8 - input.left as i8) as f32;
-        let z = (input.backward as i8 - input.forward as i8) as f32;
-        let local_input = Vec3::new(x, 0.0, z).normalize_or_zero();
+        let local_input = common::movement::intent(input);
         let yaw = if movement.prone {
             let old_yaw = transform.rotation.to_euler(EulerRot::YXZ).0;
             let delta_yaw = input.camera.yaw - old_yaw;
@@ -152,28 +186,19 @@ pub(super) fn physx_tick(
             PRONE_CRAWL_SPEED
         } else if movement.crouched {
             PLAYER_CROUCH_SPEED
-        } else if input.run && body.anatomy.vigor > 10.0 && body.anatomy.speed() > 0.6 {
-            PLAYER_RUN_SPEED
         } else {
-            PLAYER_WALK_SPEED
+            common::movement::speed(
+                local_input,
+                movement.sprinting && common::movement::requests_sprint(input),
+            )
         };
         movement.grounded = grounded;
-        let accel = if grounded {
-            if local_input == Vec3::ZERO {
-                PLAYER_GROUND_DECELERATION
-            } else {
-                PLAYER_GROUND_ACCELERATION
-            }
-        } else if local_input == Vec3::ZERO {
-            0.0
-        } else {
-            PLAYER_AIR_ACCELERATION
-        };
-        let control = if grounded { 1.0 } else { PLAYER_AIR_CONTROL };
-        let horizontal = horizontal
-            + (wish_dir * speed * body.speed_factor() - horizontal)
-                * (accel * delta).min(1.0)
-                * control;
+        let horizontal = common::movement::accelerate(
+            horizontal,
+            wish_dir * speed * body.speed_factor(),
+            grounded,
+            delta,
+        );
         movement.velocity.x = horizontal.x;
         movement.velocity.z = horizontal.z;
         if pose.mode == PhysicalMode::Stumbling {
@@ -184,22 +209,40 @@ pub(super) fn physx_tick(
         if grounded {
             movement.velocity.y = movement.velocity.y.max(0.0);
             if !movement.prone
-                && input.jump
-                && !movement.jump_queued
+                && jump_pressed
                 && body.anatomy.speed() > 0.4
                 && body.anatomy.vigor > 10.0
             {
                 movement.velocity.y = PLAYER_JUMP_SPEED * body.anatomy.speed().sqrt();
                 movement.grounded = false;
-                movement.jump_queued = true;
+                if now - last.received_at <= 0.5
+                    && !movement.crouched
+                    && input.forward
+                    && !input.backward
+                    && let Some(state) = traversal.as_deref_mut()
+                {
+                    state.motion = super::traversal::plan(
+                        &context,
+                        entity,
+                        transform.translation,
+                        Quat::from_rotation_y(yaw) * -Vec3::Z,
+                        horizontal,
+                    );
+                    if super::traversal::advance(
+                        state,
+                        &context,
+                        entity,
+                        &transform,
+                        delta,
+                        (&mut movement, &mut pose, &mut controller),
+                    ) {
+                        transform.rotation = Quat::from_rotation_y(yaw);
+                        continue;
+                    }
+                }
             }
         } else {
             movement.velocity.y -= PLAYER_GRAVITY * delta;
-        }
-        if !input.jump {
-            movement.jump_queued = false;
-        } else if movement.prone {
-            movement.jump_queued = true;
         }
         controller.translation = Some(movement.velocity * delta);
         transform.rotation = Quat::from_rotation_y(if movement.prone {
@@ -347,7 +390,7 @@ pub(super) fn weapons_tick(
             input,
             time.delta_secs() * handling,
             time.elapsed_secs(),
-            input.run && !movement.prone,
+            movement.sprinting || pose.vault != 0,
             world_state.action_fault_fixture && !bot,
         ) else {
             continue;
@@ -781,6 +824,7 @@ pub(super) fn projectiles_tick(
 }
 
 pub(super) fn sync_ground_state(
+    time: Res<Time>,
     mut query: Query<(
         &mut MovementState,
         &KinematicCharacterControllerOutput,
@@ -798,6 +842,26 @@ pub(super) fn sync_ground_state(
             }
         }
         movement.grounded = output.grounded;
+        // Store actual wall-constrained momentum, not the unachieved wish speed.
+        // Preserve tangential travel; a blocked actor cannot charge up a launch.
+        for collision in &output.collisions {
+            if let Some(hit) = collision.hit.details {
+                // Rounded edge/slope contacts need their horizontal momentum
+                // to finish the climb. Only a near-vertical face stops it.
+                if hit.normal1.y.abs() < 0.1 {
+                    let normal = hit.normal1.with_y(0.0).normalize_or_zero();
+                    let requested = output.desired_translation.dot(normal);
+                    let achieved = output.effective_translation.dot(normal);
+                    if achieved - requested > 0.05 * time.delta_secs() {
+                        let actual = achieved / time.delta_secs().max(0.001);
+                        let excess = (movement.velocity.dot(normal) - actual.min(0.0)).min(0.0);
+                        movement.velocity -= normal * excess;
+                    }
+                } else if hit.normal1.y < -0.6 && movement.velocity.y > 0.0 {
+                    movement.velocity.y = 0.0;
+                }
+            }
+        }
         if output.grounded && movement.velocity.y < 0.0 {
             movement.velocity.y = 0.0;
         }

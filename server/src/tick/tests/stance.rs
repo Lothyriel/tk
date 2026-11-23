@@ -266,7 +266,8 @@ fn voluntary_prone_from_crouch_preserves_floor_and_restores_standing_control() {
         input.forward = true;
         input.run = true;
     }
-    held_steps(&mut app, actor, 32);
+    // Forward sprint needs a real acceleration interval after standing.
+    held_steps(&mut app, actor, 75);
     let world = app.world();
     let pose = world.get::<PoseState>(actor).unwrap();
     assert!(!pose.prone && pose.grounded && pose.velocity[2] < -4.0);

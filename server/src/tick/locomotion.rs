@@ -3,6 +3,40 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use common::{combat::*, humanoid::*, raid::*};
 
+pub(super) fn prepare(
+    time: Res<Time>,
+    raid: Res<RaidState>,
+    mut actors: Query<(
+        &common::ClientInput,
+        &super::LastInput,
+        &Participant,
+        &BodyHealth,
+        &PoseState,
+        &mut common::MovementState,
+    )>,
+) {
+    for (input, last, player, body, pose, mut movement) in &mut actors {
+        // Keep the confirmed sprint handling through its braking tail. The
+        // carry weight already reaches zero at walking speed, so releasing
+        // Shift must not snap the weapon/torso directly back to idle.
+        let requested = common::movement::requests_sprint(input)
+            && body.anatomy.vigor > 10.0
+            && body.anatomy.speed() > 0.6;
+        let braking = movement.sprinting
+            && movement.velocity.x.hypot(movement.velocity.z) > common::PLAYER_WALK_SPEED;
+        movement.sprinting = raid.phase == RaidPhase::Active
+            && player.status == RaidStatus::Active
+            && body.alive()
+            && time.elapsed_secs() - last.received_at <= 0.5
+            && (requested || braking)
+            && !movement.prone
+            && !movement.crouched
+            && pose.vault == 0
+            && matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
+            && !input.crouch;
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 struct Plant {
     position: Vec3,
@@ -60,6 +94,7 @@ pub(super) fn advance(
         gait.position = root.translation;
         gait.yaw = yaw;
         if pose.prone
+            || pose.vault != 0
             || !matches!(pose.mode, PhysicalMode::Standing | PhysicalMode::Stumbling)
             || !pose.grounded
         {

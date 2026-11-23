@@ -112,6 +112,10 @@ pub enum PhysicalMode {
 pub struct PoseState {
     pub velocity: [f32; 3],
     pub grounded: bool,
+    pub sprinting: bool,
+    /// Zero outside traversal; 1..=255 encodes normalized short-vault progress.
+    /// Shares existing flag padding, preserving the worst-case snapshot budget.
+    pub vault: u8,
     pub prone: bool,
     pub crouch: f32,
     pub phase: f32,
@@ -140,6 +144,16 @@ pub struct PoseState {
     pub fall_phase: f32,
     pub fall_velocity: [f32; 3],
     pub physical: Option<Box<PackedRig>>,
+}
+
+impl PoseState {
+    pub fn vault_progress(&self) -> Option<f32> {
+        (self.vault != 0).then(|| (self.vault - 1) as f32 / 254.0)
+    }
+
+    pub fn set_vault(&mut self, progress: Option<f32>) {
+        self.vault = progress.map_or(0, |p| 1 + (p.clamp(0.0, 1.0) * 254.0).round() as u8);
+    }
 }
 
 /// Bounded actual articulated pose, in actor-local millimetres. This supplements
@@ -214,6 +228,16 @@ pub fn stride_phase_rate(speed: f32, crouch: f32) -> f32 {
     speed.max(0.0) * std::f32::consts::TAU / cycle_metres
 }
 
+/// Smoothly tuck and release the limbs over the confirmed vault interval.
+pub fn vault_weight(progress: u8) -> f32 {
+    if progress == 0 {
+        return 0.0;
+    }
+    (((progress - 1) as f32 / 254.0) * std::f32::consts::PI)
+        .sin()
+        .max(0.0)
+}
+
 /// Absolute actor-local segment centres. A bent knee changes geometry, never global scale.
 pub fn evaluate_pose(
     state: &PoseState,
@@ -260,6 +284,7 @@ pub fn evaluate_pose_with_action(
     let speed = Vec2::new(velocity.x, velocity.z).length();
     let stride = (speed / 5.5).clamp(0.0, 1.0);
     let crouch = state.crouch.clamp(0.0, 1.0);
+    let vault = vault_weight(state.vault);
     let bob = (phase * 2.0).cos() * 0.022 * stride;
     // Lead the next support by about 5% of a stride cycle. This shifts
     // the pelvis inside the stance, without moving either world contact.
@@ -272,7 +297,7 @@ pub fn evaluate_pose_with_action(
     // Actor root already lowers 0.3 m with the KCC capsule. Knees make up the remaining bend.
     let hip = Vec3::new(
         state.lean[0] * 0.07 + support_shift,
-        -0.23 + bob - crouch * 0.04 - state.landing * 0.05,
+        -0.23 + bob - crouch * 0.04 - state.landing * 0.05 - vault * 0.04,
         state.lean[1] * 0.06,
     );
     let stumble = if state.mode == PhysicalMode::Stumbling {
@@ -286,7 +311,7 @@ pub fn evaluate_pose_with_action(
         hip + Vec3::new(
             state.lean[0] * 0.025,
             0.43 - crouch * 0.14 - stumble * 0.05,
-            -crouch * 0.12 - state.lean[1] * 0.05 - stumble * 0.09,
+            -crouch * 0.12 - state.lean[1] * 0.05 - stumble * 0.09 - vault * 0.07,
         ) + lean_offset;
     let aim = Quat::from_rotation_x(state.aim_pitch);
     result[Pelvis.index()].position = hip.into();
@@ -295,7 +320,7 @@ pub fn evaluate_pose_with_action(
     result[Thorax.index()].position = chest.into();
     result[Thorax.index()].rotation = Quat::from_euler(
         EulerRot::XYZ,
-        crouch * 0.2 - state.lean[1] * 0.16,
+        crouch * 0.2 - state.lean[1] * 0.16 + vault * 0.18,
         state.turn_rate * 0.02,
         -state.lean[0] * 0.12 + state.aim_roll * 0.5,
     )
@@ -378,6 +403,7 @@ pub fn evaluate_pose_with_action(
                 },
             0.0,
         ) + step;
+        let foot = foot.lerp(Vec3::new(side * 0.13, -0.55, -0.12 - side * 0.06), vault);
         let foot_index = if side < 0.0 { 0 } else { 1 };
         let weight = state.foot_weight[foot_index].clamp(0.0, 1.0);
         // Server-owned contacts remain planted in world space through braking/turns.
@@ -477,15 +503,17 @@ fn weapon_pose(
     use crate::weapon_animation::*;
     let rig = WeaponRig::for_weapon(state.weapon);
     let aim = Quat::from_rotation_x(state.aim_pitch);
+    let vault = vault_weight(state.vault);
     let mut root = Transform::from_translation(
         chest
             + Vec3::Y * (0.13 + state.ads * 0.07)
             + aim
                 * (Vec3::new(0.10, 0.0, -0.18)
                     .lerp(Vec3::new(0.035, 0.0, -0.20), state.ads.clamp(0.0, 1.0))
-                    + action.root.translation),
+                    + action.root.translation)
+            + Vec3::new(0.0, -0.10, 0.06) * vault,
     )
-    .with_rotation(aim * action.root.rotation);
+    .with_rotation(aim * Quat::from_rotation_x(0.25 * vault) * action.root.rotation);
     root.translation -= root.rotation * rig.trigger;
     // Project into the intersection of the two arm-reach balls. During a reload
     // the support target is on the magazine or release, never on a canned arc.

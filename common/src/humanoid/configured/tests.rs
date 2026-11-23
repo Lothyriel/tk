@@ -5,6 +5,52 @@ use crate::{
 };
 
 #[test]
+fn vault_pose_tucks_feet_and_keeps_configured_grips_through_start_clear_and_release() {
+    for weapon in [WeaponKind::Rifle, WeaponKind::Smg, WeaponKind::Pistol] {
+        let spec = weapon.spec();
+        let mut previous: Option<[SegmentPose; SEGMENT_COUNT]> = None;
+        for step in 0..=100 {
+            let mut state = PoseState {
+                weapon,
+                ..default()
+            };
+            state.set_vault(Some(step as f32 / 100.0));
+            let rig = evaluate(
+                &state,
+                [1.0; 2],
+                spec,
+                &MechanicalSnapshot::default(),
+                None,
+                Some(0.058),
+            )
+            .unwrap_or_else(|e| panic!("{weapon:?} step={step}: {e:?}"));
+            let configured = rig.weapon.unwrap();
+            for (hand, grip) in [
+                (Segment::LeftHand, configured.support.wrist),
+                (Segment::RightHand, configured.trigger.wrist),
+            ] {
+                assert!(
+                    Vec3::from(rig.segments[hand.index()].position).distance(grip.translation)
+                        < 2e-6
+                );
+            }
+            for (i, part) in rig.segments.iter().enumerate() {
+                let position = Vec3::from(part.position);
+                assert!(position.is_finite() && Quat::from_array(part.rotation).is_finite());
+                if let Some(before) = &previous {
+                    assert!(position.distance(before[i].position.into()) < 0.025);
+                }
+            }
+            if step == 50 {
+                assert!(rig.segments[Segment::LeftFoot.index()].position[1] > -0.62);
+                assert!(rig.segments[Segment::RightFoot.index()].position[1] > -0.62);
+            }
+            previous = Some(rig.segments);
+        }
+    }
+}
+
+#[test]
 fn voluntary_prone_configured_rig_keeps_low_body_and_rigid_grips() {
     for weapon in [WeaponKind::Rifle, WeaponKind::Smg, WeaponKind::Pistol] {
         let spec = weapon.spec();

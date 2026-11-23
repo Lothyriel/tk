@@ -27,6 +27,7 @@ else:
 
 
 POV_CAPTURES = {
+    "vault": (),
     "recovery-steps": (),
     "ads": ("rest", "ads", "return"),
     "inspect": ("rest", "inspect", "return"),
@@ -42,6 +43,7 @@ POV_CAPTURES = {
                        "neutral", "ads", "moving-ads", "hip", "inspect", "cancel", "return"),
 }
 DUAL_POV = {
+    "vault": (),
     "recovery-steps": (),
     "stop-lean": ("run", "left", "right", "return"),
     "armed-stride": ("turn", "moving-ads", "return"),
@@ -51,7 +53,7 @@ DUAL_POV = {
     "stumble": ("stumble", "contact", "return"),
     "action-fault": POV_CAPTURES["action-fault"],
 }
-TRACE_ONLY_POV = {"strafe-reversal", "west-step", "recovery-steps"}
+TRACE_ONLY_POV = {"strafe-reversal", "west-step", "recovery-steps", "vault"}
 DESTRUCTION_CAPTURES = ("intact", "impact", "degraded", "fragment", "settled")
 
 
@@ -816,6 +818,25 @@ def main():
         (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
         result = f"PASS: native {args.destruction} damage/fragments, real UDP, named screenshots at {proof[1]}s; temporal/artistic judgement remains manual\n"
         (output / "result.txt").write_text(result, encoding="utf-8")
+        print(result, end="")
+        return
+    if args.pov == "vault":
+        proofs = []
+        for directory in (output, output / "peer"):
+            proof = json.loads((directory / "vault.json").read_text())
+            text = (directory / "client.log").read_text()
+            assert "POV PASS vault" in text and "panicked at" not in text and " ERROR " not in text
+            assert proof["start"] < proof["clear"] <= proof["land"] and proof["episodes"] == 1
+            assert proof["max_progress"] > 200
+            proofs.append(proof)
+        assert all(proofs[0][key] == proofs[1][key] for key in ("raid", "actor", "life"))
+        peer_text = (output / "peer/client.log").read_text()
+        assert bool(re.findall(r"SNAPSHOT LOSS dropped=", peer_text)) != args.pov_peer_lossless
+        assert not list(output.rglob("*.png")), "No-capture traversal produced media"
+        settings["vault"] = proofs
+        (output / "run-settings.json").write_text(json.dumps(settings, indent=2))
+        result = "PASS: vault start/clear/land/settle on two UDP clients; no visual-quality claim\n"
+        (output / "result.txt").write_text(result)
         print(result, end="")
         return
     if args.pov == "recovery-steps":

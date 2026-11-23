@@ -167,6 +167,8 @@ mod tests {
         player.body.anatomy.organs[Organ::Heart as usize] = 25.0;
         player.pose.mode = PhysicalMode::Fallen;
         player.pose.mode_time = 1.2;
+        player.pose.set_vault(Some(0.5));
+        player.pose.sprinting = true;
         println!(
             "TK ACTOR archive_fixed_bytes={} normal_bytes={}",
             std::mem::size_of::<crate::ArchivedClientData>(),
@@ -242,6 +244,8 @@ mod tests {
         assert_eq!(decoded.players[0].body.anatomy.organs[1], 25.0);
         assert_eq!(decoded.players[0].pose.mode, PhysicalMode::Fallen);
         assert_eq!(decoded.players[0].pose.mode_time, 1.2);
+        assert_eq!(decoded.players[0].pose.vault, 128);
+        assert!(decoded.players[0].pose.sprinting);
         assert_eq!(decoded.physics_pieces[0].id, 123);
         assert_eq!(decoded.physics_pieces[0].owner, 7);
         assert_eq!(decoded.physics_pieces[0].pose.position, [1.0, 0.2, 3.0]);

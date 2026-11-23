@@ -1254,6 +1254,7 @@ fn armed_sprint_replays_two_kits_through_snapshot_gaps_and_ads() {
                 let carry = common::humanoid::armed_stride::sample(
                     &common::humanoid::PoseState {
                         velocity: [0.0, 0.0, -PLAYER_RUN_SPEED],
+                        sprinting: true,
                         phase: std::f32::consts::FRAC_PI_4, // neutral vertical stride term
                         ..default()
                     },
@@ -1310,6 +1311,9 @@ fn armed_sprint_replays_two_kits_through_snapshot_gaps_and_ads() {
                         pose.acceleration = motion.acceleration.into();
                         pose.turn_rate = turn;
                         pose.grounded = true;
+                        // Confirmed sprint handling remains through the braking
+                        // tail until physical speed reaches the walking envelope.
+                        pose.sprinting = (0.45..1.50).contains(&t) || speed > PLAYER_WALK_SPEED;
                         session.local_motion.record(t, motion, stamp, false);
                     }
                     next_tick += 1;

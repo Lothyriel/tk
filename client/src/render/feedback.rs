@@ -662,9 +662,8 @@ pub(super) fn advance(
                 .anatomy
                 .capacity(common::combat::Region::RightArm)
                 > 0.0
-            && !(local_input.as_ref().is_some_and(|i| local && i.run)
-                && !player.pose.prone
-                && speed > 0.5);
+            && player.pose.vault == 0
+            && !(player.pose.sprinting && speed > 0.5);
         // Complete the external action's return before closing the stock onto
         // the sight line. Blending full ADS over a still-canted inspection pulls
         // the hands across the camera even when each individual layer is smooth.
@@ -758,6 +757,8 @@ pub(super) fn animate_local(
         turn_rate: p.pose.turn_rate,
         mode: p.pose.mode,
         prone: p.pose.prone,
+        sprinting: p.pose.sprinting,
+        vault: p.pose.vault,
         ads: response.ads,
         ..default()
     };
@@ -768,6 +769,7 @@ pub(super) fn animate_local(
         stride.velocity = motion.velocity.into();
         stride.acceleration = motion.acceleration.into();
         stride.turn_rate = motion.turn_rate;
+        stride.set_vault(motion.vault);
     }
     let speed = stride.velocity[0].hypot(stride.velocity[2]);
     let phase = stride.phase;
@@ -819,6 +821,9 @@ pub(super) fn animate_local(
                 response.recoil,
             );
         t.translation += response.inertia * (1.0 - carry.weight);
+        let vault = common::humanoid::vault_weight(stride.vault);
+        t.translation += Vec3::new(0.0, -0.10, 0.06) * vault;
+        t.rotation *= Quat::from_rotation_x(0.25 * vault);
         t.translation.y -= response.landing * 0.025 * motion_weight;
         t.rotation *=
             Quat::from_rotation_x((response.travel.y * 0.008).clamp(-0.05, 0.05) * motion_weight);

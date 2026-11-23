@@ -28,6 +28,7 @@ pub(crate) struct LocalMotionPose {
     pub velocity: Vec3,
     pub acceleration: Vec2,
     pub turn_rate: f32,
+    pub vault: Option<f32>,
 }
 
 /// Presentation history only. Gameplay/HUD retain the newest authoritative session.
@@ -98,6 +99,12 @@ impl LocalMotion {
                             .acceleration
                             .lerp(next.pose.acceleration, alpha),
                         turn_rate: previous.pose.turn_rate.lerp(next.pose.turn_rate, alpha),
+                        vault: match (previous.pose.vault, next.pose.vault) {
+                            (Some(a), Some(b)) => Some(a.lerp(b, alpha)),
+                            (Some(a), None) => Some(a.lerp(1.0, alpha)),
+                            (None, Some(b)) => Some(b * alpha),
+                            (None, None) => None,
+                        },
                     },
                     if time < previous.time {
                         "hold_oldest"
@@ -153,6 +160,53 @@ mod tests {
     use std::time::Duration;
 
     use crate::{ClientSystems, sync::ClientSession};
+
+    #[test]
+    fn vault_motion_interpolates_missing_snapshots_and_clears_on_lifecycle_reset() {
+        use super::{INTERPOLATION_DELAY, LocalMotion, LocalMotionPose};
+        for fps in [30, 165] {
+            let mut motion = LocalMotion::default();
+            motion.record(
+                0.0,
+                LocalMotionPose {
+                    vault: Some(0.1),
+                    ..default()
+                },
+                0.0,
+                false,
+            );
+            motion.record(
+                0.05,
+                LocalMotionPose {
+                    position: Vec3::Y * 0.5,
+                    vault: Some(0.7),
+                    ..default()
+                },
+                0.05,
+                false,
+            );
+            motion.record(
+                0.10,
+                LocalMotionPose {
+                    position: Vec3::Y * 0.6,
+                    vault: None,
+                    ..default()
+                },
+                0.10,
+                false,
+            );
+            for frame in 0..=fps / 10 {
+                let t = frame as f64 / f64::from(fps);
+                let sample = motion.sample(t + INTERPOLATION_DELAY).unwrap();
+                assert!(sample.position.is_finite());
+                if t < 0.05 {
+                    assert!((sample.vault.unwrap() - (0.1 + t as f32 * 12.0)).abs() < 1e-5);
+                }
+            }
+            motion.record(0.11, LocalMotionPose::default(), 0.11, true);
+            assert!(motion.sample(0.11).unwrap().vault.is_none());
+        }
+    }
 
     #[test]
     fn local_camera_motion_reports_hold_and_arrival_gap_reset() {
@@ -445,6 +499,7 @@ mod tests {
             velocity: Vec3::NEG_Z * 3.0,
             acceleration: Vec2::new(0.0, -8.0),
             turn_rate: -2.0,
+            vault: None,
         };
         let crouched = LocalMotionPose {
             position: Vec3::new(2.0, 0.7, -1.0),
@@ -457,6 +512,7 @@ mod tests {
             velocity: Vec3::ZERO,
             acceleration: Vec2::new(0.0, 4.0),
             turn_rate: 4.0,
+            vault: None,
         };
         motion.record(1.0, standing, 10.0, false);
         motion.record(1.04, crouched, 10.04, false);

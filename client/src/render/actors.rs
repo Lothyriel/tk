@@ -939,6 +939,12 @@ fn animate(
         let delta = phase - state.phase;
         state.phase += delta.sin().atan2(delta.cos()) * alpha;
         state.grounded = p.pose.grounded;
+        state.sprinting = p.pose.sprinting;
+        let vault = match (state.vault_progress(), p.pose.vault_progress()) {
+            (Some(a), Some(b)) => Some(a.lerp(b, alpha)),
+            (_, next) => next,
+        };
+        state.set_vault(vault);
         state.mode = p.pose.mode;
         state.prone = p.pose.prone;
         state.mode_time = p.pose.mode_time + age;

@@ -1,6 +1,7 @@
 use super::*;
 mod arena;
 mod configured_anatomy;
+mod movement;
 mod recoil;
 mod stance;
 mod stumble;
@@ -1306,7 +1307,11 @@ fn inspect_authority_yields_to_intent_and_physical_gates_without_replaying_stale
             .inspect_sequence = 2;
         match gate {
             "aim" => app.world_mut().get_mut::<ClientInput>(player).unwrap().aim = true,
-            "sprint" => app.world_mut().get_mut::<ClientInput>(player).unwrap().run = true,
+            "sprint" => {
+                let mut input = app.world_mut().get_mut::<ClientInput>(player).unwrap();
+                input.run = true;
+                input.forward = true;
+            }
             "stale" => {
                 app.world_mut()
                     .get_mut::<LastInput>(player)
@@ -2004,7 +2009,8 @@ fn ragdoll_running_and_resting_contact_matrix_settles_without_floor_escape_or_jo
                     input.forward = true;
                     input.run = true;
                 }
-                held_steps(&mut app, b, 45);
+                // Capture established sprint momentum, after the new buildup.
+                held_steps(&mut app, b, 80);
             }
             let start = app.world().get::<Transform>(b).unwrap().translation;
             if obstacle == 1 || obstacle == 2 {
@@ -2576,7 +2582,7 @@ fn walking_character_ignores_fragment_support_and_keeps_its_ground_height() {
         Transform::from_translation(Vec3::new(root.x, 0.22, root.z - 0.45)),
     ));
     app.world_mut().get_mut::<ClientInput>(b).unwrap().forward = true;
-    for _ in 0..40 {
+    for _ in 0..56 {
         held_steps(&mut app, b, 1);
         let current = app.world().get::<Transform>(b).unwrap().translation;
         assert!(
@@ -3575,5 +3581,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
     assert_eq!(cover.cuts.len(), 1);
     assert_eq!(cover.cuts[0].cell, cell.id);
     assert_eq!(cover.raid_id, snapshot.raid.raid_id);
-    assert_eq!(PROTOCOL_ID, 29);
+    assert_eq!(PROTOCOL_ID, 30);
 }

@@ -3,6 +3,7 @@ pub mod combat;
 pub mod data;
 pub mod humanoid;
 pub mod map;
+pub mod movement;
 pub mod raid;
 pub mod recoil;
 pub mod replication;
@@ -16,7 +17,7 @@ pub use catalog::{EquipmentSlot, WeaponId, WeaponInstanceId};
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9080;
-pub const PROTOCOL_ID: u64 = 29;
+pub const PROTOCOL_ID: u64 = 30;
 pub const SNAPSHOT_INTERVAL: f32 = 1.0 / 60.0;
 pub const PLAYER_COLLIDER_RADIUS: f32 = 0.35;
 pub const PLAYER_COLLIDER_HALF_HEIGHT: f32 = 0.55;
@@ -29,8 +30,6 @@ pub const PLAYER_VIEW_HEIGHT: f32 = 0.55;
 pub const PLAYER_WALK_SPEED: f32 = 3.25;
 pub const PLAYER_RUN_SPEED: f32 = 5.5;
 pub const PLAYER_CROUCH_SPEED: f32 = 1.75;
-pub const PLAYER_GROUND_ACCELERATION: f32 = 10.0;
-pub const PLAYER_GROUND_DECELERATION: f32 = 7.5;
 pub const PLAYER_AIR_ACCELERATION: f32 = 4.0;
 pub const PLAYER_AIR_CONTROL: f32 = 0.2;
 pub const PLAYER_GRAVITY: f32 = 20.0;
@@ -209,6 +208,9 @@ pub struct Client {
 pub struct MovementState {
     pub velocity: Vec3,
     pub grounded: bool,
+    pub sprinting: bool,
+    /// Time without anatomical support while the controller reports ground.
+    pub unsupported_time: f32,
     pub jump_queued: bool,
     pub crouched: bool,
     pub prone: bool,
