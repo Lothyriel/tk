@@ -235,10 +235,18 @@ fn recv_players_pos(
                 || session
                     .local(player.id)
                     .is_some_and(|previous| discontinuous(previous, player));
+            let shoulders = weapon_shoulders(&session, player);
             session.local_motion.record(
                 snapshot.simulation_time,
                 motion::LocalMotionPose {
                     position: player.pos.into(),
+                    weapon_root: player.pose.weapon_root.unpack().map(|root| {
+                        Transform::from_translation(player.pos.into())
+                            .with_rotation(Quat::from_rotation_y(player.rot.yaw))
+                            .mul_transform(root)
+                    }),
+                    weapon_shoulders: shoulders,
+                    weapon_mechanics: player.mechanics,
                     crouch: f32::from(u8::from(player.crouched)),
                     prone: f32::from(player.pose.prone),
                     stride_phase: player.pose.phase,
@@ -280,6 +288,13 @@ fn recv_players_pos(
                     .insert(crate::render::actors::RemoteTarget {
                         position: player.pos.into(),
                         rotation: Quat::from_rotation_y(player.rot.yaw),
+                        weapon_root: player.pose.weapon_root.unpack().map(|root| {
+                            Transform::from_translation(player.pos.into())
+                                .with_rotation(Quat::from_rotation_y(player.rot.yaw))
+                                .mul_transform(root)
+                        }),
+                        weapon_shoulders: weapon_shoulders(&session, player),
+                        mechanics: player.mechanics,
                         snap: new_raid
                             || session
                                 .local(player.id)
@@ -327,8 +342,44 @@ fn recv_players_pos(
     present_shots(&mut session, time.elapsed_secs_f64(), fresh);
 }
 
+fn weapon_shoulders(
+    session: &ClientSession,
+    player: &ClientData,
+) -> Option<([Vec3; 2], [Vec3; 2])> {
+    let entry = session
+        .configurations
+        .cache
+        .get(session.configurations.cache.epoch(), player.configuration)?;
+    let legs = [
+        common::combat::Region::LeftLeg,
+        common::combat::Region::RightLeg,
+    ]
+    .map(|r| player.body.anatomy.capacity(r));
+    let rig = common::humanoid::configured::evaluate_with_carry(
+        &player.pose,
+        legs,
+        entry
+            .visual(entry.presented_magazine(&player.mechanics))
+            .unwrap_or(&entry.resolved),
+        &player.mechanics,
+        None,
+        Some(common::humanoid::configured::shoulder_cover(&player.armor)),
+    )
+    .ok()?;
+    let posture = rig.posture?;
+    let actor = Transform::from_translation(player.pos.into())
+        .with_rotation(Quat::from_rotation_y(player.rot.yaw));
+    Some((
+        posture.shoulders.map(|p| actor.transform_point(p)),
+        posture.poles.map(|p| actor.rotation * p),
+    ))
+}
+
 fn discontinuous(previous: &ClientData, next: &ClientData) -> bool {
-    previous.life != next.life
+    previous.weapon_instance != next.weapon_instance
+        || previous.configuration != next.configuration
+        || previous.pose.weapon_root.unpack().is_some() != next.pose.weapon_root.unpack().is_some()
+        || previous.life != next.life
         || previous.pose.mode != next.pose.mode
         || previous.pose.prone != next.pose.prone
         || previous.alive != next.alive
@@ -384,7 +435,8 @@ mod tests {
                 time: id as f32 * 0.1,
                 muzzle: [0.0; 3],
                 direction: [0.0, 0.0, -1.0],
-                ejection: None,
+                ejection: [0.0; 3],
+                ejection_present: false,
                 audio_signature: 100,
             })
             .collect();
@@ -415,7 +467,8 @@ mod tests {
                 time: 1.0 - id as f32 * 0.01,
                 muzzle: [0.0; 3],
                 direction: [0.0, 0.0, -1.0],
-                ejection: None,
+                ejection: [0.0; 3],
+                ejection_present: false,
                 audio_signature: 100,
             })
             .collect();
@@ -646,7 +699,8 @@ mod barrier_snapshot_tests {
                     time: 1.0,
                     muzzle: [0.0; 3],
                     direction: [0.0, 0.0, -1.0],
-                    ejection: Some([0.25, 1.5, -0.15]),
+                    ejection: [0.25, 1.5, -0.15],
+                    ejection_present: true,
                     audio_signature: 55,
                 }],
             }),
@@ -662,7 +716,7 @@ mod barrier_snapshot_tests {
                 .collect::<Vec<_>>(),
             [2]
         );
-        assert_eq!(session.casing_shots[0].ejection, Some([0.25, 1.5, -0.15]));
+        assert_eq!(session.casing_shots[0].ejection(), Some([0.25, 1.5, -0.15]));
         assert_eq!(session.casing_shots[0].audio_signature, 55);
         app.update();
         assert!(
@@ -684,7 +738,8 @@ mod barrier_snapshot_tests {
             time: 10.0,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
-            ejection: None,
+            ejection: [0.0; 3],
+            ejection_present: false,
             audio_signature: 100,
         }];
         server.send_message(7, DefaultChannel::Unreliable, data::encode(&delayed));

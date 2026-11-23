@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 #[test]
 fn recoil_m4a1_kits_keep_cadence_but_change_confirmed_kick_and_recovery() {
     use bevy_renet2::prelude::RenetClient;
-    use common::catalog::AnchorKind;
 
     let mut results = Vec::new();
     for kit in ["compact", "suppressed"] {
@@ -17,10 +16,6 @@ fn recoil_m4a1_kits_keep_cadence_but_change_confirmed_kick_and_recovery() {
             .x = -14.0;
         let arsenal = crate::kit_fixture::KitFixture::named(kit).arsenal(Loadout::default());
         let start_rounds = arsenal.current().rounds();
-        let assembly = &arsenal.current().spec().assembly;
-        let outlet = assembly
-            .hip_from_root
-            .transform_point(assembly.anchors[&AnchorKind::DeviceExit].translation);
         *app.world_mut().get_mut::<Arsenal>(shooter).unwrap() = arsenal;
 
         // Production broadcast, in-memory Renet only: drop all unreliable
@@ -44,16 +39,16 @@ fn recoil_m4a1_kits_keep_cadence_but_change_confirmed_kick_and_recovery() {
             let recoil = world.get::<Arsenal>(shooter).unwrap().recoil;
             let pose = world.get::<PoseState>(shooter).unwrap();
             let root = world.get::<Transform>(shooter).unwrap();
-            let eye = root.translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
-            let aim = Quat::from_euler(EulerRot::YXZ, recoil.angles[0], pose.aim_pitch, 0.0);
+            let weapon = root.mul_transform(pose.weapon_root.unpack().unwrap());
+            let spec = world.get::<Arsenal>(shooter).unwrap().current().spec();
+            let outlet = weapon.mul_transform(common::weapon_animation::configured_outlet(spec));
+            let bore = weapon.mul_transform(common::weapon_animation::configured_bore(spec));
             for shot in &world.resource::<WorldState>().fired_projectiles {
                 if shots.contains_key(&shot.id) {
                     continue;
                 }
-                // Injection on this tick changes velocity, not the angles
-                // used by the projectile that caused it.
-                assert!(Vec3::from(shot.direction).distance(aim * Vec3::NEG_Z) < 1e-6);
-                assert!(Vec3::from(shot.muzzle).distance(eye + aim * outlet) < 0.001);
+                assert!(Vec3::from(shot.direction).distance(bore.rotation * Vec3::NEG_Z) < 1e-6);
+                assert!(Vec3::from(shot.muzzle).distance(outlet.translation) < 0.001);
                 shots.insert(shot.id, (shot.time, Vec3::from(shot.direction)));
             }
             assert_eq!(recoil.impulses as usize, shots.len());

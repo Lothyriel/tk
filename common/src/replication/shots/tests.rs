@@ -9,7 +9,8 @@ fn shot(id: u64, time: f32) -> FiredProjectileData {
         weapon: WeaponId::M4A1,
         muzzle: [0.0; 3],
         direction: [0.0, 0.0, -1.0],
-        ejection: None,
+        ejection: [0.0; 3],
+        ejection_present: false,
         audio_signature: 100,
     }
 }
@@ -120,7 +121,8 @@ fn shots_wire_and_queue_limits_fail_explicitly() {
         time: 1.0,
         shots: (0..MAX_SHOT_BATCH as u64)
             .map(|id| FiredProjectileData {
-                ejection: Some([0.25, 1.5, -0.15]),
+                ejection: [0.25, 1.5, -0.15],
+                ejection_present: true,
                 audio_signature: 55,
                 ..shot(id, 1.0)
             })
@@ -155,7 +157,8 @@ fn shots_wire_and_queue_limits_fail_explicitly() {
         Err(ShotError::PayloadSize)
     ));
     let mut invalid_ejection = shot(1, 1.0);
-    invalid_ejection.ejection = Some([0.0, f32::NAN, 0.0]);
+    invalid_ejection.ejection = [0.0, f32::NAN, 0.0];
+    invalid_ejection.ejection_present = true;
     for shots in [
         vec![],
         vec![shot(1, 1.0); MAX_SHOT_BATCH + 1],

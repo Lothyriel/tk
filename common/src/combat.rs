@@ -430,7 +430,7 @@ impl Arsenal {
 
     /// Returns an authorized shot, never a client-authoritative projectile.
     pub fn step(&mut self, input: &ClientInput, delta: f32, now: f32) -> Option<WeaponId> {
-        self.step_with_fixture(input, delta, now, input.run, false)
+        self.step_with_fixture(input, delta, now, input.run, false, true)
     }
 
     pub fn step_with_fixture(
@@ -440,6 +440,7 @@ impl Arsenal {
         now: f32,
         sprint: bool,
         fixture: bool,
+        can_fire: bool,
     ) -> Option<WeaponId> {
         let pressed = fresh_sequence(&mut self.last_trigger, input.fire_pressed_sequence);
         let reload = fresh_sequence(&mut self.last_reload, input.reload_sequence);
@@ -519,7 +520,8 @@ impl Arsenal {
             0.0
         };
         let definition = self.current().spec().definition;
-        if self.pending_slot.is_some()
+        if !can_fire
+            || self.pending_slot.is_some()
             || now - self.last_shot_at < self.current().spec().seconds_per_shot()
         {
             return None;

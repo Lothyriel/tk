@@ -145,16 +145,16 @@ pub struct PoseState {
     pub fall_velocity: [f32; 3],
     pub physical: Option<Box<PackedRig>>,
     /// Configured weapon root in actor-local metres after physics writeback.
-    /// An unset validity bit denotes no usable solution.
+    /// A zero quaternion denotes no usable solution.
     pub weapon_root: PackedWeaponRoot,
 }
 
-/// Actor-local rigid transform: 4 mm position steps, and 10-bit
-/// smallest-three quaternion components. The validity bit distinguishes an
-/// unavailable solution from a real identity transform.
+/// Actor-local rigid transform with millimetre position and signed 16-bit
+/// unit-quaternion components. An all-zero quaternion is unavailable.
 #[derive(Debug, Default, Clone, Copy, Archive, Serialize, Deserialize)]
 pub struct PackedWeaponRoot {
-    bits: [u8; 8],
+    position: [i16; 3],
+    rotation: [i16; 4],
 }
 
 impl PackedWeaponRoot {
@@ -164,60 +164,30 @@ impl PackedWeaponRoot {
             || !pose.scale.is_finite()
             || pose.scale.distance(Vec3::ONE) > 1e-5
             || (pose.rotation.length_squared() - 1.0).abs() > 1e-4
-            || pose.translation.abs().max_element() > 2.044
+            || pose.translation.abs().max_element() > 32.767
         {
             return None;
         }
-        let mut bits = 1_u64 << 62;
-        for (i, value) in pose.translation.to_array().into_iter().enumerate() {
-            bits |= (((value / 0.004).round() as i32 as u64) & 1023) << (i * 10);
-        }
-        let mut q = pose.rotation.to_array();
-        let largest = (0..4).max_by(|&a, &b| q[a].abs().total_cmp(&q[b].abs()))?;
-        if q[largest] < 0.0 {
-            q = q.map(|v| -v);
-        }
-        let mut index = 0;
-        for (i, value) in q.into_iter().enumerate() {
-            if i != largest {
-                let value = (value * (511.0 * std::f32::consts::SQRT_2)).round() as i32;
-                bits |= ((value as u64) & 1023) << (30 + index * 10);
-                index += 1;
-            }
-        }
-        bits |= (largest as u64) << 60;
         Some(Self {
-            bits: bits.to_le_bytes(),
+            position: pose
+                .translation
+                .to_array()
+                .map(|v| (v * 1000.0).round() as i16),
+            rotation: pose
+                .rotation
+                .to_array()
+                .map(|v| (v * 32767.0).round() as i16),
         })
     }
 
     pub fn unpack(self) -> Option<Transform> {
-        let bits = u64::from_le_bytes(self.bits);
-        if bits & (1 << 62) == 0 {
+        let rotation = Quat::from_array(self.rotation.map(|v| v as f32 / 32767.0));
+        if rotation.length_squared() < 0.5 {
             return None;
         }
-        let signed = |shift: usize| {
-            let raw = ((bits >> shift) & 1023_u64) as i32;
-            (raw << 22) >> 22
-        };
-        let position = Vec3::new(signed(0) as f32, signed(10) as f32, signed(20) as f32) * 0.004;
-        let largest = ((bits >> 60) & 3) as usize;
-        let mut components = [0.0; 4];
-        let mut index = 0;
-        for (i, component) in components.iter_mut().enumerate() {
-            if i != largest {
-                *component = signed(30 + index * 10) as f32 / (511.0 * std::f32::consts::SQRT_2);
-                index += 1;
-            }
-        }
-        let sum: f32 = components.iter().map(|v| v * v).sum();
-        if sum > 1.001 {
-            return None;
-        }
-        components[largest] = (1.0 - sum).max(0.0).sqrt();
         Some(
-            Transform::from_translation(position)
-                .with_rotation(Quat::from_array(components).normalize()),
+            Transform::from_translation(Vec3::from_array(self.position.map(|v| v as f32 / 1000.0)))
+                .with_rotation(rotation.normalize()),
         )
     }
 }
@@ -684,8 +654,10 @@ mod tests {
             let packed = PackedWeaponRoot::pack(input).unwrap();
             let copy: PackedWeaponRoot = crate::data::decode(&crate::data::encode(&packed));
             let output = copy.unpack().unwrap();
-            assert!(output.translation.distance(input.translation) < 0.0035);
-            assert!((output.rotation * Vec3::NEG_Z).distance(input.rotation * Vec3::NEG_Z) < 0.003);
+            assert!(output.translation.distance(input.translation) < 0.0009);
+            assert!(
+                (output.rotation * Vec3::NEG_Z).distance(input.rotation * Vec3::NEG_Z) < 0.0001
+            );
         }
         assert!(PackedWeaponRoot::pack(Transform::from_xyz(f32::NAN, 0.0, 0.0)).is_none());
         assert!(PackedWeaponRoot::pack(Transform::from_xyz(40.0, 0.0, 0.0)).is_none());
@@ -931,7 +903,7 @@ mod tests {
                     let pose = Transform::from_rotation(rotation);
                     let restored = PackedWeaponRoot::pack(pose).unwrap().unpack().unwrap();
                     for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
-                        assert!((rotation * axis).distance(restored.rotation * axis) < 0.005);
+                        assert!((rotation * axis).distance(restored.rotation * axis) < 0.0001);
                     }
                 }
             }

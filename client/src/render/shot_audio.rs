@@ -538,7 +538,8 @@ mod tests {
                             time: frame as f32 / 60.0,
                             muzzle: [shooter as f32, 1.6, -1.0],
                             direction: [0.0, 0.0, -1.0],
-                            ejection: None,
+                            ejection: [0.0; 3],
+                            ejection_present: false,
                             audio_signature: if shooter % 2 == 0 { 55 } else { 100 },
                         }));
                 }
@@ -790,7 +791,8 @@ mod tests {
             time: 0.0,
             muzzle: [1.0, 2.0, 3.0],
             direction: [0.0, 0.0, -1.0],
-            ejection: None,
+            ejection: [0.0; 3],
+            ejection_present: false,
             audio_signature: 100,
         };
         app.world_mut().resource_mut::<ClientSession>().shots = vec![shot(1), shot(1)];
@@ -850,7 +852,8 @@ mod tests {
                 time: 0.0,
                 muzzle: [0.0, 1.0, 0.0],
                 direction: [0.0, 0.0, -1.0],
-                ejection: None,
+                ejection: [0.0; 3],
+                ejection_present: false,
                 audio_signature: 100,
             })
             .collect();

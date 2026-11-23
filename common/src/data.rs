@@ -192,7 +192,8 @@ mod tests {
             time: 3.8,
             muzzle: [0.2, 1.2, 0.0],
             direction: [0.0, 0.0, -1.0],
-            ejection: Some([0.25, 1.5, -0.15]),
+            ejection: [0.25, 1.5, -0.15],
+            ejection_present: true,
             audio_signature: 55,
         };
         let snapshot = WorldSnapshot {
@@ -317,7 +318,7 @@ mod tests {
             .iter()
             .chain(&physical.overflow)
             .map(|shot| {
-                assert_eq!(shot.ejection, Some([0.25, 1.5, -0.15]));
+                assert_eq!(shot.ejection(), Some([0.25, 1.5, -0.15]));
                 assert_eq!(shot.audio_signature, 55);
                 shot.id
             })

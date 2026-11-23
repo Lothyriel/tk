@@ -19,6 +19,9 @@ struct Sample {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct LocalMotionPose {
     pub position: Vec3,
+    pub weapon_mechanics: common::catalog::MechanicalSnapshot,
+    pub weapon_root: Option<Transform>,
+    pub weapon_shoulders: Option<([Vec3; 2], [Vec3; 2])>,
     pub crouch: f32,
     pub prone: f32,
     pub stride_phase: f32,
@@ -81,9 +84,45 @@ impl LocalMotion {
                 use std::f32::consts::{PI, TAU};
                 let phase_delta =
                     (next.pose.stride_phase - previous.pose.stride_phase + PI).rem_euclid(TAU) - PI;
+                let a = previous.pose.weapon_mechanics;
+                let b = next.pose.weapon_mechanics;
+                let weapon_alpha = if a.action_id != b.action_id
+                    || a.kind != b.kind
+                    || a.phase != b.phase
+                    || a.magazine_inserted != b.magazine_inserted
+                {
+                    if alpha < 1.0 { 0.0 } else { 1.0 }
+                } else {
+                    alpha
+                };
+                let mut weapon_mechanics = if weapon_alpha < 1.0 { a } else { b };
+                weapon_mechanics.fraction = a.fraction.lerp(b.fraction, weapon_alpha);
+                weapon_mechanics.remaining = a.remaining.lerp(b.remaining, weapon_alpha);
                 return Some((
                     LocalMotionPose {
                         position: previous.pose.position.lerp(next.pose.position, alpha),
+                        weapon_mechanics,
+                        weapon_root: match (previous.pose.weapon_root, next.pose.weapon_root) {
+                            (Some(a), Some(b)) => Some(
+                                Transform::from_translation(
+                                    a.translation.lerp(b.translation, weapon_alpha),
+                                )
+                                .with_rotation(a.rotation.slerp(b.rotation, weapon_alpha)),
+                            ),
+                            _ => None,
+                        },
+                        weapon_shoulders: match (
+                            previous.pose.weapon_shoulders,
+                            next.pose.weapon_shoulders,
+                        ) {
+                            (Some(a), Some(b)) => Some((
+                                std::array::from_fn(|i| a.0[i].lerp(b.0[i], weapon_alpha)),
+                                std::array::from_fn(|i| {
+                                    a.1[i].lerp(b.1[i], weapon_alpha).normalize_or_zero()
+                                }),
+                            )),
+                            _ => None,
+                        },
                         crouch: previous.pose.crouch.lerp(next.pose.crouch, alpha),
                         prone: previous.pose.prone.lerp(next.pose.prone, alpha),
                         stride_phase: previous.pose.stride_phase + phase_delta * alpha,
@@ -490,6 +529,9 @@ mod tests {
         let mut motion = LocalMotion::default();
         let standing = LocalMotionPose {
             position: Vec3::new(0.0, 1.0, 0.0),
+            weapon_mechanics: Default::default(),
+            weapon_root: None,
+            weapon_shoulders: None,
             crouch: 0.0,
             prone: 0.0,
             stride_phase: std::f32::consts::TAU - 0.2,
@@ -503,6 +545,9 @@ mod tests {
         };
         let crouched = LocalMotionPose {
             position: Vec3::new(2.0, 0.7, -1.0),
+            weapon_mechanics: Default::default(),
+            weapon_root: None,
+            weapon_shoulders: None,
             crouch: 1.0,
             prone: 0.0,
             stride_phase: 0.2,

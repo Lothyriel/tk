@@ -55,7 +55,7 @@ impl ShotMessage {
                             .muzzle
                             .iter()
                             .chain(&shot.direction)
-                            .chain(shot.ejection.iter().flatten())
+                            .chain(shot.ejection().iter().flatten())
                             .all(|v| v.is_finite())
                 })
                 || shots.windows(2).any(|pair| pair[0].id >= pair[1].id)

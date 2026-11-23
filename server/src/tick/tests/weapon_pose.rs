@@ -104,6 +104,147 @@ fn configured_weapon_root_supports_rifle_smg_and_sidearm() {
 }
 
 #[test]
+fn shot_uses_resolved_outlet_and_bore_during_motion_and_ads() {
+    use common::{catalog::AnchorKind, humanoid::PoseState};
+    let (mut app, actor, other) = physical_fixture();
+    app.world_mut()
+        .get_mut::<Transform>(other)
+        .unwrap()
+        .translation
+        .x += 4.0;
+    let mut shots = [0_usize; 4];
+    let mut last_id = app.world().resource::<WorldState>().next_projectile_id;
+    for tick in 0..220 {
+        let stage = tick / 55;
+        {
+            let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+            input.fire = true;
+            input.forward = stage > 0;
+            input.run = stage == 2;
+            input.aim = stage == 3;
+            input.camera.yaw = if stage == 2 { 0.25 } else { 0.0 };
+        }
+        held_steps(&mut app, actor, 1);
+        let next = app.world().resource::<WorldState>().next_projectile_id;
+        if next == last_id {
+            continue;
+        }
+        assert_eq!(next, last_id + 1);
+        last_id = next;
+        shots[stage] += 1;
+        let world = app.world();
+        let actor_root = *world.get::<Transform>(actor).unwrap();
+        let pose = world.get::<PoseState>(actor).unwrap();
+        let root = actor_root.mul_transform(pose.weapon_root.unpack().unwrap());
+        let assembly = &world
+            .get::<Arsenal>(actor)
+            .unwrap()
+            .current()
+            .spec()
+            .assembly;
+        let exit = assembly.anchors[&AnchorKind::DeviceExit];
+        let bore = assembly.anchors[&AnchorKind::Bore];
+        let event = world
+            .resource::<WorldState>()
+            .fired_projectiles
+            .last()
+            .unwrap();
+        assert!(Vec3::from(event.muzzle).distance(root.transform_point(exit.translation)) < 1e-5);
+        assert!(
+            Vec3::from(event.direction).distance(root.rotation * bore.rotation * Vec3::NEG_Z)
+                < 1e-5
+        );
+    }
+    assert!(
+        shots.iter().all(|count| *count > 0),
+        "missing shots in one movement stage: {shots:?}"
+    );
+}
+
+#[test]
+fn unavailable_weapon_pose_blocks_fire_without_spending_ammo_or_replaying_semi_edge() {
+    use common::humanoid::PoseState;
+    let (mut app, actor, other) = physical_fixture();
+    app.world_mut()
+        .get_mut::<Transform>(other)
+        .unwrap()
+        .translation
+        .x += 4.0;
+    app.world_mut()
+        .get_mut::<ClientInput>(actor)
+        .unwrap()
+        .weapon = EquipmentSlot::Sidearm;
+    held_steps(&mut app, actor, 180);
+    let origin = app.world().get::<Transform>(actor).unwrap().translation;
+    let obstacle = app
+        .world_mut()
+        .spawn((
+            SurfaceKind::Concrete,
+            Collider::cuboid(1.0, 1.5, 1.0),
+            Transform::from_translation(origin),
+        ))
+        .id();
+    held_steps(&mut app, actor, 3);
+    assert!(
+        app.world()
+            .get::<PoseState>(actor)
+            .unwrap()
+            .weapon_root
+            .unpack()
+            .is_none()
+    );
+    let count = app
+        .world()
+        .get::<Arsenal>(actor)
+        .unwrap()
+        .current()
+        .rounds();
+    let first_id = app.world().resource::<WorldState>().next_projectile_id;
+    {
+        let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+        input.fire = true;
+        input.fire_pressed_sequence += 1;
+    }
+    held_steps(&mut app, actor, 3);
+    assert_eq!(
+        app.world()
+            .get::<Arsenal>(actor)
+            .unwrap()
+            .current()
+            .rounds(),
+        count
+    );
+    assert_eq!(
+        app.world().resource::<WorldState>().next_projectile_id,
+        first_id
+    );
+    app.world_mut().despawn(obstacle);
+    held_steps(&mut app, actor, 8);
+    assert!(
+        app.world()
+            .get::<PoseState>(actor)
+            .unwrap()
+            .weapon_root
+            .unpack()
+            .is_some()
+    );
+    assert_eq!(
+        app.world().resource::<WorldState>().next_projectile_id,
+        first_id,
+        "blocked semi-auto press must not replay after clearance"
+    );
+    {
+        let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+        input.fire_pressed_sequence += 1;
+    }
+    held_steps(&mut app, actor, 1);
+    assert_eq!(
+        app.world().resource::<WorldState>().next_projectile_id,
+        first_id + 1
+    );
+}
+
+#[test]
 fn configured_weapon_root_remains_available_while_prone() {
     use common::humanoid::PoseState;
     let (mut app, actor, other) = physical_fixture();

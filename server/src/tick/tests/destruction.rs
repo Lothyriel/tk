@@ -60,12 +60,16 @@ fn destruction_oblique_shot_crossing_cell_seam_pays_preimpact_full_thickness_onc
                     owner_entity: owner,
                     penetrated: vec![],
                 },
-                Transform::from_translation(contact - direction * 0.60),
+                Transform::from_translation(if clearance {
+                    contact + direction * 0.005
+                } else {
+                    contact - direction * 0.60
+                }),
             ));
             if clearance {
                 // The muzzle is beyond the first cell's side seam, inside the
                 // next wood cell. Flight then starts in already-charged material.
-                projectile.insert(super::super::MuzzleClearance(contact + direction * 0.005));
+                projectile.insert(super::super::MuzzleClearance(contact - direction * 0.60));
             }
         }
         steps(&mut app, 1);
@@ -848,8 +852,8 @@ fn destruction_native_concrete_spall_escapes_parent_cavity_and_settles() {
                     owner_entity: owner,
                     penetrated: vec![],
                 },
-                Transform::from_translation(eye),
-                super::super::MuzzleClearance(muzzle),
+                Transform::from_translation(muzzle),
+                super::super::MuzzleClearance(eye),
             ));
             steps(&mut app, 2);
         }

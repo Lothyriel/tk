@@ -39,6 +39,9 @@ impl bevy::prelude::Plugin for Plugin {
 pub(crate) struct RemoteTarget {
     pub position: Vec3,
     pub rotation: Quat,
+    pub weapon_root: Option<Transform>,
+    pub weapon_shoulders: Option<([Vec3; 2], [Vec3; 2])>,
+    pub mechanics: common::catalog::MechanicalSnapshot,
     pub snap: bool,
 }
 #[derive(Component)]
@@ -60,6 +63,9 @@ pub(crate) struct PoseCache {
     raid: u32,
     poses: HashMap<u64, PoseState>,
     roots: HashMap<u64, Transform>,
+    weapon_roots: HashMap<u64, Transform>,
+    weapon_shoulders: HashMap<u64, ([Vec3; 2], [Vec3; 2])>,
+    weapon_mechanics: HashMap<u64, common::catalog::MechanicalSnapshot>,
     world_foot_anchors: HashMap<u64, [Vec3; 2]>,
     last_live: HashMap<(u64, Segment), Transform>,
 }
@@ -678,7 +684,26 @@ fn interpolate(
 ) {
     let alpha = 1.0 - (-time.delta_secs() * 18.0).exp();
     for (mut t, mut target, client) in &mut actors {
+        let action_changed = cache.weapon_mechanics.get(&client.id).is_some_and(|old| {
+            old.action_id != target.mechanics.action_id
+                || old.kind != target.mechanics.kind
+                || old.phase != target.mechanics.phase
+        });
         let snap = target.snap || t.translation.distance(target.position) > 4.0;
+        let weapon_snap = snap || action_changed;
+        let mechanics = cache
+            .weapon_mechanics
+            .entry(client.id)
+            .or_insert(target.mechanics);
+        if weapon_snap {
+            *mechanics = target.mechanics;
+        } else {
+            let fraction = mechanics.fraction.lerp(target.mechanics.fraction, alpha);
+            let remaining = mechanics.remaining.lerp(target.mechanics.remaining, alpha);
+            *mechanics = target.mechanics;
+            mechanics.fraction = fraction;
+            mechanics.remaining = remaining;
+        }
         if snap {
             cache.world_foot_anchors.remove(&client.id);
         }
@@ -690,6 +715,30 @@ fn interpolate(
         t.rotation = t
             .rotation
             .slerp(target.rotation, if snap { 1.0 } else { alpha });
+        if let Some(next) = target.weapon_root {
+            let root = cache.weapon_roots.entry(client.id).or_insert(next);
+            if weapon_snap {
+                *root = next;
+            } else {
+                root.translation = root.translation.lerp(next.translation, alpha);
+                root.rotation = root.rotation.slerp(next.rotation, alpha);
+            }
+        } else {
+            cache.weapon_roots.remove(&client.id);
+        }
+        if let Some(next) = target.weapon_shoulders {
+            let current = cache.weapon_shoulders.entry(client.id).or_insert(next);
+            if weapon_snap {
+                *current = next;
+            } else {
+                for i in 0..2 {
+                    current.0[i] = current.0[i].lerp(next.0[i], alpha);
+                    current.1[i] = current.1[i].lerp(next.1[i], alpha).normalize_or_zero();
+                }
+            }
+        } else {
+            cache.weapon_shoulders.remove(&client.id);
+        }
         target.snap = false;
         cache.roots.insert(client.id, *t);
     }
@@ -881,7 +930,9 @@ fn apply_configured_contacts(
     }
     for (flash, mut transform, mut visible) in &mut flashes {
         if let Some(muzzle) = roots.get(&flash.0) {
-            *transform = muzzle.mul_transform(Transform::from_translation(Vec3::NEG_Z * 0.05));
+            *transform = muzzle
+                .mul_transform(Transform::from_translation(Vec3::NEG_Z * 0.05))
+                .with_scale(Vec3::new(0.075, 0.075, 0.12));
         } else {
             *visible = Visibility::Hidden;
         }
@@ -893,7 +944,7 @@ fn animate(
     session: Res<ClientSession>,
     assets: Res<VoxelAssets>,
     feedback: Res<super::feedback::Feedback>,
-    time: Res<Time<Real>>,
+    (time, targets): (Res<Time<Real>>, Query<(&Client, &RemoteTarget)>),
     mut cache: ResMut<PoseCache>,
     visuals: ActorVisuals,
 ) {
@@ -909,6 +960,9 @@ fn animate(
     if cache.raid != session.raid.raid_id {
         cache.poses.clear();
         cache.roots.clear();
+        cache.weapon_roots.clear();
+        cache.weapon_shoulders.clear();
+        cache.weapon_mechanics.clear();
         cache.world_foot_anchors.clear();
         cache.last_live.clear();
         cache.accepted_rigs.clear();
@@ -1070,22 +1124,6 @@ fn animate(
         {
             t.scale.y = gait_knee_scale(&rigs[&p.id], bone.segment);
         }
-        if matches!(
-            bone.segment,
-            Segment::Thorax
-                | Segment::LeftUpperArm
-                | Segment::RightUpperArm
-                | Segment::LeftForearm
-                | Segment::RightForearm
-                | Segment::LeftHand
-                | Segment::RightHand
-        ) && let Some(r) = feedback.responses.get(&p.id)
-        {
-            t.translation.z += r.recoil;
-            if bone.segment != Segment::Thorax {
-                t.rotation *= Quat::from_rotation_x(r.recoil);
-            }
-        }
         mesh.0 = if bone.inner == 2 {
             let offset = t.rotation * Vec3::new(0.0, 0.0, -0.035);
             t.translation += offset;
@@ -1098,11 +1136,12 @@ fn animate(
             assets.intact[bone.segment.index()].clone()
         };
         if let Some(mut fingers) = fingers {
-            let action = feedback
-                .responses
-                .get(&p.id)
-                .filter(|r| r.displayed == Some(WeaponKind::Rifle) && !wound && present)
-                .and_then(|r| r.action);
+            let action = (p.weapon == WeaponKind::Rifle && !wound && present)
+                .then(|| cache.weapon_mechanics.get(&p.id).copied())
+                .flatten()
+                .map(|mechanics| {
+                    common::weapon_animation::manipulation::action(p.weapon, &mechanics)
+                });
             let weights = if let Some(action) = action {
                 mesh.0 = assets.grasp.clone();
                 super::weapons::grasp::weights(&action)
@@ -1140,9 +1179,6 @@ fn animate(
                 Vec3::new(0.0, 0.0, -0.17)
             };
         t.translation += offset;
-        if !gear.helmet {
-            t.translation.z += feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
-        }
         if !gear.helmet && p.armor.kind == ArmorKind::Heavy {
             t.scale = Vec3::new(1.15, 1.1, 1.2);
         }
@@ -1171,7 +1207,9 @@ fn animate(
         let Some(p) = session.local(weapon.owner) else {
             continue;
         };
-        let usable = p.alive
+        let usable = cache.weapon_roots.contains_key(&p.id)
+            && cache.weapon_shoulders.contains_key(&p.id)
+            && p.alive
             && p.pose.physical.is_none()
             && matches!(
                 p.pose.mode,
@@ -1186,16 +1224,13 @@ fn animate(
         if !usable {
             continue;
         }
-        let pose = rigs[&p.id];
-        let mut preferred = posed_weapon(&cache.poses[&p.id], &pose);
-        let displayed = cache.poses[&p.id].weapon;
-        let action = feedback
-            .responses
+        let displayed = p.weapon;
+        let mechanics = cache
+            .weapon_mechanics
             .get(&p.id)
-            .and_then(|r| r.action)
-            .unwrap_or_else(|| {
-                common::weapon_animation::manipulation::action(displayed, &p.mechanics)
-            });
+            .copied()
+            .unwrap_or(p.mechanics);
+        let action = common::weapon_animation::manipulation::action(displayed, &mechanics);
         let mut request = if displayed == p.weapon {
             ConfiguredWeapon {
                 epoch: session.configurations.cache.epoch(),
@@ -1216,47 +1251,64 @@ fn animate(
             *visible = Visibility::Hidden;
             continue;
         };
-        let mechanics = feedback
-            .responses
-            .get(&p.id)
-            .map_or(p.mechanics, |r| r.displayed_mechanics);
-        request.magazine = entry.presented_magazine(&mechanics);
+        request.magazine = entry.presented_magazine(&p.mechanics);
         let Some(visual) = entry.visual(request.magazine) else {
             continue;
         };
-        if let Ok(contacts) = handling::WeaponContacts::from_assembly(&visual.assembly) {
-            preferred = common::humanoid::configured::preferred_root(
-                &cache.poses[&p.id],
-                pose[Segment::Thorax.index()].position.into(),
-                contacts.trigger,
-                action,
-            );
-        }
-        let recoil = feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
-        preferred.translation.z += recoil;
-        let mut input = configured::native::action(visual, action, recoil, &mechanics);
+        let mut input = configured::native::action(visual, action, 0.0, &mechanics);
         input.preflight_error = posture_errors.get(&p.id).cloned();
-        input.preferred_root = preferred;
-        input.shoulders = [Segment::LeftUpperArm, Segment::RightUpperArm].map(|segment| {
-            pose[segment.index()]
-                .transform()
-                .transform_point(Vec3::Y * 0.15)
-                + Vec3::Z * recoil
-        });
-        if let Some(posture) = postures.get(&p.id) {
-            input.preferred_root = posture.preferred_root;
-            input.preferred_root.translation.z += recoil;
-            input.shoulders = posture.shoulders.map(|p| p + Vec3::Z * recoil);
-            input.poles = posture.poles;
-            input.stock_target = posture.stock_target.map(|p| p + Vec3::Z * recoil);
-            input.max_adjustment = posture.max_adjustment;
+        let actor = cache.roots[&p.id];
+        let world = cache.weapon_roots[&p.id];
+        input.preferred_root = Transform::from_translation(
+            actor.rotation.inverse() * (world.translation - actor.translation),
+        )
+        .with_rotation(actor.rotation.inverse() * world.rotation);
+        let (shoulders, poles) = cache.weapon_shoulders[&p.id];
+        input.shoulders = shoulders.map(|p| actor.rotation.inverse() * (p - actor.translation));
+        input.poles = poles.map(|p| actor.rotation.inverse() * p);
+        input.stock_target = None;
+        input.max_adjustment = 0.001;
+        // Linear interpolation between two valid rigid grips may pass just
+        // outside arm reach. In that case use the latest complete authoritative
+        // pose instead of moving the weapon or separating either hand.
+        let reachable = handling::configured_contacts(visual, action, 0.0, &mechanics)
+            .and_then(|contacts| {
+                handling::fit_weapon(
+                    input.preferred_root,
+                    contacts,
+                    input.shoulders,
+                    input.poles,
+                    None,
+                    input.max_adjustment,
+                )
+            })
+            .is_ok();
+        if !reachable
+            && let Some((_, target)) = targets.iter().find(|(client, _)| client.id == p.id)
+            && let (Some(root), Some((shoulders, poles))) =
+                (target.weapon_root, target.weapon_shoulders)
+        {
+            let mechanics = target.mechanics;
+            let action = common::weapon_animation::manipulation::action(displayed, &mechanics);
+            input = configured::native::action(visual, action, 0.0, &mechanics);
+            input.preferred_root = Transform::from_translation(
+                actor.rotation.inverse() * (root.translation - actor.translation),
+            )
+            .with_rotation(actor.rotation.inverse() * root.rotation);
+            input.shoulders = shoulders.map(|p| actor.rotation.inverse() * (p - actor.translation));
+            input.poles = poles.map(|p| actor.rotation.inverse() * p);
+            input.stock_target = None;
+            input.max_adjustment = 0.001;
+            cache.weapon_roots.insert(p.id, root);
+            cache.weapon_shoulders.insert(p.id, (shoulders, poles));
+            cache.weapon_mechanics.insert(p.id, mechanics);
         }
         // Existing anatomical meshes (including wounds/cores) consume the same
         // accepted solution below, rather than drawing a second pair of arms.
         input.visible_hands = [false; 6];
         commands.entity(entity).insert((request, input));
     }
-    for (flash, mut t, mut visible) in &mut flashes {
+    for (flash, _, mut visible) in &mut flashes {
         let Some(p) = session.local(flash.0) else {
             continue;
         };
@@ -1268,15 +1320,6 @@ fn animate(
         } else {
             Visibility::Hidden
         };
-        let gun = posed_weapon(&cache.poses[&p.id], &rigs[&p.id]);
-        t.translation = gun.transform_point(
-            common::weapon_animation::WeaponRig::for_weapon(cache.poses[&p.id].weapon).muzzle
-                - Vec3::Z * 0.05,
-        );
-        t.rotation = gun.rotation;
-        if let Some(r) = feedback.responses.get(&p.id) {
-            t.translation.z += r.recoil;
-        }
     }
     for (detail, mut t, mut visible) in &mut details {
         let Some(p) = session.local(detail.owner) else {
@@ -1292,9 +1335,6 @@ fn animate(
             Visibility::Hidden
         };
         *t = rigs[&p.id][detail.segment.index()].transform();
-        if detail.segment == Segment::Thorax {
-            t.translation.z += feedback.responses.get(&p.id).map_or(0.0, |r| r.recoil);
-        }
         let offset = t.rotation * detail.offset;
         t.translation += offset;
         t.scale = detail.scale;

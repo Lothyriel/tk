@@ -458,7 +458,9 @@ pub(super) fn assemble(
                 weapon_root,
                 pieces,
                 contacts,
-                muzzle: common::weapon_animation::configured_outlet(&entry.resolved),
+                muzzle: common::weapon_animation::configured_outlet(&entry.resolved).with_rotation(
+                    common::weapon_animation::configured_bore(&entry.resolved).rotation,
+                ),
                 hands,
             });
     }

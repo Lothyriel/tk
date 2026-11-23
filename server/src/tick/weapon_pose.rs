@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use common::{
-    catalog::{AnchorKind, Bounds},
+    catalog::{AnchorKind, Bounds, ResolvedWeapon},
     combat::*,
     humanoid::*,
     raid::*,
@@ -24,6 +24,13 @@ const RETRACTION_STEP: f32 = 0.025;
 const RETRACTION_STEPS: usize = 30;
 const RECOVERY_METRES_PER_SECOND: f32 = 2.0;
 const MAX_CANDIDATES_PER_PASS: usize = 128;
+const M4A1_GAME_ZERO: f32 = 20.0;
+
+struct AimReference {
+    eye: Vec3,
+    rotation: Quat,
+    delta: f32,
+}
 
 #[derive(Clone)]
 pub(super) struct Previous {
@@ -32,6 +39,8 @@ pub(super) struct Previous {
     weapon: common::WeaponInstanceId,
     revision: u64,
     actor: Vec3,
+    actor_rotation: Quat,
+    aim_roll: f32,
     weapon_root: Transform,
     retraction: f32,
     yaw: f32,
@@ -77,6 +86,106 @@ fn solve_fixed(
         support,
         trigger,
     })
+}
+
+/// Rotate the actual rigid assembly toward the game-zero solution, rather
+/// than sending a projectile in a direction different from the visible bore.
+/// Align the sight with the eye when the arm geometry permits it.
+fn calibrate(
+    base: handling::HandlingSolution,
+    posture: configured::Posture,
+    contacts: handling::WeaponContacts,
+    spec: &ResolvedWeapon,
+    actor: Transform,
+    ads: f32,
+    aim: AimReference,
+) -> Option<handling::HandlingSolution> {
+    let weight = common::weapon_animation::ease(ads);
+    if weight <= 0.0 {
+        return Some(base);
+    }
+    let outlet = common::weapon_animation::configured_outlet(spec);
+    let bore = common::weapon_animation::configured_bore(spec);
+    let original_bore = actor.rotation * base.root.rotation * bore.rotation * Vec3::NEG_Z;
+    let forward = aim.rotation * Vec3::NEG_Z;
+    let target = aim.eye + forward * M4A1_GAME_ZERO;
+    let eye = actor.rotation.inverse() * (aim.eye - actor.translation);
+    let sight = spec.assembly.anchors.get(&AnchorKind::Sight);
+    let sight_point = sight.map(|sight| {
+        let forward = actor.rotation.inverse() * forward;
+        let depth = (base.root.transform_point(sight.translation) - eye).dot(forward);
+        eye + forward * depth.max(0.015)
+    });
+    let trigger = base.root.transform_point(contacts.trigger.translation);
+    let mut result = base;
+    for _ in 0..4 {
+        let muzzle = actor
+            .mul_transform(result.root)
+            .mul_transform(outlet)
+            .translation;
+        let to_target = target - muzzle;
+        let mut offset = to_target;
+        for _ in 0..3 {
+            let ticks = offset.length() / spec.muzzle_speed / aim.delta;
+            let whole = ticks.floor();
+            let drop = common::PROJECTILE_GRAVITY
+                * aim.delta
+                * aim.delta
+                * (whole + 1.0)
+                * (whole * 0.5 + ticks.fract());
+            offset = to_target + Vec3::Y * drop;
+        }
+        let target_bore = original_bore
+            .lerp(offset.normalize_or_zero(), weight)
+            .normalize_or_zero();
+        if target_bore.length_squared() < 0.5 {
+            return None;
+        }
+        let correction = Quat::from_rotation_arc(original_bore, target_bore);
+        let rotation = actor.rotation.inverse() * correction * actor.rotation * base.root.rotation;
+        let preferred = trigger - rotation * contacts.trigger.translation;
+        let mut aligned = None;
+        if let (Some(sight), Some(point)) = (sight, sight_point) {
+            let sight_rotation = actor.rotation.inverse() * aim.rotation * sight.rotation.inverse();
+            let rotation = rotation.slerp(
+                if spec.definition == common::WeaponId::M4A1 {
+                    let sight_bore = actor.rotation * sight_rotation * bore.rotation * Vec3::NEG_Z;
+                    actor.rotation.inverse()
+                        * Quat::from_rotation_arc(sight_bore, target_bore)
+                        * actor.rotation
+                        * sight_rotation
+                } else {
+                    sight_rotation
+                },
+                weight,
+            );
+            let braced = point - rotation * sight.translation;
+            for fraction in [1.0, 0.75, 0.5, 0.25] {
+                let root = Transform::from_translation(preferred.lerp(braced, weight * fraction))
+                    .with_rotation(rotation);
+                if let Some(solved) = solve_fixed(root, contacts, posture) {
+                    aligned = Some(solved);
+                    break;
+                }
+            }
+        }
+        result = if let Some(aligned) = aligned {
+            aligned
+        } else if spec.definition == common::WeaponId::M4A1 {
+            handling::fit_weapon(
+                Transform::from_translation(preferred).with_rotation(rotation),
+                contacts,
+                posture.shoulders,
+                posture.poles,
+                posture.stock_target,
+                posture.max_adjustment,
+            )
+            .ok()?
+        } else {
+            return Some(base);
+        };
+    }
+    Some(result)
 }
 
 /// Segments are actor-local. Authored parts use their individual bounds; the
@@ -326,6 +435,8 @@ pub(super) fn resolve(
         Entity,
         &Transform,
         &Collider,
+        &common::ClientInput,
+        &common::MovementState,
         &mut PoseState,
         &BodyHealth,
         &ArmorState,
@@ -335,14 +446,26 @@ pub(super) fn resolve(
     )>,
 ) {
     let Ok(context) = context.single() else {
-        for (_, _, _, mut pose, ..) in &mut actors {
+        for (_, _, _, _, _, mut pose, ..) in &mut actors {
             pose.weapon_root = PackedWeaponRoot::default();
         }
         history.clear();
         return;
     };
     let mut seen = HashSet::new();
-    for (entity, actor, collider, mut pose, body, armor, arsenal, participant, life) in &mut actors
+    for (
+        entity,
+        actor,
+        collider,
+        input,
+        movement,
+        mut pose,
+        body,
+        armor,
+        arsenal,
+        participant,
+        life,
+    ) in &mut actors
     {
         seen.insert(entity);
         pose.weapon_root = PackedWeaponRoot::default();
@@ -392,6 +515,24 @@ pub(super) fn resolve(
             rig.posture,
             handling::configured_contacts(spec, action, 0.0, &mechanics),
         ) else {
+            continue;
+        };
+        let camera = arsenal.recoil.camera(common::CameraInput {
+            yaw: if movement.prone {
+                actor.rotation.to_euler(EulerRot::YXZ).0
+            } else {
+                input.camera.yaw
+            },
+            roll: pose.aim_roll,
+            ..input.camera
+        });
+        let aim = AimReference {
+            eye: super::simulation::neutral_eye(actor, movement)
+                + actor.rotation * aim_lean_offset(pose.aim_roll),
+            rotation: Quat::from(&camera),
+            delta: time.delta_secs(),
+        };
+        let Some(base) = calibrate(base, posture, contacts, spec, *actor, pose.ads, aim) else {
             continue;
         };
         // These endpoints cannot move with the weapon. If either is already
@@ -603,23 +744,30 @@ pub(super) fn resolve(
                                         ));
                                         break;
                                     }
-                                    let Some((
+                                    if let Some((
                                         weight,
                                         intermediate,
                                         intermediate_shape,
                                         intermediate_points,
                                     )) = accepted
-                                    else {
+                                    {
+                                        solved = intermediate;
+                                        shape = intermediate_shape;
+                                        points = intermediate_points;
+                                        accepted_retraction =
+                                            old.retraction + (retraction - old.retraction) * weight;
+                                        accepted_yaw = old.yaw + (yaw - old.yaw) * weight;
+                                        accepted_lateral =
+                                            old.lateral + (lateral - old.lateral) * weight;
+                                    } else if old.actor_rotation.angle_between(actor.rotation)
+                                        <= 0.10
+                                        && (old.aim_roll - pose.aim_roll).abs() <= 0.10
+                                    {
                                         continue;
-                                    };
-                                    solved = intermediate;
-                                    shape = intermediate_shape;
-                                    points = intermediate_points;
-                                    accepted_retraction =
-                                        old.retraction + (retraction - old.retraction) * weight;
-                                    accepted_yaw = old.yaw + (yaw - old.yaw) * weight;
-                                    accepted_lateral =
-                                        old.lateral + (lateral - old.lateral) * weight;
+                                    }
+                                    // If body motion makes every interpolated grip unreachable,
+                                    // the fully swept and reachable candidate remains valid. Holding
+                                    // the stale root would permanently disable the weapon.
                                 }
                             }
                             let Some(packed) = PackedWeaponRoot::pack(solved.root) else {
@@ -634,6 +782,8 @@ pub(super) fn resolve(
                                     weapon: instance.id,
                                     revision: instance.revision,
                                     actor: actor.translation,
+                                    actor_rotation: actor.rotation,
+                                    aim_roll: pose.aim_roll,
                                     weapon_root: actor.mul_transform(solved.root),
                                     retraction: accepted_retraction,
                                     yaw: accepted_yaw,

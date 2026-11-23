@@ -7,6 +7,18 @@ pub(super) fn prepare(
     mut commands: Commands,
     state: LocalFramingState,
     mut assets: native::ViewAssets,
+    (real_time, local_actor): (
+        Option<Res<Time<Real>>>,
+        Query<
+            &Transform,
+            (
+                With<common::LocalPlayer>,
+                Without<WeaponViewModel>,
+                Without<WeaponMeshRoot>,
+                Without<ViewModelCamera>,
+            ),
+        >,
+    ),
     camera: Single<(&Transform, &Projection), (With<ViewModelCamera>, Without<WeaponViewModel>)>,
     mut views: Query<
         (&WeaponViewModel, &mut Transform),
@@ -16,8 +28,14 @@ pub(super) fn prepare(
             Without<WeaponMeshRoot>,
         ),
     >,
-    roots: Query<
-        (Entity, &ChildOf, &Transform, Option<&ConfiguredWeapon>),
+    mut roots: Query<
+        (
+            Entity,
+            &ChildOf,
+            &Transform,
+            &mut Visibility,
+            Option<&ConfiguredWeapon>,
+        ),
         (
             With<WeaponMeshRoot>,
             Without<WeaponViewModel>,
@@ -45,7 +63,7 @@ pub(super) fn prepare(
     let Projection::Perspective(projection) = projection else {
         return;
     };
-    for (entity, parent, root, previous) in &roots {
+    for (entity, parent, root, mut root_visibility, previous) in &mut roots {
         let Ok((weapon, mut view)) = views.get_mut(parent.0) else {
             continue;
         };
@@ -75,6 +93,70 @@ pub(super) fn prepare(
         let Some(visual) = entry.visual(request.magazine) else {
             continue;
         };
+        // The local hierarchy and the remote hierarchy consume the same
+        // authoritative assembly root. Convert through world space because
+        // the camera yaw can respond ahead of the confirmed body sample.
+        if displayed == player.weapon
+            && let (Some(time), Ok(actor)) = (real_time.as_ref(), local_actor.single())
+            && let Some(sample) = session.local_motion.sample(time.elapsed_secs_f64())
+            && let Some(world_weapon) = sample.weapon_root
+            && let Some((shoulders, poles)) = sample.weapon_shoulders
+        {
+            let mechanics = sample.weapon_mechanics;
+            request.magazine = entry.presented_magazine(&mechanics);
+            let Some(visual) = entry.visual(request.magazine) else {
+                *root_visibility = Visibility::Hidden;
+                continue;
+            };
+            *root_visibility = Visibility::Inherited;
+            let action = common::weapon_animation::manipulation::action(displayed, &mechanics);
+            let mut input = native::action(visual, action, 0.0, &mechanics);
+            *view = Transform::IDENTITY;
+            let entity_world = actor.mul_transform(*root);
+            let inv = entity_world.rotation.inverse();
+            input.preferred_root = Transform::from_translation(
+                inv * (world_weapon.translation - entity_world.translation),
+            )
+            .with_rotation(inv * world_weapon.rotation);
+            input.shoulders = shoulders.map(|p| inv * (p - entity_world.translation));
+            input.poles = poles.map(|p| inv * p);
+            input.stock_target = None;
+            input.max_adjustment = 0.001;
+            for (side, segments) in [
+                [
+                    common::humanoid::Segment::LeftUpperArm,
+                    common::humanoid::Segment::LeftForearm,
+                    common::humanoid::Segment::LeftHand,
+                ],
+                [
+                    common::humanoid::Segment::RightUpperArm,
+                    common::humanoid::Segment::RightForearm,
+                    common::humanoid::Segment::RightHand,
+                ],
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                for (part, segment) in segments.into_iter().enumerate() {
+                    input.visible_hands[side * 3 + part] =
+                        player.body.anatomy.missing & (1 << segment.index()) == 0;
+                }
+            }
+            let to_eye = eye.to_matrix().inverse() * view.mul_transform(*root).to_matrix();
+            commands.entity(entity).insert((
+                request,
+                input,
+                super::super::voxel::configured::ViewSleeveClearance {
+                    to_eye,
+                    near: projection.near,
+                },
+            ));
+            continue;
+        }
+        if local_actor.single().is_ok() {
+            *root_visibility = Visibility::Hidden;
+            continue;
+        }
         let mut input = native::action(
             visual,
             action,

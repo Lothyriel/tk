@@ -5,6 +5,50 @@ use common::{
     replication::{Configuration, catalog_fingerprint},
 };
 
+// Drive the replicated root from the same configured anatomy that the
+// server publishes, rather than inventing a client-only weapon transform.
+fn publish_fixture_weapon_root(
+    session: Res<ClientSession>,
+    mut actors: Query<(&Client, &mut RemoteTarget)>,
+) {
+    for (client, mut target) in &mut actors {
+        let Some(p) = session.local(client.id) else {
+            continue;
+        };
+        let Some(entry) = session
+            .configurations
+            .cache
+            .get(session.configurations.cache.epoch(), p.configuration)
+        else {
+            continue;
+        };
+        target.mechanics = p.mechanics;
+        let legs = [Region::LeftLeg, Region::RightLeg].map(|r| p.body.anatomy.capacity(r));
+        let result = common::humanoid::configured::evaluate_with_carry(
+            &p.pose,
+            legs,
+            entry
+                .visual(entry.presented_magazine(&p.mechanics))
+                .unwrap_or(&entry.resolved),
+            &p.mechanics,
+            None,
+            Some(common::humanoid::configured::shoulder_cover(&p.armor)),
+        );
+        if let Ok(rig) = result
+            && let Some(weapon) = rig.weapon
+        {
+            let actor = Transform::from_translation(target.position).with_rotation(target.rotation);
+            target.weapon_root = Some(actor.mul_transform(weapon.root));
+            if let Some(posture) = rig.posture {
+                target.weapon_shoulders = Some((
+                    posture.shoulders.map(|p| actor.transform_point(p)),
+                    posture.poles.map(|p| actor.rotation * p),
+                ));
+            }
+        }
+    }
+}
+
 fn fixture(weapon: WeaponKind) -> (App, Entity) {
     let mut app = App::new();
     app.add_plugins((
@@ -21,7 +65,8 @@ fn fixture(weapon: WeaponKind) -> (App, Entity) {
     .init_resource::<feedback::Feedback>()
     .insert_resource(PlayerId(99))
     .add_plugins((Plugin, voxel::Plugin))
-    .add_systems(Update, feedback::advance);
+    .add_systems(Update, feedback::advance)
+    .add_systems(Update, publish_fixture_weapon_root.before(interpolate));
     let definition = weapon.definition();
     let mut session = ClientSession::default();
     session.configurations.cache.begin_epoch(1).unwrap();
@@ -78,6 +123,9 @@ fn fixture(weapon: WeaponKind) -> (App, Entity) {
             RemoteTarget {
                 position: Vec3::new(2.0, 0.0, -3.0),
                 rotation: Quat::from_rotation_y(0.8),
+                weapon_root: None,
+                weapon_shoulders: None,
+                mechanics: Default::default(),
                 snap: true,
             },
         ))
@@ -316,10 +364,9 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
         assert_eq!(upper.scale, Vec3::ONE);
         assert_eq!(lower.scale, Vec3::ONE);
     }
-    let action = app.world().resource::<feedback::Feedback>().responses[&7]
-        .action
-        .unwrap();
     let player = &app.world().resource::<ClientSession>().players[0];
+    let mechanics = app.world().resource::<PoseCache>().weapon_mechanics[&7];
+    let action = common::weapon_animation::manipulation::action(player.weapon, &mechanics);
     let rig = common::weapon_animation::WeaponRig::for_weapon(player.weapon);
     let world_root = app
         .world()
@@ -360,8 +407,7 @@ fn assert_arms(app: &App, body: Entity, weapon: Entity) {
         .unwrap()
         .visual(request.magazine)
         .unwrap();
-    let recoil = app.world().resource::<feedback::Feedback>().responses[&7].recoil;
-    let logical = handling::configured_contacts(spec, action, recoil, &player.mechanics).unwrap();
+    let logical = handling::configured_contacts(spec, action, 0.0, &mechanics).unwrap();
     let logical_support = world_root.mul_transform(logical.support);
     let clearance = world_root.rotation()
         * if player.weapon == WeaponKind::Rifle {

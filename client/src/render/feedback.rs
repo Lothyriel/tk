@@ -325,7 +325,7 @@ fn update_casings(
         let up = right.cross(direction).normalize_or_zero();
         let spec = casing_spec(shot.weapon.class());
         let jitter = casing_jitter(shot.id as u32);
-        let position = shot.ejection.map_or_else(
+        let position = shot.ejection().map_or_else(
             || muzzle - direction * spec.ejection_back + right * spec.ejection_side + up * 0.035,
             Vec3::from,
         );
@@ -1403,7 +1403,8 @@ mod tests {
             time: 0.0,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
-            ejection: None,
+            ejection: [0.0; 3],
+            ejection_present: false,
             audio_signature: 100,
         });
         assert!((response.recoil - 0.010).abs() < f32::EPSILON);
@@ -2092,7 +2093,8 @@ mod tests {
             time: 0.0,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
-            ejection: None,
+            ejection: [0.0; 3],
+            ejection_present: false,
             audio_signature: 100,
         };
         r.shot(&shot);
@@ -2156,7 +2158,8 @@ mod tests {
             time: 0.0,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
-            ejection: None,
+            ejection: [0.0; 3],
+            ejection_present: false,
             audio_signature: 100,
         });
         app.init_resource::<Time>()

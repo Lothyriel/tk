@@ -665,9 +665,8 @@ fn change_fov(
             "The `Projection` component was explicitly built with `Projection::Perspective`"
         );
     };
-    // A stable weapon lens avoids the old fisheye/magnified-stock changes when
-    // world zoom changes. ADS aligns actual iron sights on the camera centreline.
-    view_model_perspective.fov = 65.0_f32.to_radians();
+    // Both cameras project the same physical bore and world ray.
+    view_model_perspective.fov = settings.current_fov;
 }
 
 fn fit_view_aspect(
@@ -765,13 +764,9 @@ fn sync_local_view(
     let lean = motion.map_or(player_input.camera.roll, |pose| pose.roll);
     let recoil_roll = camera.roll - player_input.camera.roll;
     let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, lean + recoil_roll);
-    let head_rotation = Quat::from_euler(EulerRot::YXZ, 0.0, player_input.camera.pitch, lean);
-    let eye = humanoid_eye(
-        common::humanoid::aim_lean_offset(lean)
-            + Vec3::Y * (PLAYER_VIEW_HEIGHT + 0.10 + vertical_offset + bob),
-        head_rotation,
-    )
-    .lerp(common::stance::Stance::Prone.eye_offset(), prone);
+    let eye = (common::humanoid::aim_lean_offset(lean)
+        + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset + bob))
+        .lerp(common::stance::Stance::Prone.eye_offset(), prone);
 
     for (base_offset, mut transform) in query.iter_mut() {
         transform.rotation = rotation;
@@ -1128,11 +1123,7 @@ mod view_tests {
 
         for camera in [world_camera, viewmodel_camera] {
             let translation = app.world().get::<Transform>(camera).unwrap().translation;
-            let expected = Vec3::new(
-                -0.21 - 0.025 * 0.3_f32.sin(),
-                PLAYER_VIEW_HEIGHT + 0.10 + 0.025 * 0.3_f32.cos(),
-                -0.125,
-            );
+            let expected = common::humanoid::aim_lean_offset(0.3) + Vec3::Y * PLAYER_VIEW_HEIGHT;
             assert!(translation.distance(expected) < 0.001);
         }
     }
@@ -1190,12 +1181,8 @@ mod view_tests {
             app.update();
             let expected = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.22);
             let eye = Quat::from_rotation_y(yaw)
-                * Vec3::new(
-                    -0.154,
-                    PLAYER_VIEW_HEIGHT + 0.10 + PLAYER_CROUCH_VIEW_OFFSET,
-                    0.0,
-                )
-                + expected * Vec3::new(0.0, 0.025, -0.125);
+                * (common::humanoid::aim_lean_offset(0.22)
+                    + Vec3::Y * (PLAYER_VIEW_HEIGHT + PLAYER_CROUCH_VIEW_OFFSET));
             for camera in cameras {
                 let transform = app.world().get::<GlobalTransform>(camera).unwrap();
                 assert!(transform.rotation().dot(expected).abs() > 0.99999);
@@ -1368,7 +1355,7 @@ mod view_tests {
                 Visibility::Hidden
             );
             if mode == PhysicalMode::Fallen {
-                let mut previous = PLAYER_VIEW_HEIGHT + 0.125;
+                let mut previous = PLAYER_VIEW_HEIGHT;
                 for t in [0.0, 0.05, 0.10, 0.15, 0.20] {
                     app.world_mut().resource_mut::<ClientSession>().players[0]
                         .pose
@@ -1381,9 +1368,9 @@ mod view_tests {
                     );
                     previous = y;
                 }
-                assert!((previous - (PLAYER_VIEW_HEIGHT + 0.125 - 0.34)).abs() < 0.0001);
+                assert!((previous - (PLAYER_VIEW_HEIGHT - 0.34)).abs() < 0.0001);
             } else {
-                let mut previous = PLAYER_VIEW_HEIGHT + 0.125 - 0.34;
+                let mut previous = PLAYER_VIEW_HEIGHT - 0.34;
                 for t in [0.0, 0.50, 0.75, 0.80, 0.85, 0.90, 0.95, 1.0] {
                     app.world_mut().resource_mut::<ClientSession>().players[0]
                         .pose
@@ -1404,12 +1391,12 @@ mod view_tests {
                     );
                     previous = y;
                 }
-                assert!((previous - (PLAYER_VIEW_HEIGHT + 0.125)).abs() < 0.0001);
+                assert!((previous - (PLAYER_VIEW_HEIGHT)).abs() < 0.0001);
             }
         }
     }
     #[test]
-    fn preferences_set_world_fov_without_changing_viewmodel_lens() {
+    fn preferences_set_matching_world_and_viewmodel_lenses() {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<Time>()
@@ -1448,7 +1435,7 @@ mod view_tests {
             projection.fov.to_degrees()
         };
         assert!((fov(world) - 95.0).abs() < 0.001);
-        assert!((fov(viewmodel) - 65.0).abs() < 0.001);
+        assert!((fov(viewmodel) - fov(world)).abs() < 0.001);
     }
 
     #[test]

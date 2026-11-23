@@ -314,35 +314,6 @@ pub(super) fn resolve_eye_lean(
     }
 }
 
-// Arena gameplay reference, not an adjustment to the rendered camera.
-const M4A1_GAME_ZERO: f32 = 20.0;
-
-fn shot_direction(
-    spec: &common::catalog::ResolvedWeapon,
-    rotation: Quat,
-    ads: f32,
-    dt: f32,
-) -> Vec3 {
-    let forward = rotation * Vec3::NEG_Z;
-    let weight = common::weapon_animation::ease(ads);
-    if weight == 0.0 || spec.definition != WeaponId::M4A1 {
-        return forward;
-    }
-    let outlet = common::weapon_animation::resolved_muzzle_offset(spec, 1.0);
-    let to_target = rotation * (Vec3::NEG_Z * M4A1_GAME_ZERO - outlet);
-    let mut offset = to_target;
-    for _ in 0..3 {
-        let t = offset.length() / spec.muzzle_speed;
-        // Flight updates velocity before moving. Interpolate the gravity
-        // displacement on the same piecewise-linear path as the ray casts.
-        let ticks = t / dt;
-        let whole = ticks.floor();
-        let drop = PROJECTILE_GRAVITY * dt * dt * (whole + 1.0) * (whole * 0.5 + ticks.fract());
-        offset = to_target + Vec3::Y * drop;
-    }
-    forward.lerp(offset.normalize(), weight).normalize()
-}
-
 pub(super) fn weapons_tick(
     mut commands: Commands,
     time: Res<Time>,
@@ -356,7 +327,7 @@ pub(super) fn weapons_tick(
         &BodyHealth,
         Option<&ArmorState>,
         &Client,
-        &PoseState,
+        &mut PoseState,
         &Participant,
         &mut Arsenal,
         &LastInput,
@@ -371,7 +342,7 @@ pub(super) fn weapons_tick(
         body,
         armor,
         client,
-        pose,
+        mut pose,
         player,
         mut arsenal,
         last,
@@ -399,31 +370,35 @@ pub(super) fn weapons_tick(
             error!("Projectile identity exhausted; refusing fire before consuming ammunition");
             continue;
         }
-        let Some(weapon) = arsenal.step_with_fixture(
+        let resolved_root = pose.weapon_root.unpack();
+        let previous_instance = arsenal.current().instance().id;
+        let shot = arsenal.step_with_fixture(
             input,
             time.delta_secs() * handling,
             time.elapsed_secs(),
             movement.sprinting || pose.vault != 0,
             world_state.action_fault_fixture && !bot,
-        ) else {
+            resolved_root.is_some(),
+        );
+        if arsenal.current().instance().id != previous_instance {
+            // This tick's pose was solved for the outgoing instance.
+            pose.weapon_root = PackedWeaponRoot::default();
+        }
+        let Some(weapon) = shot else {
             continue;
         };
-        let camera = arsenal.recoil.camera(CameraInput {
-            yaw: if movement.prone {
-                transform.rotation.to_euler(EulerRot::YXZ).0
-            } else {
-                input.camera.yaw
-            },
-            roll: pose.aim_roll,
-            ..input.camera
-        });
-        let rotation = Quat::from(&camera);
+        let Some(root) = resolved_root else { continue };
         let spec = arsenal.current().spec();
-        let direction = shot_direction(spec, rotation, pose.ads, time.delta_secs());
+        let world_root = transform.mul_transform(root);
+        let muzzle = world_root
+            .mul_transform(common::weapon_animation::configured_outlet(spec))
+            .translation;
+        let direction = world_root
+            .mul_transform(common::weapon_animation::configured_bore(spec))
+            .rotation
+            * Vec3::NEG_Z;
         let eye = neutral_eye(transform, movement)
             + transform.rotation * common::humanoid::aim_lean_offset(pose.aim_roll);
-        let muzzle =
-            eye + rotation * common::weapon_animation::resolved_muzzle_offset(spec, pose.ads);
         // Resolve actual eye-to-muzzle contacts in projectiles_tick. A broad
         // movement capsule must neither redirect a clear offset ray to the eye
         // nor let the device outlet spawn beyond real anatomy/concrete at point blank.
@@ -440,13 +415,13 @@ pub(super) fn weapons_tick(
                 owner_entity: entity,
                 penetrated: Vec::new(),
             },
-            super::MuzzleClearance(muzzle),
-            Transform::from_translation(eye),
+            super::MuzzleClearance(eye),
+            Transform::from_translation(muzzle),
         ));
         if std::env::var_os("TK_SHOT_DIAGNOSTICS").is_some() {
             let (left, right) = body.anatomy.leg_support();
             let rig = common::humanoid::configured::evaluate_with_carry(
-                pose,
+                &pose,
                 [left, right],
                 spec,
                 &arsenal.current().mechanics().snapshot(),
@@ -477,6 +452,11 @@ pub(super) fn weapons_tick(
                 pose.ads
             );
         }
+        let ejection: Option<[f32; 3]> = spec
+            .assembly
+            .anchors
+            .get(&common::catalog::AnchorKind::Ejection)
+            .map(|port| world_root.mul_transform(*port).translation.into());
         world_state.fired_projectiles.push(FiredProjectileData {
             id,
             weapon,
@@ -484,11 +464,8 @@ pub(super) fn weapons_tick(
             time: time.elapsed_secs(),
             muzzle: muzzle.into(),
             direction: direction.into(),
-            ejection: common::weapon_animation::resolved_ejection_offset(
-                arsenal.current().spec(),
-                pose.ads,
-            )
-            .map(|offset| (eye + rotation * offset).into()),
+            ejection: ejection.unwrap_or_default(),
+            ejection_present: ejection.is_some(),
             audio_signature: FiredProjectileData::encode_audio_signature(
                 arsenal.current().spec().assembly.signature_multiplier,
             ),
@@ -570,7 +547,8 @@ pub(super) fn projectiles_tick(
         let mut damaged_structures = std::collections::BTreeSet::new();
         projectile.velocity.y -= PROJECTILE_GRAVITY * delta;
         let displacement = projectile.velocity * delta;
-        let muzzle = clearance.map_or(transform.translation, |pending| pending.0);
+        let muzzle = transform.translation;
+        let clearance_origin = clearance.map_or(muzzle, |pending| pending.0);
         if clearance.is_some() {
             commands.entity(entity).remove::<super::MuzzleClearance>();
         }
@@ -579,11 +557,7 @@ pub(super) fn projectiles_tick(
         // the same ordered anatomy/cover/penetration resolver. Surface IDs stay
         // in `penetrated` across both paths, so wood is never charged twice.
         for (path, origin, travel) in [
-            (
-                "clearance",
-                transform.translation,
-                muzzle - transform.translation,
-            ),
+            ("clearance", clearance_origin, muzzle - clearance_origin),
             ("flight", muzzle, displacement),
         ] {
             let mut remaining = travel.length();

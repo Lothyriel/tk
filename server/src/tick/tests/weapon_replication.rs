@@ -135,7 +135,8 @@ fn inject_shots(app: &mut App, count: u64) -> std::ops::Range<u64> {
             time: now,
             muzzle: [0.0; 3],
             direction: [0.0, 0.0, -1.0],
-            ejection: None,
+            ejection: [0.0; 3],
+            ejection_present: false,
             audio_signature: 100,
         });
     }

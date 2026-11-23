@@ -229,7 +229,8 @@ struct Projectile {
     penetrated: Vec<Entity>,
 }
 
-/// One first-tick segment, resolved against the same anatomy/surfaces as flight.
+/// Origin of the first-tick eye-to-outlet clearance segment. The projectile's
+/// transform is already at the resolved outlet; clearance is resolved first.
 /// Server-only: no protocol growth or client-provided collision decisions.
 #[derive(Component)]
 struct MuzzleClearance(Vec3);
