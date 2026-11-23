@@ -11,7 +11,7 @@ use common::{
     data,
     map::{
         destroyed_mask,
-        destruction::{self, CoverSnapshot, Cut, RubblePose},
+        destruction::{self, CoverSnapshot, Cut, FragmentBox, RubblePose},
     },
     raid::RaidPhase,
 };
@@ -61,21 +61,28 @@ fn main() {
         cuts: (0..destruction::MAX_CUTS)
             .map(|n| Cut {
                 cell: n as u16,
-                center: [0.01, 0.02, 0.0],
-                half_size: [0.003, 0.003, 0.3],
+                center: [0.0; 3],
+                half_size: [0.003, 0.003, 0.02],
             })
             .collect(),
         rubble: (0..destruction::MAX_RUBBLE)
             .map(|n| RubblePose {
+                id: n as u32 + 1,
                 cell: n as u16,
                 position: [1.0, 0.4, 2.0],
                 rotation: Quat::IDENTITY.to_array(),
-                scale: 1.0,
+                boxes: (0..destruction::MAX_RUBBLE_SOLIDS / destruction::MAX_RUBBLE)
+                    .map(|part| FragmentBox {
+                        center: [part as f32 * 0.02, 0.0, 0.0],
+                        half_size: [0.01; 3],
+                    })
+                    .collect(),
             })
             .collect(),
     };
+    assert!(snapshot.valid());
     let payload = data::encode(&snapshot);
-    assert!(payload.len() < 16_000);
+    assert!(payload.len() <= destruction::MAX_SNAPSHOT_BYTES);
     let mut input_received = false;
     for _ in 0..256 {
         let dt = Duration::from_secs_f64(1.0 / 128.0);

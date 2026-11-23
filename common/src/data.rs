@@ -39,6 +39,12 @@ pub fn renet_config() -> ConnectionConfig {
     let mut destruction = config.server_channels_config[0].clone();
     destruction.channel_id = crate::map::destruction::CHANNEL;
     destruction.max_memory_usage_bytes = 512 * 1024;
+    // Frozen fragment shapes make full cover state span several datagrams.
+    // Repeating unreliable snapshots cannot recover periodic fragment loss.
+    // Retry independently; receivers discard superseded snapshot sequences.
+    destruction.send_type = SendType::ReliableUnordered {
+        resend_time: std::time::Duration::from_millis(100),
+    };
     config.server_channels_config.insert(0, destruction);
     // Independent bounded cover state must fit beside the existing <60 kB actor
     // snapshot without starving either channel in the worst physical scene.

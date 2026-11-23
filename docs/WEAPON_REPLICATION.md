@@ -1,17 +1,22 @@
 # Weapon configuration replication
 
-Protocol 18 adds a wrapping cosmetic dry-fire counter to mechanical snapshots. It does not create a shot event or projectile. Rebuild client
-and server together. Weapon configuration uses reliable ordered channel 3 in
+Protocol 29 adds independent material-fragment IDs and frozen cover geometry on
+top of protocol 28. Existing inventory, arena and confirmed action state remains
+intact, including the cosmetic dry-fire counter, which does not create a shot
+event or projectile. Rebuild client and server together.
+Weapon configuration uses reliable ordered channel 3 in
 each direction, with a 2 MiB queue and 100 ms retransmission. Existing continuous
 input/connectivity channels remain independent.
 
 Shots additionally use server-to-client reliable ordered channel 4 (2 MiB,
 100 ms retransmission). This channel does not block configuration or input.
 
-Sparse cover state uses its own server-to-client unreliable channel 5, including
-remaining cuts and rubble position/orientation/scale. Moving rubble sends up to
-30 updates/s; quiet cover uses a half-second full-state refresh for loss/late join. Control
-replies and shot commits are scheduled before replaceable cover/world updates;
+Sparse cover state uses server-to-client reliable unordered channel 5, with a
+512 KiB queue and 100 ms retry. Full state includes remaining cuts and independent
+fragment IDs, frozen local geometry and poses. Moving rubble sends up to
+30 updates/s; quiet cover uses a half-second full-state refresh for late join.
+Sequence checks reject superseded states. Control replies and shot commits are
+scheduled before cover/world updates;
 client configuration commands are scheduled before an input backlog. The combined
 per-tick transport budget is 80,000 bytes, while actor snapshots remain below
 60,000 bytes and cover messages below 16,000 bytes.

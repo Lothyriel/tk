@@ -118,6 +118,8 @@ pub struct ComponentDefinition {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AmmoDefinition {
+    /// Nominal game bore diameter, independent of impact-mark presentation.
+    pub bore_diameter_mm: f32,
     pub id: DefinitionId,
     pub key: String,
     pub damage: f32,
@@ -166,6 +168,7 @@ pub struct ResolvedWeapon {
     pub damage: f32,
     pub penetration: f32,
     pub muzzle_speed: f32,
+    pub bore_diameter_mm: f32,
     pub barrel_offset: [f32; 3],
     pub impact_size_mm: u8,
     pub assembly: ResolvedAssembly,
@@ -311,6 +314,7 @@ impl Catalog {
                 ));
             }
             for (field, value) in [
+                ("bore_diameter_mm", ammo.bore_diameter_mm),
                 ("damage", ammo.damage),
                 ("penetration", ammo.penetration),
                 ("muzzle_speed", ammo.muzzle_speed),
@@ -447,6 +451,7 @@ impl Catalog {
             damage: ammo.damage,
             penetration: ammo.penetration,
             muzzle_speed,
+            bore_diameter_mm: ammo.bore_diameter_mm,
             barrel_offset,
             impact_size_mm: profile.impact_size_mm,
             recoil: crate::recoil::RecoilProfile::resolve(

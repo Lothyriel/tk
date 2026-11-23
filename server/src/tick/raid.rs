@@ -237,8 +237,13 @@ pub(super) fn lobby_tick(
         }
         world_state.destroyed_cells.clear();
         world_state.cover_cuts.clear();
+        world_state.cover_clusters.clear();
+        world_state.cover_pending.clear();
+        world_state.cover_fines = 0.0;
         world_state.cover_dirty = true;
         world_state.support_dirty = false;
+        world_state.support_structures.clear();
+        world_state.deferred_structures.clear();
         world_state.impact_marks.clear();
         world_state.impact_cells.clear();
         world_state.fired_projectiles.clear();

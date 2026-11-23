@@ -257,9 +257,9 @@
     ammo: [
         // Effective momentum and platform transfer are bounded gameplay values.
         // AP currently shares cartridge momentum; its damage multiplier is unrelated.
-        (id: 201, key: "rifle_ball_baseline", damage: 34.0, penetration: 36.0, muzzle_speed: 715.0, recoil_impulse_ns: 3.6),
-        (id: 202, key: "pistol_ball_baseline", damage: 26.0, penetration: 10.0, muzzle_speed: 375.0, recoil_impulse_ns: 4.8),
-        (id: 203, key: "smg_ball_baseline", damage: 23.0, penetration: 14.0, muzzle_speed: 420.0, recoil_impulse_ns: 3.0),
+        (id: 201, key: "rifle_ball_baseline", bore_diameter_mm: 6.0, damage: 34.0, penetration: 36.0, muzzle_speed: 715.0, recoil_impulse_ns: 3.6),
+        (id: 202, key: "pistol_ball_baseline", bore_diameter_mm: 11.0, damage: 26.0, penetration: 10.0, muzzle_speed: 375.0, recoil_impulse_ns: 4.8),
+        (id: 203, key: "smg_ball_baseline", bore_diameter_mm: 9.0, damage: 23.0, penetration: 14.0, muzzle_speed: 420.0, recoil_impulse_ns: 3.0),
     ],
     profiles: [
         (id: 301, key: "m4a1_baseline", rounds_per_minute: 600.0, reload_seconds: 2.4, automatic: true,

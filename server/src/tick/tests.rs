@@ -3371,13 +3371,16 @@ fn voxel_barriers_damage_neighbors_concrete_stopping_and_raid_reset() {
         .unwrap();
     let entity = voxel_entity(&mut app, cell.id);
     let neighbor = voxel_entity(&mut app, cell.id - 1);
-    for expected in [60.0, 20.0, 0.0] {
+    let mut previous = 100.0;
+    for _ in 0..3 {
         voxel_shot(&mut app, owner, &cell, 40.0);
         steps(&mut app, 2);
-        assert_eq!(
-            app.world().get::<BarrierVoxel>(entity).unwrap().health,
-            expected
+        let remaining = app.world().get::<BarrierVoxel>(entity).unwrap().health;
+        assert!(
+            remaining < previous && remaining > 98.0,
+            "local chips must not erase a concrete section"
         );
+        previous = remaining;
         assert_eq!(
             app.world().get::<BarrierVoxel>(neighbor).unwrap().health,
             100.0
@@ -3388,32 +3391,15 @@ fn voxel_barriers_damage_neighbors_concrete_stopping_and_raid_reset() {
                 .iter(app.world())
                 .count(),
             0,
-            "even the shot destroying concrete must stop"
+            "a stopped round cannot use its newly carved chip for free penetration"
         );
     }
-    assert!(app.world().get::<ColliderDisabled>(entity).is_some());
-    assert_eq!(
-        app.world().resource::<WorldState>().destroyed_cells,
-        vec![cell.id]
-    );
-    steps(&mut app, 2);
-    // Isolate the remaining static layer. Physical rubble now blocks shots too;
-    // destruction_physical_rubble_stops_rounds checks that path separately.
-    let rubble: Vec<_> = app
-        .world_mut()
-        .query_filtered::<Entity, With<super::destruction::Rubble>>()
-        .iter(app.world())
-        .collect();
-    for piece in rubble {
-        app.world_mut().despawn(piece);
-    }
-    steps(&mut app, 2);
-    // A fresh shot crosses the removed static cell and hits the next depth layer.
-    voxel_shot(&mut app, owner, &cell, 40.0);
-    steps(&mut app, 2);
-    assert_eq!(
-        app.world().get::<BarrierVoxel>(neighbor).unwrap().health,
-        60.0
+    assert!(app.world().get::<ColliderDisabled>(entity).is_none());
+    assert!(
+        app.world()
+            .resource::<WorldState>()
+            .destroyed_cells
+            .is_empty()
     );
     app.world_mut().resource_mut::<RaidState>().phase = RaidPhase::Debrief;
     ready(&mut app, owner);
@@ -3489,10 +3475,7 @@ fn voxel_barriers_wood_penetration_same_tick_holes_and_movement() {
         energies[1], 30.0,
         "second shot in same tick must cross the hole freely"
     );
-    assert_eq!(
-        app.world().get::<BarrierVoxel>(entity).unwrap().health,
-        130.0
-    );
+    assert!(app.world().get::<BarrierVoxel>(entity).unwrap().health > 159.0);
     assert_eq!(
         app.world().resource::<WorldState>().destroyed_cells,
         Vec::<u16>::new()
@@ -3509,20 +3492,10 @@ fn voxel_barriers_wood_penetration_same_tick_holes_and_movement() {
         .forward = true;
     held_steps(&mut app, owner, 70);
     assert!(app.world().get::<Transform>(owner).unwrap().translation.z > -4.6);
-    for cell in &cells {
-        let mut beside_bore = cell.clone();
-        beside_bore.center[0] += 0.03;
-        voxel_shot(&mut app, owner, &beside_bore, 1000.0);
-    }
-    steps(&mut app, 3);
-    assert_eq!(
-        app.world().resource::<WorldState>().destroyed_cells.len(),
-        32
-    );
     held_steps(&mut app, owner, 100);
     assert!(
-        app.world().get::<Transform>(owner).unwrap().translation.z < -5.5,
-        "character must pass through the cleared panel"
+        app.world().get::<Transform>(owner).unwrap().translation.z > -4.6,
+        "bullet-sized openings must not remove the character's wall collision"
     );
 }
 
@@ -3552,13 +3525,10 @@ fn voxel_barriers_normal_weapon_input_perforates_wood_without_deleting_its_secti
     let removed = &app.world().resource::<WorldState>().destroyed_cells;
     assert!(removed.is_empty());
     let cuts = &app.world().resource::<WorldState>().cover_cuts;
-    assert_eq!(cuts.len(), 1);
+    assert!(!cuts.is_empty());
     let id = cuts[0].cell;
     let entity = voxel_entity(&mut app, id);
-    assert_eq!(
-        app.world().get::<BarrierVoxel>(entity).unwrap().health,
-        126.0
-    );
+    assert!(app.world().get::<BarrierVoxel>(entity).unwrap().health > 159.0);
     assert!(app.world().get::<ColliderDisabled>(entity).is_none());
 }
 
@@ -3605,5 +3575,5 @@ fn voxel_barriers_production_snapshots_recover_loss_and_late_join() {
     assert_eq!(cover.cuts.len(), 1);
     assert_eq!(cover.cuts[0].cell, cell.id);
     assert_eq!(cover.raid_id, snapshot.raid.raid_id);
-    assert_eq!(PROTOCOL_ID, 28);
+    assert_eq!(PROTOCOL_ID, 29);
 }

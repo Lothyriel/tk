@@ -8,6 +8,7 @@ mod arena;
 pub(crate) mod arena_menu;
 mod asset_review;
 mod debrief_review;
+mod destruction;
 mod fault;
 mod inventory_frame_windows;
 pub(crate) mod inventory_grid;
@@ -130,6 +131,7 @@ fn review_hud(driver: Res<Driver>, mut hud: Query<&mut Node, With<crate::hud::Ra
         // State evidence stays in the route logs; restore ordinary HUD afterward.
         node.display = if observing
             || driver.step == Step::AssetReview
+            || driver.step == Step::Destruction
             || (driver.step == Step::Animation && !combat_hud_checkpoint())
         {
             Display::None
@@ -284,6 +286,7 @@ enum Step {
     PhysicalAction,
     PhysicalRest,
     Pov,
+    Destruction,
     Animation,
     AssetReview,
     Weapons,
@@ -312,6 +315,7 @@ struct Driver {
     weapons: mechanics::Weapons,
     injury: mechanics::Injury,
     physical: physical::Review,
+    destruction: destruction::Review,
     pov_ads: pov::Ads,
     pov_inspect: pov::Inspect,
     pov_handling: pov::Handling,
@@ -409,6 +413,7 @@ struct PlaytestState<'w> {
     id: Res<'w, PlayerId>,
     input: ResMut<'w, LocalInput>,
     driver: ResMut<'w, Driver>,
+    cover: Res<'w, crate::sync::cover::State>,
     inventory: Res<'w, crate::sync::inventory::State>,
     network: ResMut<'w, bevy_renet2::prelude::RenetClient>,
     inventory_panel: ResMut<'w, crate::input::inventory_panel::Panel>,
@@ -431,6 +436,7 @@ type AcceptedViewModels<'w, 's> = Query<
 #[derive(bevy::ecs::system::SystemParam)]
 struct PlaytestLenses<'w, 's> {
     world: Single<'w, 's, &'static Projection, With<crate::render::WorldModelCamera>>,
+    world_eye: Single<'w, 's, &'static GlobalTransform, With<crate::render::WorldModelCamera>>,
     view: Single<'w, 's, &'static Projection, With<crate::render::ViewModelCamera>>,
     configured: AcceptedViewModels<'w, 's>,
     poses: Res<'w, crate::render::actors::PoseCache>,
@@ -465,6 +471,7 @@ fn drive(
         id,
         mut input,
         mut driver,
+        cover,
         inventory,
         mut network,
         mut inventory_panel,
@@ -526,6 +533,14 @@ fn drive(
     let Some(local) = session.local(id.0) else {
         return;
     };
+    if destruction::scenario().is_some()
+        && matches!(driver.step, Step::Connect | Step::Equip)
+        && !driver
+            .destruction
+            .bootstrap(&mut input, local, &session.raid, now)
+    {
+        return;
+    }
     let p = &local.participant;
     let cache = &session.configurations.cache;
     // A new configuration epoch can arrive before its replacement snapshot.
@@ -538,7 +553,8 @@ fn drive(
         .unwrap()
         .resolved;
     let peer = std::env::var("TK_PLAYTEST_ROLE").is_ok_and(|role| role == "1");
-    view_camera.is_active = !(driver.step == Step::Injury || peer && driver.step == Step::Showcase);
+    view_camera.is_active = !(matches!(driver.step, Step::Injury | Step::Destruction)
+        || peer && driver.step == Step::Showcase);
     let loot_index = if peer { 1 } else { 0 };
     let bot_id = if peer { u64::MAX - 1 } else { u64::MAX };
     if driver.step == Step::Weapons
@@ -626,7 +642,9 @@ fn drive(
             );
             capture(&mut commands, "raid");
             driver.advance(
-                if std::env::var_os("TK_PLAYTEST_POV").is_some() {
+                if destruction::scenario().is_some() {
+                    Step::Destruction
+                } else if std::env::var_os("TK_PLAYTEST_POV").is_some() {
                     Step::Pov
                 } else if physical::scenario().is_some() {
                     Step::PhysicalSetup
@@ -643,6 +661,31 @@ fn drive(
                 },
                 now,
             );
+        }
+        Step::Destruction => {
+            let scenario = destruction::scenario().expect("destruction scenario");
+            let elapsed = now - driver.since;
+            let eye = projections.world_eye.translation();
+            destruction::capture_view(&mut input, local, eye, &scenario);
+            let finished = driver.destruction.advance(
+                &mut commands,
+                &mut input,
+                (local, spec),
+                cover.current(&session.raid),
+                elapsed,
+                &scenario,
+            );
+            driver
+                .destruction
+                .report(&input, local, cover.current(&session.raid), elapsed, eye);
+            if finished
+                && std::path::Path::new(&std::env::var("TK_PLAYTEST_DIR").unwrap())
+                    .join(format!("destruction-{}-settled.png", scenario.name))
+                    .is_file()
+            {
+                info!("DESTRUCTION PASS {} t={now:.3}", scenario.name);
+                exit.write(AppExit::Success);
+            }
         }
         Step::Pov => {
             let preset = std::env::var("TK_PLAYTEST_POV").expect("POV preset");

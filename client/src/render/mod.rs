@@ -123,14 +123,17 @@ fn sync_barrier_visuals(
     if !session.is_changed() && cover.as_ref().is_none_or(|state| !state.is_changed()) {
         return;
     }
+    let accepted = cover
+        .as_ref()
+        .and_then(|state| state.current(&session.raid));
     for (cell, mut visibility) in &mut cells {
-        let removed = cover
-            .as_ref()
-            .and_then(|state| state.current(&session.raid))
-            .is_some_and(|state| {
-                state.removed[cell.0 as usize / 8] & (1 << (cell.0 as usize % 8)) != 0
-            });
-        *visibility = if session.destroyed_cells.contains(&cell.0) || removed {
+        // Publish static removal with its full cut/fragment state. An earlier
+        // world snapshot must not hide material while its debris is in transit.
+        let removed = accepted.map_or_else(
+            || cover.is_none() && session.destroyed_cells.contains(&cell.0),
+            |state| state.removed[cell.0 as usize / 8] & (1 << (cell.0 as usize % 8)) != 0,
+        );
+        *visibility = if removed {
             Visibility::Hidden
         } else {
             Visibility::Inherited
@@ -721,7 +724,7 @@ fn sync_local_view(
 }
 
 /// Cyclopean eye on the front of the voxel head, relative to its central pivot.
-fn humanoid_eye(head_center: Vec3, head_rotation: Quat) -> Vec3 {
+pub(crate) fn humanoid_eye(head_center: Vec3, head_rotation: Quat) -> Vec3 {
     head_center + head_rotation * Vec3::new(0.0, 0.025, -0.125)
 }
 
@@ -1374,6 +1377,75 @@ mod view_tests {
 #[cfg(test)]
 mod barrier_tests {
     use super::*;
+
+    #[test]
+    fn destruction_static_removal_waits_for_the_full_fragment_update() {
+        use common::map::destruction::{CoverSnapshot, FragmentBox, RubblePose};
+        let mut app = App::new();
+        app.init_resource::<ClientSession>()
+            .init_resource::<crate::sync::cover::State>()
+            .add_systems(Update, sync_barrier_visuals);
+        let cell = app
+            .world_mut()
+            .spawn((BarrierVisual(0), Visibility::Inherited))
+            .id();
+        {
+            let mut session = app.world_mut().resource_mut::<ClientSession>();
+            session.raid.raid_id = 1;
+            session.raid.phase = common::raid::RaidPhase::Active;
+            session.destroyed_cells = vec![0];
+        }
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(cell).unwrap(),
+            Visibility::Inherited
+        );
+        app.world_mut()
+            .resource_mut::<crate::sync::cover::State>()
+            .snapshot = Some(CoverSnapshot {
+            sequence: 1,
+            raid_id: 1,
+            phase: common::raid::RaidPhase::Active,
+            removed: common::map::destroyed_mask(&[]),
+            cuts: vec![],
+            rubble: vec![],
+        });
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(cell).unwrap(),
+            Visibility::Inherited
+        );
+        {
+            let mut cover = app.world_mut().resource_mut::<crate::sync::cover::State>();
+            let snapshot = cover.snapshot.as_mut().unwrap();
+            snapshot.sequence = 2;
+            snapshot.removed = common::map::destroyed_mask(&[0]);
+            snapshot.rubble.push(RubblePose {
+                id: 1,
+                cell: 0,
+                position: [0.0, 0.3, 0.0],
+                rotation: Quat::IDENTITY.to_array(),
+                boxes: vec![FragmentBox {
+                    center: [0.0; 3],
+                    half_size: [0.05; 3],
+                }],
+            });
+        }
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(cell).unwrap(),
+            Visibility::Hidden
+        );
+        app.world_mut()
+            .resource_mut::<ClientSession>()
+            .destroyed_cells
+            .clear();
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(cell).unwrap(),
+            Visibility::Hidden
+        );
+    }
 
     #[test]
     fn voxel_barriers_full_state_hides_neighbors_and_restores_after_reset() {

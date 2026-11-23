@@ -52,6 +52,7 @@ DUAL_POV = {
     "action-fault": POV_CAPTURES["action-fault"],
 }
 TRACE_ONLY_POV = {"strafe-reversal", "west-step", "recovery-steps"}
+DESTRUCTION_CAPTURES = ("intact", "impact", "degraded", "fragment", "settled")
 
 
 def _gait_displacement(first, last, prefix):
@@ -399,6 +400,8 @@ def main():
     parser.add_argument("--weapon-lod", choices=("auto", "near", "far"), default="auto",
                         help="Explicit LOD inspection override (requires --weapon-debug)")
     parser.add_argument("--pov", choices=POV_CAPTURES, help="Run only the named POV bench after deploy")
+    parser.add_argument("--destruction", choices=("wood", "concrete"),
+                        help="Review one material through confirmed normal shots and named screenshots")
     parser.add_argument("--viewport", type=parse_viewport,
                         help="Require this exact POV or clean-art framebuffer (WIDTHxHEIGHT)")
     parser.add_argument("--pov-hz", type=int, choices=range(15, 241), metavar="HZ",
@@ -412,6 +415,22 @@ def main():
     parser.add_argument("--audio", action="store_true",
                         help="Enable game audio and verify local and spatial playback sinks")
     args = parser.parse_args()
+    if args.destruction and (args.clients != 1 or any((
+        args.arena_solo, args.arena_pvp, args.arena_then_raid, args.pov,
+        args.pov_hz, args.pov_drop_every, args.pov_peer_lossless,
+        args.voxel_loot, args.loot_inspect, args.pet_probe,
+        args.loot_contest, args.loot_contest_peer_drop_every,
+        args.inventory_grid, args.inventory_grid_bench,
+        args.inventory_grid_review_scale is not None,
+        args.inventory_grid_pointer_checkpoint, args.inventory_grid_inspect,
+        args.inventory_grid_close_ack, args.inventory_grid_split,
+        args.inventory_grid_partial_merge, args.inventory_grid_pickup_hint,
+        args.inventory_telemetry, args.animation_review,
+        args.combat_hud_checkpoint, args.configure_weapons, args.bench_draft,
+        args.weapon_kit, args.weapon_debug, args.clean_art, args.neutral_art,
+        args.audio, args.video, args.no_capture,
+    ))):
+        parser.error("--destruction requires one client, static screenshots and no other review or fixture mode")
     if args.loot_contest_peer_drop_every and not args.loot_contest:
         parser.error("--loot-contest-peer-drop-every requires --loot-contest")
     if args.combat_hud_checkpoint and not (
@@ -538,6 +557,9 @@ def main():
             (output / "peer" / "gait-trace.csv").unlink(missing_ok=True)
             for name in DUAL_POV[args.pov]:
                 (output / "peer" / f"pov-{name}.png").unlink(missing_ok=True)
+    if args.destruction:
+        for cue in DESTRUCTION_CAPTURES:
+            (output / f"destruction-{args.destruction}-{cue}.png").unlink(missing_ok=True)
     if args.video:
         assert not (output / "frame-times.csv").exists(), "Use a fresh output directory for video evidence"
     # Old screenshots must never satisfy evidence checks for a new run.
@@ -594,7 +616,8 @@ def main():
                   "TK_WEAPON_DEBUG", "TK_WEAPON_LOD", "TK_PLAYTEST_CONFIGURATOR", "TK_PLAYTEST_POV",
                   "TK_PLAYTEST_VIEWPORT", "TK_PLAYTEST_POV_HZ", "TK_PLAYTEST_CLEAN_ART",
                  "TK_PLAYTEST_NEUTRAL_ART", "TK_PLAYTEST_NO_CAPTURE", "TK_PLAYTEST_AUDIO",
-                 "TK_PLAYTEST_ARENA_SOLO", "TK_PLAYTEST_ARENA_PVP", "TK_PLAYTEST_ARENA_THEN_RAID"):
+                 "TK_PLAYTEST_ARENA_SOLO", "TK_PLAYTEST_ARENA_PVP", "TK_PLAYTEST_ARENA_THEN_RAID",
+                  "TK_PLAYTEST_DESTRUCTION"):
         env.pop(flag, None)
     if args.arena_solo:
         env["TK_PLAYTEST_ARENA_SOLO"] = "1"
@@ -610,6 +633,8 @@ def main():
         env["TK_PLAYTEST_AUDIO"] = "1"
     if args.pov:
         env["TK_PLAYTEST_POV"] = args.pov
+    if args.destruction:
+        env["TK_PLAYTEST_DESTRUCTION"] = args.destruction
     env.pop("TK_PLAYTEST_STRAFE_TRACE", None)
     if args.pov == "strafe-reversal":
         env["TK_PLAYTEST_STRAFE_TRACE"] = "1"
@@ -684,12 +709,14 @@ def main():
         "art_lighting": "neutral white, cast shadows disabled" if args.neutral_art else "raid",
         "initial_weapon_kit_fixture": args.weapon_kit,
         "lobby_configurator": args.configure_weapons,
+        "destruction_material": args.destruction,
         "bench_draft": args.bench_draft,
         "capture_target_hz": 30 if args.video else 0,
         "shot_diagnostics": env.get("TK_SHOT_DIAGNOSTICS") is not None,
         "loadouts": ("leader compact M4A1 / peer suppressed M4A1" if args.configure_weapons
                      else "leader Rifle / peer SMG") + "; AP; heavy vest; helmet; both carry pistol",
-        "route": ("deploy -> two pickups -> partial merge -> stop" if args.inventory_grid_partial_merge
+        "route": (f"destruction-{args.destruction}" if args.destruction
+                  else "deploy -> two pickups -> partial merge -> stop" if args.inventory_grid_partial_merge
                   else "deploy -> fragment backpack -> check water HUD -> confirmed Move -> check water HUD"
                   if args.inventory_grid_pickup_hint
                   else "arena-pvp -> leave -> two-player raid deploy" if args.arena_pvp and args.arena_then_raid
@@ -739,7 +766,7 @@ def main():
                 if args.inventory_telemetry:
                     memory_samples = sample_solo_memory(processes[0], server)
                 for process in processes:
-                    code = process.wait(timeout=45 if args.pov else 110 if arena else 300)
+                    code = process.wait(timeout=150 if args.destruction else 45 if args.pov else 110 if arena else 300)
                     if code != 0:
                         raise AssertionError(f"Client failed ({code}); see {output}")
             finally:
@@ -769,6 +796,28 @@ def main():
     combined = re.sub(r"\x1b\[[0-9;]*m", "", client_text + server_text)
     assert "panicked at" not in combined, f"Panic in logs: {output}"
     assert " ERROR " not in combined, f"Runtime/render error in logs: {output}"
+    if args.destruction:
+        proof = re.search(rf"DESTRUCTION PASS {args.destruction} t=([0-9.]+)", client_text)
+        assert proof, f"Missing confirmed destruction completion: {output / 'client.log'}"
+        for cue in DESTRUCTION_CAPTURES:
+            name = f"destruction-{args.destruction}-{cue}"
+            assert f"DESTRUCTION EVIDENCE {name} " in client_text
+            data = (output / f"{name}.png").read_bytes()
+            assert data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 5000
+            width, height = struct.unpack(">II", data[16:24])
+            assert width >= 600 and height >= 400
+            assert args.viewport is None or args.viewport == (width, height), (
+                f"{name}.png: expected {args.viewport}, got {(width, height)}; "
+                "check whether the window manager overrides the requested size"
+            )
+            assert cue == DESTRUCTION_CAPTURES[0] or settings["resolution"] == [width, height]
+            settings["resolution"] = [width, height]
+        settings["seconds_to_evidence"] = float(proof[1])
+        (output / "run-settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        result = f"PASS: native {args.destruction} damage/fragments, real UDP, named screenshots at {proof[1]}s; temporal/artistic judgement remains manual\n"
+        (output / "result.txt").write_text(result, encoding="utf-8")
+        print(result, end="")
+        return
     if args.pov == "recovery-steps":
         traces = list(output.rglob("recovery-steps.json"))
         assert len(traces) == 1, f"Missing or ambiguous observer proof: {output}"

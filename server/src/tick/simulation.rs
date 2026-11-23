@@ -428,7 +428,7 @@ pub(super) struct ProjectileEnvironment<'w, 's> {
         Without<Projectile>,
     >,
     physics_pieces: Query<'w, 's, (Entity, &'static mut super::physical::PhysicsPiece)>,
-    rubble: Query<'w, 's, (), With<super::destruction::Rubble>>,
+    rubble: Query<'w, 's, &'static super::destruction::Rubble>,
     voxels: Query<
         'w,
         's,
@@ -479,6 +479,11 @@ pub(super) fn projectiles_tick(
     };
     let delta = time.delta_secs();
     for (entity, mut projectile, mut transform, clearance) in &mut projectiles {
+        // One projectile must pay for the material that existed before its own
+        // structure-wide bore. Later projectiles in this tick see the committed
+        // holes. The cache spans clearance and flight, like penetrated IDs.
+        let mut cover_before = std::collections::BTreeMap::new();
+        let mut damaged_structures = std::collections::BTreeSet::new();
         projectile.velocity.y -= PROJECTILE_GRAVITY * delta;
         let displacement = projectile.velocity * delta;
         let muzzle = clearance.map_or(transform.translation, |pending| pending.0);
@@ -519,10 +524,16 @@ pub(super) fn projectiles_tick(
                 // Use current sparse shapes, including holes carved by another
                 // projectile in this same tick before Rapier's next backend sync.
                 for (cell_entity, cell, cell_transform) in &voxels {
-                    if cell.health <= 0.0 || projectile.penetrated.contains(&cell_entity) {
+                    if projectile.penetrated.contains(&cell_entity) {
                         continue;
                     }
-                    if let Some(hit) = cell.shape.cast_ray_and_get_normal(
+                    let shape = cover_before
+                        .get(&cell_entity)
+                        .or_else(|| (cell.health > 0.0).then_some(&cell.shape));
+                    let Some(shape) = shape else {
+                        continue;
+                    };
+                    if let Some(hit) = shape.cast_ray_and_get_normal(
                         cell_transform.translation,
                         cell_transform.rotation,
                         start,
@@ -683,20 +694,37 @@ pub(super) fn projectiles_tick(
                     stopped = true;
                     break;
                 };
-                let collider = voxels
-                    .get(hit_entity)
-                    .map_or_else(|_| collider.clone(), |(_, cell, _)| cell.shape.clone());
-                if let Ok((_, mut voxel, _)) = voxels.get_mut(hit_entity) {
+                let collider = voxels.get(hit_entity).map_or_else(
+                    |_| collider.clone(),
+                    |(_, cell, _)| cover_before.get(&hit_entity).unwrap_or(&cell.shape).clone(),
+                );
+                let structure =
+                    cell_id.map(|id| common::map::barrier_cells()[id as usize].structure);
+                if let Some(structure) = structure
+                    && damaged_structures.insert(structure)
+                {
+                    if cover_before.is_empty() {
+                        for (entity, cell, _) in &voxels {
+                            if cell.health > 0.0 {
+                                cover_before.insert(entity, cell.shape.clone());
+                            }
+                        }
+                    }
                     super::destruction::damage(
                         &mut commands,
                         &mut world_state,
-                        &mut voxel,
+                        &mut voxels,
                         super::destruction::Hit {
                             entity: hit_entity,
                             point: hit.point,
                             normal: hit.normal,
+                            direction,
                         },
                         &projectile,
+                        (
+                            rubble.iter().count(),
+                            rubble.iter().map(|r| r.boxes.len()).sum(),
+                        ),
                     );
                 }
                 if matches!(surface, SurfaceKind::Concrete) {

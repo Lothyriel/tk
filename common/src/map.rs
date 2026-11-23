@@ -60,6 +60,9 @@ pub fn pov_side_cover() -> impl Iterator<Item = MapBlock> {
 }
 
 pub fn pov_fixture() -> bool {
+    if std::env::var_os("TK_PLAYTEST_DESTRUCTION").is_some() {
+        return true;
+    }
     matches!(
         std::env::var("TK_PLAYTEST_POV").as_deref(),
         Ok("ads"
@@ -172,6 +175,8 @@ pub fn destructible(block_index: usize) -> bool {
 #[derive(Debug, Clone)]
 pub struct BarrierCell {
     pub id: u16,
+    /// Original contiguous authored block; damage may cross its old cell seams.
+    pub structure: u16,
     pub center: [f32; 3],
     pub half_size: [f32; 3],
     pub surface: SurfaceKind,
@@ -203,6 +208,7 @@ pub fn barrier_cells() -> Vec<BarrierCell> {
                     let offset = [x, y, z];
                     cells.push(BarrierCell {
                         id: cells.len() as u16,
+                        structure: index as u16,
                         center: std::array::from_fn(|axis| {
                             block.center[axis] - block.half_size[axis]
                                 + half_size[axis] * (2 * offset[axis] + 1) as f32

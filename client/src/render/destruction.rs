@@ -29,7 +29,7 @@ struct RubbleMaterials {
 
 #[derive(Component)]
 struct RubbleVisual {
-    cell: u16,
+    id: u32,
     raid: u32,
 }
 
@@ -41,8 +41,12 @@ fn rubble_materials(mut commands: Commands, mut materials: ResMut<Assets<Standar
 }
 
 fn mesh_for(cell: &common::map::BarrierCell, cuts: &[shared::Cut]) -> Mesh {
+    mesh_for_solids(shared::solids(cell, cuts))
+}
+
+fn mesh_for_solids(solids: impl IntoIterator<Item = shared::SolidBox>) -> Mesh {
     let mut merged: Option<Mesh> = None;
-    for solid in shared::solids(cell, cuts) {
+    for solid in solids {
         let mesh = Mesh::from(Cuboid::from_size(solid.half_size * 2.0)).translated_by(solid.center);
         if let Some(combined) = &mut merged {
             combined.merge(&mesh).expect("same box attributes");
@@ -121,13 +125,13 @@ fn sync_rubble(
     for (entity, visual, mut transform, mesh) in &mut pieces {
         let target = targets
             .iter()
-            .find(|target| visual.raid == session.raid.raid_id && target.cell == visual.cell);
+            .find(|target| visual.raid == session.raid.raid_id && target.id == visual.id);
         if let Some(target) = target {
             transform.translation = transform.translation.lerp(target.position.into(), alpha);
             transform.rotation = transform
                 .rotation
                 .slerp(Quat::from_array(target.rotation), alpha);
-            transform.scale = Vec3::splat(target.scale);
+            transform.scale = Vec3::ONE;
         } else {
             commands.entity(entity).despawn();
             meshes.remove(mesh.0.id());
@@ -135,21 +139,23 @@ fn sync_rubble(
     }
     let definitions = barrier_cells();
     for target in targets {
-        if pieces.iter().any(|(_, visual, _, _)| {
-            visual.raid == session.raid.raid_id && visual.cell == target.cell
-        }) {
+        if pieces
+            .iter()
+            .any(|(_, visual, _, _)| visual.raid == session.raid.raid_id && visual.id == target.id)
+        {
             continue;
         }
         let Some(cell) = definitions.get(target.cell as usize) else {
             continue;
         };
-        let cuts = snapshot.map_or(&[][..], |snapshot| snapshot.cuts.as_slice());
         commands.spawn((
             RubbleVisual {
-                cell: target.cell,
+                id: target.id,
                 raid: session.raid.raid_id,
             },
-            Mesh3d(meshes.add(mesh_for(cell, cuts))),
+            Mesh3d(meshes.add(mesh_for_solids(
+                target.boxes.iter().map(shared::SolidBox::from),
+            ))),
             MeshMaterial3d(
                 if matches!(cell.surface, common::combat::SurfaceKind::Wood) {
                     materials.wood.clone()
@@ -160,7 +166,7 @@ fn sync_rubble(
             Transform {
                 translation: target.position.into(),
                 rotation: Quat::from_array(target.rotation),
-                scale: Vec3::splat(target.scale),
+                scale: Vec3::ONE,
             },
         ));
     }
@@ -188,6 +194,64 @@ mod tests {
             let distance = e2.dot(q) / det;
             u >= 0.0 && v >= 0.0 && u + v <= 1.0 && distance >= 0.0
         })
+    }
+
+    #[test]
+    fn destruction_dense_admitted_damage_bounds_mesh_vertices_and_preserves_openings() {
+        use common::{map::destroyed_mask, raid::RaidPhase};
+        let cells = barrier_cells();
+        let mut snapshot = shared::CoverSnapshot {
+            sequence: 1,
+            raid_id: 1,
+            phase: RaidPhase::Active,
+            removed: destroyed_mask(&[]),
+            cuts: vec![],
+            rubble: vec![],
+        };
+        'pressure: for id in [72, 76, 80, 84, 88] {
+            for index in 0..25 {
+                let (axis, slot, count) = if index < 13 {
+                    (0, index, 13)
+                } else {
+                    (1, index - 13, 12)
+                };
+                let mut center = Vec3::ZERO;
+                center[axis] = -0.22 + slot as f32 * 0.44 / (count - 1) as f32;
+                let mut half_size = Vec3::from(cells[id].half_size);
+                half_size[axis] = 0.001;
+                snapshot.cuts.push(shared::Cut {
+                    cell: id as u16,
+                    center: center.into(),
+                    half_size: half_size.into(),
+                });
+                if !snapshot.valid() {
+                    snapshot.cuts.pop();
+                    break 'pressure;
+                }
+            }
+        }
+        let boxes: usize = cells
+            .iter()
+            .map(|cell| shared::solids(cell, &snapshot.cuts).len())
+            .sum();
+        assert!(boxes > shared::MAX_STATIC_SOLIDS * 9 / 10);
+        let started = std::time::Instant::now();
+        let mut vertices = 0;
+        for cell in &cells {
+            let mesh = mesh_for(cell, &snapshot.cuts);
+            vertices += mesh.count_vertices();
+            if cell.id == 72 {
+                assert!(!ray_hits(&mesh, Vec3::new(-0.22, -0.20, 1.0)));
+                assert!(ray_hits(&mesh, Vec3::new(-0.21, -0.20, 1.0)));
+            }
+        }
+        assert_eq!(vertices, boxes * 24);
+        assert!(vertices <= shared::MAX_STATIC_SOLIDS * 24);
+        eprintln!(
+            "destruction dense remesh boxes={boxes} vertices={vertices} cuts={} all_cells_cpu_us={}",
+            snapshot.cuts.len(),
+            started.elapsed().as_micros()
+        );
     }
 
     #[test]
@@ -242,12 +306,16 @@ mod tests {
             raid_id: 5,
             phase: RaidPhase::Active,
             removed: common::map::destroyed_mask(&[75]),
-            cuts: vec![cut],
+            cuts: vec![cut.clone()],
             rubble: vec![RubblePose {
+                id: 77,
                 cell: 75,
                 position: [4.0, 1.0, 2.0],
                 rotation: Quat::from_rotation_x(0.3).to_array(),
-                scale: 0.45,
+                boxes: shared::solids(&cell, std::slice::from_ref(&cut))
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
             }],
         });
         app.update();
@@ -259,12 +327,46 @@ mod tests {
         let transform = app.world().get::<Transform>(entity).unwrap();
         assert_eq!(transform.translation, Vec3::new(4.0, 1.0, 2.0));
         assert_eq!(transform.rotation, Quat::from_rotation_x(0.3));
-        assert_eq!(transform.scale, Vec3::splat(0.45));
+        assert_eq!(transform.scale, Vec3::ONE);
         let mesh = app.world().get::<Mesh3d>(entity).unwrap();
         assert!(!ray_hits(
             app.world().resource::<Assets<Mesh>>().get(&mesh.0).unwrap(),
             Vec3::Z
         ));
+        let frozen_mesh = mesh.0.clone();
+        {
+            let mut state = app.world_mut().resource_mut::<cover::State>();
+            let snapshot = state.snapshot.as_mut().unwrap();
+            // Later changes to the source cell cannot heal a detached bore.
+            snapshot.cuts.clear();
+            let mut second = snapshot.rubble[0].clone();
+            second.id = 78;
+            second.position[0] = 8.0;
+            snapshot.rubble.push(second);
+        }
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&RubbleVisual>()
+                .iter(app.world())
+                .count(),
+            2
+        );
+        assert_eq!(app.world().get::<Mesh3d>(entity).unwrap().0, frozen_mesh);
+        assert!(!ray_hits(
+            app.world()
+                .resource::<Assets<Mesh>>()
+                .get(&frozen_mesh)
+                .unwrap(),
+            Vec3::Z
+        ));
+        app.world_mut()
+            .resource_mut::<cover::State>()
+            .snapshot
+            .as_mut()
+            .unwrap()
+            .rubble
+            .pop();
         app.update();
         app.world_mut()
             .resource_mut::<cover::State>()

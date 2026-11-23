@@ -73,6 +73,7 @@ struct UdpPeer {
     dropped: Arc<AtomicUsize>,
     snapshot_blackout: bool,
     snapshots_dropped: usize,
+    cover: Option<common::map::destruction::CoverSnapshot>,
 }
 
 impl UdpPeer {
@@ -104,6 +105,7 @@ impl UdpPeer {
             dropped,
             snapshot_blackout: false,
             snapshots_dropped: 0,
+            cover: None,
         }
     }
 }
@@ -155,6 +157,24 @@ impl Harness {
                 }
                 true
             });
+            while let Some(bytes) = peer
+                .peer
+                .network
+                .receive_message(common::map::destruction::CHANNEL)
+            {
+                let cover: common::map::destruction::CoverSnapshot = data::decode(&bytes);
+                assert!(
+                    cover.valid(),
+                    "production cover snapshot must satisfy its contract"
+                );
+                if peer
+                    .cover
+                    .as_ref()
+                    .is_none_or(|old| cover.sequence > old.sequence)
+                {
+                    peer.cover = Some(cover);
+                }
+            }
             if peer.peer.network.is_connected() {
                 peer.peer
                     .network
@@ -2402,6 +2422,215 @@ fn replication_udp_solo_dual_loss_and_late_join() {
             late.peer.latest.as_ref().unwrap().sequence,
             reload_seen,
             removed_seen
+        );
+    }
+}
+
+#[test]
+#[ignore = "real UDP acceptance: run explicitly with --ignored --nocapture"]
+fn destruction_udp_full_fragment_state_survives_loss_and_late_join_without_starving_controls() {
+    use common::map::destruction::{self as cover, CoverSnapshot, Cut, FragmentBox, RubblePose};
+    use common::replication::inventory::{
+        CHANNEL as INVENTORY_CHANNEL, InventoryRequest, InventoryUpdate, UpdateBody,
+    };
+    let inventory_updates = |peer: &mut UdpPeer| {
+        std::iter::from_fn(|| peer.peer.network.receive_message(INVENTORY_CHANNEL))
+            .map(|bytes| InventoryUpdate::decode(&bytes).unwrap())
+            .collect::<Vec<_>>()
+    };
+
+    // This is a transport saturation fixture, not a substitute for the real
+    // impact/fracture tests. Use the declared simultaneous shape/pose limits.
+    let cells = common::map::barrier_cells();
+    let mut expected = CoverSnapshot {
+        sequence: 10_000,
+        raid_id: 1,
+        phase: RaidPhase::Active,
+        removed: common::map::destroyed_mask(&[]),
+        cuts: cells
+            .iter()
+            .take(cover::MAX_CUTS)
+            .map(|cell| Cut {
+                cell: cell.id,
+                center: [0.0; 3],
+                half_size: [0.003, 0.003, 0.02],
+            })
+            .collect(),
+        rubble: (0..cover::MAX_RUBBLE)
+            .map(|index| RubblePose {
+                id: index as u32 + 1,
+                cell: index as u16,
+                position: [index as f32 * 0.05, 0.2, 0.0],
+                rotation: Quat::IDENTITY.to_array(),
+                boxes: (0..cover::MAX_RUBBLE_SOLIDS / cover::MAX_RUBBLE)
+                    .map(|part| FragmentBox {
+                        center: [part as f32 * 0.02, 0.0, 0.0],
+                        half_size: [0.01; 3],
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+    assert!(expected.valid());
+    let bytes = data::encode(&expected).len();
+    assert!(
+        bytes > 8_000 && bytes <= cover::MAX_SNAPSHOT_BYTES,
+        "fragmented full state: {bytes}"
+    );
+
+    for loss in [false, true] {
+        let mut harness = Harness::new();
+        let mut first = UdpPeer::new(7, harness.address, harness.now, loss);
+        harness.pump(&mut [&mut first], 192);
+        assert!(first.transport.is_connected());
+        let inventory_session = inventory_updates(&mut first)
+            .into_iter()
+            .find_map(|update| matches!(update.body, UpdateBody::Begin).then_some(update.session))
+            .expect("private inventory bootstrap");
+        first.peer.network.send_message(
+            INVENTORY_CHANNEL,
+            InventoryRequest::Resync {
+                session: inventory_session,
+                compartment: common::catalog::CompartmentId(7),
+            }
+            .encode()
+            .unwrap(),
+        );
+        let snapshot = first.peer.latest.as_ref().expect("solo world bootstrap");
+        let local = snapshot
+            .players
+            .iter()
+            .find(|player| player.id == 7)
+            .unwrap();
+        let mut weapon = catalog().configuration(local.weapon_id).unwrap();
+        weapon.components[0].node = 30;
+        first.peer.network.send_message(
+            CONFIGURATION_CHANNEL,
+            data::encode(&ConfigurationCommand {
+                epoch: snapshot.configuration_epoch,
+                request: 1,
+                slot: EquipmentSlot::Primary,
+                instance: local.weapon_instance,
+                expected_revision: 0,
+                weapon,
+                reserves: None,
+            }),
+        );
+        first.input.camera.yaw = 0.37;
+        for tick in 0..512 {
+            if tick % 4 == 0 {
+                expected.sequence += 1;
+                harness
+                    .app
+                    .world_mut()
+                    .resource_mut::<RenetServer>()
+                    .broadcast_message(cover::CHANNEL, data::encode(&expected));
+            }
+            harness.step(&mut [&mut first]);
+        }
+        let received = first.cover.as_ref().expect("solo cover bootstrap");
+        assert!(first.transport.is_connected() && first.peer.network.is_connected());
+        assert!(
+            expected.sequence - received.sequence < 32,
+            "cover updates must keep advancing under load"
+        );
+        assert_eq!(
+            received.cuts, expected.cuts,
+            "full cover convergence, loss={loss}"
+        );
+        assert_eq!(
+            received.rubble, expected.rubble,
+            "frozen geometry convergence, loss={loss}"
+        );
+        assert_eq!(
+            first.peer.receiver.last_result.as_ref().unwrap().outcome,
+            CommandOutcome::Applied
+        );
+        assert!(
+            inventory_updates(&mut first).iter().any(|update| {
+                update.session == inventory_session
+                    && matches!(&update.body, UpdateBody::Snapshot(snapshot)
+                    if snapshot.version.id == common::catalog::CompartmentId(7))
+            }),
+            "private inventory resync must not starve behind cover traffic"
+        );
+        let entity = harness.app.world().resource::<Lobby>().players[&7];
+        assert_eq!(
+            harness
+                .app
+                .world()
+                .get::<ClientInput>(entity)
+                .unwrap()
+                .camera
+                .yaw,
+            0.37
+        );
+
+        let solo_world_sequence = first.peer.latest.as_ref().unwrap().sequence;
+        first.input.camera.yaw = 0.73;
+        let mut late = UdpPeer::new(9, harness.address, harness.now, loss);
+        for tick in 0..512 {
+            if tick % 4 == 0 {
+                expected.sequence += 1;
+                harness
+                    .app
+                    .world_mut()
+                    .resource_mut::<RenetServer>()
+                    .broadcast_message(cover::CHANNEL, data::encode(&expected));
+            }
+            harness.step(&mut [&mut first, &mut late]);
+        }
+        assert!(late.transport.is_connected());
+        for peer in [&first, &late] {
+            assert!(peer.transport.is_connected() && peer.peer.network.is_connected());
+            let received = peer.cover.as_ref().expect("late join receives full cover");
+            assert!(
+                expected.sequence - received.sequence < 32,
+                "recent full cover must reach each peer"
+            );
+            assert_eq!(
+                received.cuts, expected.cuts,
+                "late static damage convergence, loss={loss}"
+            );
+            assert_eq!(
+                received.rubble, expected.rubble,
+                "late fragment identity/geometry convergence, loss={loss}"
+            );
+            assert!(
+                peer.peer
+                    .latest
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.sequence > solo_world_sequence),
+                "ordinary snapshots must advance during full cover traffic"
+            );
+        }
+        assert!(
+            inventory_updates(&mut late).iter().any(|update| {
+                matches!(&update.body, UpdateBody::Snapshot(snapshot)
+                if snapshot.version.id == common::catalog::CompartmentId(9))
+            }),
+            "late inventory bootstrap must coexist with cover reconstruction"
+        );
+        assert_eq!(
+            harness
+                .app
+                .world()
+                .get::<ClientInput>(entity)
+                .unwrap()
+                .camera
+                .yaw,
+            0.73
+        );
+        let dropped = first.dropped.load(Ordering::Relaxed) + late.dropped.load(Ordering::Relaxed);
+        assert_eq!(dropped > 0, loss);
+        println!(
+            "TK DESTRUCTION UDP PASS loss={loss} dropped={dropped} bytes={bytes} fragments={} boxes={} solo_dual_late_join=true controls=true inventory=true",
+            expected.rubble.len(),
+            expected
+                .rubble
+                .iter()
+                .map(|piece| piece.boxes.len())
+                .sum::<usize>()
         );
     }
 }
