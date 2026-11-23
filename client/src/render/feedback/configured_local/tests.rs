@@ -859,6 +859,84 @@ fn configured_local_stock_and_clothing_keep_contacts_and_ads_sight_line() {
     }
 }
 
+#[test]
+fn local_weapon_stays_on_the_sampled_root_when_strafe_moves_the_camera_parent() {
+    let mut f = Fixture::new(WeaponKind::Rifle, 1.6);
+    let actor = f
+        .app
+        .world_mut()
+        .query_filtered::<Entity, With<LocalPlayer>>()
+        .single(f.app.world())
+        .unwrap();
+    f.app
+        .world_mut()
+        .entity_mut(actor)
+        .insert(Transform::IDENTITY)
+        .add_child(f.view);
+    // Deliberately move the actor after preparing the local weapon. Render
+    // still needs the current sample for both parent-relative transforms.
+    f.app.add_systems(
+        Update,
+        (|mut actors: Query<&mut Transform, With<LocalPlayer>>,
+          session: Res<ClientSession>,
+          clock: Res<Time<Real>>| {
+            if let Some(sample) = session.local_motion.sample(clock.elapsed_secs_f64()) {
+                actors.single_mut().unwrap().translation = sample.position;
+            }
+        })
+        .after(prepare),
+    );
+
+    let (root, posture, mechanics) = {
+        let session = f.app.world().resource::<ClientSession>();
+        let mechanics = session.players[0].mechanics;
+        let entry = session.configurations.cache.get(1, 1).unwrap();
+        let pose = common::humanoid::PoseState {
+            ads: 1.0,
+            ..default()
+        };
+        let rig = common::humanoid::configured::evaluate_with_carry(
+            &pose,
+            [1.0; 2],
+            &entry.resolved,
+            &mechanics,
+            None,
+            Some(0.0),
+        )
+        .unwrap();
+        (rig.weapon.unwrap().root, rig.posture.unwrap(), mechanics)
+    };
+    for (frame, x) in [(0, 0.0), (1, 0.06), (2, -0.03)] {
+        let position = Vec3::X * x;
+        let mut session = f.app.world_mut().resource_mut::<ClientSession>();
+        session.local_motion.record(
+            frame as f32,
+            crate::sync::LocalMotionPose {
+                position,
+                ads: 1.0,
+                weapon_mechanics: mechanics,
+                weapon_root: Some(Transform::from_translation(position).mul_transform(root)),
+                weapon_shoulders: Some((posture.shoulders.map(|p| p + position), posture.poles)),
+                ..default()
+            },
+            1.0 + f64::from(frame),
+            true,
+        );
+        f.step();
+        let world = f.app.world();
+        let pose = world.get::<ConfiguredPose>(f.root).unwrap();
+        let shown = world
+            .get::<GlobalTransform>(f.root)
+            .unwrap()
+            .mul_transform(pose.solution.root);
+        assert!(
+            shown.translation().distance(position + root.translation) < 0.001,
+            "strafe displaced the rendered weapon by {:?}",
+            shown.translation() - position - root.translation
+        );
+    }
+}
+
 impl Fixture {
     fn new(weapon: WeaponKind, aspect: f32) -> Self {
         let mut app = App::new();

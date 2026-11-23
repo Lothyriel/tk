@@ -71,6 +71,7 @@ impl bevy::prelude::Plugin for Plugin {
                     animate_local.after(super::sync_local_view),
                     configured_local::prepare
                         .after(animate_local)
+                        .after(super::sync_local_player_rotation)
                         .in_set(PrepareLocal),
                 )
                     .in_set(ClientSystems::Present),

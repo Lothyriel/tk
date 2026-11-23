@@ -786,3 +786,43 @@ fn configured_weapon_root_overlap_does_not_disable_sweep_against_other_wall() {
         "an initial overlap must not permit tunnelling through a different wall"
     );
 }
+
+#[test]
+fn ads_sight_stays_on_eye_axis_during_strafe_and_reversal() {
+    use common::{catalog::AnchorKind, humanoid::PoseState};
+
+    let (mut app, shooter, other) = physical_fixture();
+    app.world_mut()
+        .get_mut::<Transform>(other)
+        .unwrap()
+        .translation
+        .z -= 5.0;
+    app.world_mut().get_mut::<ClientInput>(shooter).unwrap().aim = true;
+    held_steps(&mut app, shooter, 100);
+    let mut worst = 0.0_f32;
+    for (left, right, frames) in [(true, false, 48), (false, true, 96), (false, false, 48)] {
+        let mut input = app.world_mut().get_mut::<ClientInput>(shooter).unwrap();
+        input.left = left;
+        input.right = right;
+        let mut peak = 0.0_f32;
+        for _ in 0..frames {
+            held_steps(&mut app, shooter, 1);
+            let world = app.world();
+            let pose = world.get::<PoseState>(shooter).unwrap();
+            let root = pose.weapon_root.unpack().expect("clear strafing pose");
+            let arsenal = world.get::<Arsenal>(shooter).unwrap();
+            let spec = arsenal.current().spec();
+            let sight = root.transform_point(spec.assembly.anchors[&AnchorKind::Sight].translation);
+            let error = (sight - Vec3::Y * PLAYER_VIEW_HEIGHT)
+                .cross(Vec3::NEG_Z)
+                .length();
+            worst = worst.max(error);
+            let direction = if left { -1.0 } else { 1.0 };
+            peak = peak.max(pose.velocity[0] * direction);
+        }
+        if left || right {
+            assert!(peak > 2.5, "fixture must reach lateral walking speed");
+        }
+    }
+    assert!(worst < 0.01, "strafe displaced the sight by {worst:.3} m");
+}

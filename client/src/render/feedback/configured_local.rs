@@ -112,7 +112,11 @@ pub(super) fn prepare(
             let action = common::weapon_animation::manipulation::action(displayed, &mechanics);
             let mut input = native::action(visual, action, 0.0, &mechanics);
             *view = Transform::IDENTITY;
-            let entity_world = actor.mul_transform(*root);
+            // The player transform may still have last frame's translation.
+            // Use the same sample that will position the camera parent.
+            let entity_world = Transform::from_translation(sample.position)
+                .with_rotation(actor.rotation)
+                .mul_transform(*root);
             let inv = entity_world.rotation.inverse();
             input.preferred_root = Transform::from_translation(
                 inv * (world_weapon.translation - entity_world.translation),

@@ -487,7 +487,7 @@ impl ArmedStride {
 
     fn moving_ads(player: &common::ClientData) -> bool {
         let [x, _, z] = player.pose.velocity;
-        (1.5..3.7).contains(&x.hypot(z)) && player.pose.ads > 0.90
+        (-3.7..-1.5).contains(&x) && z.abs() < 0.5 && player.pose.ads > 0.90
     }
 
     pub(super) fn advance(
@@ -528,7 +528,8 @@ impl ArmedStride {
     }
 
     pub(super) fn input(&self, input: &mut common::ClientInput, turn: &mut f32, dt: f32) {
-        input.forward = matches!(self, Self::Walk | Self::Run | Self::Turn | Self::RecoverAim);
+        input.forward = matches!(self, Self::Walk | Self::Run | Self::Turn);
+        input.left = *self == Self::RecoverAim;
         input.run = matches!(self, Self::Run | Self::Turn);
         input.aim = matches!(self, Self::Turn | Self::RecoverAim);
         if matches!(
@@ -863,20 +864,20 @@ mod tests {
         player.pose.phase = 1.0;
         assert_eq!(route.advance(2.8, true, &player), Ok(Some("pov-turn")));
         route.input(&mut input, &mut yaw, 0.05);
-        assert!(!input.run && input.aim && input.forward);
+        assert!(!input.run && input.aim && input.left && !input.forward);
         player.pose.ads = 1.0;
         assert_eq!(route.advance(2.9, true, &player), Ok(None), "still running");
-        player.pose.velocity[2] = -3.1;
+        player.pose.velocity = [-3.1, 0.0, 0.0];
         assert_eq!(ArmedStride::observe(1, &player), Some("moving-ads"));
         assert_eq!(
             route.advance(3.3, true, &player),
             Ok(Some("pov-moving-ads"))
         );
         route.input(&mut input, &mut yaw, 0.05);
-        assert!(!input.forward && !input.aim);
+        assert!(!input.forward && !input.left && !input.aim);
         assert_eq!(ArmedStride::observe(2, &player), None);
         player.pose.ads = 0.0;
-        player.pose.velocity[2] = 0.0;
+        player.pose.velocity = [0.0; 3];
         assert_eq!(ArmedStride::observe(2, &player), Some("return"));
         assert_eq!(route.advance(4.0, true, &player), Ok(Some("pov-return")));
         assert!(route.advance(15.0, true, &player).is_err());
