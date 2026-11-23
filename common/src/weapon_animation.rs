@@ -99,6 +99,26 @@ pub fn resolved_muzzle_offset(spec: &crate::catalog::ResolvedWeapon, ads: f32) -
     }
 }
 
+/// Installed outlet in configured weapon-root coordinates. Legacy assemblies
+/// without authored bore sockets use the same class anchor as their renderer.
+pub fn configured_outlet(spec: &crate::catalog::ResolvedWeapon) -> Transform {
+    spec.assembly
+        .anchors
+        .get(&crate::catalog::AnchorKind::DeviceExit)
+        .or_else(|| spec.assembly.anchors.get(&crate::catalog::AnchorKind::Bore))
+        .copied()
+        .unwrap_or_else(|| Transform::from_translation(WeaponRig::for_weapon(spec.class).muzzle))
+}
+
+/// Bore orientation is independent from the outlet of an installed device.
+pub fn configured_bore(spec: &crate::catalog::ResolvedWeapon) -> Transform {
+    spec.assembly
+        .anchors
+        .get(&crate::catalog::AnchorKind::Bore)
+        .copied()
+        .unwrap_or_else(|| Transform::from_translation(WeaponRig::for_weapon(spec.class).muzzle))
+}
+
 fn configured_offset(spec: &crate::catalog::ResolvedWeapon, point: Vec3, ads: f32) -> Vec3 {
     let assembly = &spec.assembly;
     assembly

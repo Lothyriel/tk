@@ -117,10 +117,12 @@ pub struct PoseState {
     /// Shares existing flag padding, preserving the worst-case snapshot budget.
     pub vault: u8,
     pub prone: bool,
+    pub mode: PhysicalMode,
+    pub weapon: crate::WeaponKind,
+    pub reload_empty: bool,
     pub crouch: f32,
     pub phase: f32,
     pub lean: [f32; 2],
-    pub mode: PhysicalMode,
     pub mode_time: f32,
     pub impulse: [f32; 3],
     pub left_support: f32,
@@ -129,9 +131,7 @@ pub struct PoseState {
     pub aim_pitch: f32,
     pub aim_roll: f32,
     pub ads: f32,
-    pub weapon: crate::WeaponKind,
     pub reload_fraction: f32,
-    pub reload_empty: bool,
     pub arm_weakness: [f32; 2],
     pub root_drop: f32,
     pub acceleration: [f32; 2],
@@ -144,6 +144,82 @@ pub struct PoseState {
     pub fall_phase: f32,
     pub fall_velocity: [f32; 3],
     pub physical: Option<Box<PackedRig>>,
+    /// Configured weapon root in actor-local metres after physics writeback.
+    /// An unset validity bit denotes no usable solution.
+    pub weapon_root: PackedWeaponRoot,
+}
+
+/// Actor-local rigid transform: 4 mm position steps, and 10-bit
+/// smallest-three quaternion components. The validity bit distinguishes an
+/// unavailable solution from a real identity transform.
+#[derive(Debug, Default, Clone, Copy, Archive, Serialize, Deserialize)]
+pub struct PackedWeaponRoot {
+    bits: [u8; 8],
+}
+
+impl PackedWeaponRoot {
+    pub fn pack(pose: Transform) -> Option<Self> {
+        if !pose.translation.is_finite()
+            || !pose.rotation.is_finite()
+            || !pose.scale.is_finite()
+            || pose.scale.distance(Vec3::ONE) > 1e-5
+            || (pose.rotation.length_squared() - 1.0).abs() > 1e-4
+            || pose.translation.abs().max_element() > 2.044
+        {
+            return None;
+        }
+        let mut bits = 1_u64 << 62;
+        for (i, value) in pose.translation.to_array().into_iter().enumerate() {
+            bits |= (((value / 0.004).round() as i32 as u64) & 1023) << (i * 10);
+        }
+        let mut q = pose.rotation.to_array();
+        let largest = (0..4).max_by(|&a, &b| q[a].abs().total_cmp(&q[b].abs()))?;
+        if q[largest] < 0.0 {
+            q = q.map(|v| -v);
+        }
+        let mut index = 0;
+        for (i, value) in q.into_iter().enumerate() {
+            if i != largest {
+                let value = (value * (511.0 * std::f32::consts::SQRT_2)).round() as i32;
+                bits |= ((value as u64) & 1023) << (30 + index * 10);
+                index += 1;
+            }
+        }
+        bits |= (largest as u64) << 60;
+        Some(Self {
+            bits: bits.to_le_bytes(),
+        })
+    }
+
+    pub fn unpack(self) -> Option<Transform> {
+        let bits = u64::from_le_bytes(self.bits);
+        if bits & (1 << 62) == 0 {
+            return None;
+        }
+        let signed = |shift: usize| {
+            let raw = ((bits >> shift) & 1023_u64) as i32;
+            (raw << 22) >> 22
+        };
+        let position = Vec3::new(signed(0) as f32, signed(10) as f32, signed(20) as f32) * 0.004;
+        let largest = ((bits >> 60) & 3) as usize;
+        let mut components = [0.0; 4];
+        let mut index = 0;
+        for (i, component) in components.iter_mut().enumerate() {
+            if i != largest {
+                *component = signed(30 + index * 10) as f32 / (511.0 * std::f32::consts::SQRT_2);
+                index += 1;
+            }
+        }
+        let sum: f32 = components.iter().map(|v| v * v).sum();
+        if sum > 1.001 {
+            return None;
+        }
+        components[largest] = (1.0 - sum).max(0.0).sqrt();
+        Some(
+            Transform::from_translation(position)
+                .with_rotation(Quat::from_array(components).normalize()),
+        )
+    }
 }
 
 impl PoseState {
@@ -594,6 +670,27 @@ pub fn ray_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packed_weapon_root_round_trips_and_rejects_invalid_transforms() {
+        assert!(PackedWeaponRoot::default().unpack().is_none());
+        for translation in [Vec3::ZERO, Vec3::new(0.3472, -1.1348, 1.8001)] {
+            let input = Transform::from_translation(translation).with_rotation(Quat::from_euler(
+                EulerRot::YXZ,
+                1.2,
+                -0.43,
+                0.2,
+            ));
+            let packed = PackedWeaponRoot::pack(input).unwrap();
+            let copy: PackedWeaponRoot = crate::data::decode(&crate::data::encode(&packed));
+            let output = copy.unpack().unwrap();
+            assert!(output.translation.distance(input.translation) < 0.0035);
+            assert!((output.rotation * Vec3::NEG_Z).distance(input.rotation * Vec3::NEG_Z) < 0.003);
+        }
+        assert!(PackedWeaponRoot::pack(Transform::from_xyz(f32::NAN, 0.0, 0.0)).is_none());
+        assert!(PackedWeaponRoot::pack(Transform::from_xyz(40.0, 0.0, 0.0)).is_none());
+        assert!(PackedWeaponRoot::pack(Transform::from_scale(Vec3::splat(2.0))).is_none());
+    }
     #[test]
     fn aim_roll_tilts_the_replicated_torso_and_head_in_both_directions() {
         let upright = evaluate_pose(&PoseState::default(), 1.0, 1.0);
@@ -826,6 +923,18 @@ mod tests {
                 ray_segments(Vec3::new(x, -0.68, -2.0), Vec3::Z, 4.0, &pose, 0)[0].0,
                 expected
             );
+        }
+        for yaw in [-3.1, -1.57, 0.0, 1.57, 3.1] {
+            for pitch in [-1.4, -0.4, 0.0, 0.4, 1.4] {
+                for roll in [-0.4, 0.0, 0.4] {
+                    let rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll);
+                    let pose = Transform::from_rotation(rotation);
+                    let restored = PackedWeaponRoot::pack(pose).unwrap().unpack().unwrap();
+                    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                        assert!((rotation * axis).distance(restored.rotation * axis) < 0.005);
+                    }
+                }
+            }
         }
     }
     #[test]

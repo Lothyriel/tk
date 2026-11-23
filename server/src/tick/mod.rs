@@ -19,6 +19,7 @@ mod replication;
 mod simulation;
 mod stumble;
 mod traversal;
+mod weapon_pose;
 use bots::{Bot, bot_tick};
 use raid::{lobby_tick, objectives_tick};
 use simulation::{physx_tick, projectiles_tick, sync_ground_state, weapons_tick};
@@ -118,8 +119,6 @@ impl bevy::prelude::Plugin for Plugin {
                     live_body::advance,
                     physx_tick,
                     stumble::limit_stride,
-                    simulation::resolve_eye_lean,
-                    weapons_tick,
                     sync_actor_colliders,
                 )
                     .chain()
@@ -131,6 +130,9 @@ impl bevy::prelude::Plugin for Plugin {
                     live_body::readback,
                     stumble::detect,
                     locomotion::advance,
+                    simulation::resolve_eye_lean,
+                    weapon_pose::resolve,
+                    weapons_tick,
                     ragdoll::capture,
                     projectiles_tick,
                     destruction::release,

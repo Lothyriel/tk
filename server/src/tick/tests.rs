@@ -5,6 +5,7 @@ mod movement;
 mod recoil;
 mod stance;
 mod stumble;
+mod weapon_pose;
 mod weapon_replication;
 
 #[test]

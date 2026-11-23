@@ -458,25 +458,7 @@ pub(super) fn assemble(
                 weapon_root,
                 pieces,
                 contacts,
-                muzzle: entry
-                    .resolved
-                    .assembly
-                    .anchors
-                    .get(&common::catalog::AnchorKind::DeviceExit)
-                    .or_else(|| {
-                        entry
-                            .resolved
-                            .assembly
-                            .anchors
-                            .get(&common::catalog::AnchorKind::Bore)
-                    })
-                    .copied()
-                    .unwrap_or_else(|| {
-                        Transform::from_translation(
-                            common::weapon_animation::WeaponRig::for_weapon(entry.resolved.class)
-                                .muzzle,
-                        )
-                    }),
+                muzzle: common::weapon_animation::configured_outlet(&entry.resolved),
                 hands,
             });
     }
