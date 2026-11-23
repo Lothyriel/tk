@@ -43,28 +43,85 @@ impl bevy::prelude::Plugin for Plugin {
             spawn_ammo_hud,
         );
 
-        app.add_systems(Startup, startup_systems).add_systems(
-            Update,
-            (
-                change_fov.after(feedback::advance),
-                fit_view_aspect
-                    .after(change_fov)
-                    .before(feedback::animate_local),
-                sync_local_player_rotation,
-                sync_local_view,
-                sync_local_alive_visibility,
-                ensure_weapon_view
-                    .before(feedback::animate_local)
-                    .before(sync_view_weapon_visibility),
-                sync_view_weapon_visibility.after(feedback::advance),
-                sync_ammo_hud,
-                sync_barrel_laser
-                    .after(voxel::configured::PoseConfigured)
-                    .after(sync_view_weapon_visibility),
-                sync_loot_visuals,
-                sync_barrier_visuals,
+        app.add_systems(Startup, startup_systems)
+            .add_systems(
+                Update,
+                (
+                    change_fov.after(feedback::advance),
+                    fit_view_aspect
+                        .after(change_fov)
+                        .before(feedback::animate_local),
+                    sync_local_player_rotation,
+                    sync_local_view,
+                    sync_local_alive_visibility,
+                    ensure_weapon_view
+                        .before(feedback::animate_local)
+                        .before(sync_view_weapon_visibility),
+                    sync_view_weapon_visibility.after(feedback::advance),
+                    sync_ammo_hud,
+                    sync_barrel_laser
+                        .after(voxel::configured::PoseConfigured)
+                        .after(sync_view_weapon_visibility),
+                    sync_loot_visuals,
+                    sync_barrier_visuals,
+                )
+                    .in_set(ClientSystems::Present),
             )
-                .in_set(ClientSystems::Present),
+            .add_systems(
+                PostUpdate,
+                trace_shot_pose.after(bevy::transform::TransformSystems::Propagate),
+            );
+    }
+}
+
+// Compare a newly received authoritative shot against the current rendered
+// assembly in world coordinates. The two samples have different timestamps;
+// retain both clocks so transport/interpolation error is not called pose error.
+fn trace_shot_pose(
+    session: Res<ClientSession>,
+    id: Res<PlayerId>,
+    roots: Query<
+        (
+            &ChildOf,
+            &GlobalTransform,
+            &voxel::configured::ConfiguredPose,
+            &Visibility,
+        ),
+        With<WeaponMeshRoot>,
+    >,
+    views: Query<&WeaponViewModel>,
+    mut last: Local<Option<(u32, u64)>>,
+) {
+    if std::env::var_os("TK_SHOT_DIAGNOSTICS").is_none() {
+        return;
+    }
+    let Some(player) = session.local(id.0) else {
+        return;
+    };
+    let Some((_, root, pose, _)) = roots.iter().find(|(parent, _, _, visibility)| {
+        **visibility != Visibility::Hidden
+            && views.get(parent.0).is_ok_and(|v| v.weapon == player.weapon)
+    }) else {
+        return;
+    };
+    let matrix = root.to_matrix() * pose.muzzle.to_matrix();
+    let visible_muzzle = matrix.transform_point3(Vec3::ZERO);
+    let visible_bore = matrix.transform_vector3(Vec3::NEG_Z).normalize_or_zero();
+    for shot in session.shots.iter().filter(|s| s.shooter == id.0) {
+        if last.is_some_and(|(raid, id)| raid == session.raid.raid_id && shot.id <= id) {
+            continue;
+        }
+        *last = Some((session.raid.raid_id, shot.id));
+        let origin = Vec3::from(shot.muzzle);
+        let direction = Vec3::from(shot.direction);
+        info!(
+            "SHOT POSE id={} shot_time={} snapshot_time={} snapshot_sequence={} visible_muzzle={visible_muzzle:?} visible_bore={visible_bore:?} shot_muzzle={origin:?} shot_direction={direction:?} distance={} angle_degrees={}",
+            shot.id,
+            shot.time,
+            session.simulation_time,
+            session.last_sequence,
+            visible_muzzle.distance(origin),
+            visible_bore.angle_between(direction).to_degrees()
         );
     }
 }

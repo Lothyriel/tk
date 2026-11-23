@@ -1030,6 +1030,9 @@ fn drive(
                     .pov_stride
                     .input(&mut input, &mut turn, time.delta_secs().min(0.05));
                 driver.pov_turn = turn;
+                if std::env::var_os("TK_SHOT_DIAGNOSTICS").is_some() {
+                    input.fire = true;
+                }
             } else if preset == "handling-route" && driver.pov_stop_lean == pov::StopLean::Finish {
                 driver.pov_handling.input(&mut input);
             } else if matches!(

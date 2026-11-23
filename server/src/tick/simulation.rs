@@ -354,6 +354,7 @@ pub(super) fn weapons_tick(
         &Transform,
         &MovementState,
         &BodyHealth,
+        Option<&ArmorState>,
         &Client,
         &PoseState,
         &Participant,
@@ -362,8 +363,20 @@ pub(super) fn weapons_tick(
         Has<Bot>,
     )>,
 ) {
-    for (entity, input, transform, movement, body, client, pose, player, mut arsenal, last, bot) in
-        &mut query
+    for (
+        entity,
+        input,
+        transform,
+        movement,
+        body,
+        armor,
+        client,
+        pose,
+        player,
+        mut arsenal,
+        last,
+        bot,
+    ) in &mut query
     {
         if raid.phase != RaidPhase::Active
             || player.status != RaidStatus::Active
@@ -431,9 +444,37 @@ pub(super) fn weapons_tick(
             Transform::from_translation(eye),
         ));
         if std::env::var_os("TK_SHOT_DIAGNOSTICS").is_some() {
+            let (left, right) = body.anatomy.leg_support();
+            let rig = common::humanoid::configured::evaluate_with_carry(
+                pose,
+                [left, right],
+                spec,
+                &arsenal.current().mechanics().snapshot(),
+                None,
+                armor.map(common::humanoid::configured::shoulder_cover),
+            );
+            let body_muzzle = rig.ok().and_then(|rig| rig.weapon).and_then(|weapon| {
+                spec.assembly
+                    .anchors
+                    .get(&common::catalog::AnchorKind::DeviceExit)
+                    .or_else(|| {
+                        spec.assembly
+                            .anchors
+                            .get(&common::catalog::AnchorKind::Bore)
+                    })
+                    .map(|exit| {
+                        transform
+                            .mul_transform(weapon.root)
+                            .mul_transform(*exit)
+                            .translation
+                    })
+            });
             info!(
-                "SHOT ORIGIN id={id} shooter={} eye={eye:?} muzzle={muzzle:?} direction={direction:?} ads={} clearance=posed-anatomy-and-world",
-                client.id, pose.ads
+                "SHOT ORIGIN id={id} shooter={} tick_time={} body={:?} eye={eye:?} muzzle={muzzle:?} body_muzzle={body_muzzle:?} direction={direction:?} ads={} clearance=posed-anatomy-and-world",
+                client.id,
+                time.elapsed_secs(),
+                transform.translation,
+                pose.ads
             );
         }
         world_state.fired_projectiles.push(FiredProjectileData {
