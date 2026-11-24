@@ -908,3 +908,112 @@ fn raised_rifle_and_pistol_track_a_turn_without_passing_through_cover() {
         );
     }
 }
+
+#[test]
+fn m4_sight_remains_centered_turning_left_and_right_under_held_ads() {
+    use common::{catalog::AnchorKind, humanoid::PoseState};
+    for strafe in [false, true] {
+        for direction in [1.0, -1.0] {
+            for pitch in [-0.3, 0.0, 0.3] {
+                let (mut app, actor, other) = physical_fixture();
+                app.world_mut()
+                    .get_mut::<Transform>(other)
+                    .unwrap()
+                    .translation
+                    .x += 6.0;
+                *app.world_mut().get_mut::<ArmorState>(actor).unwrap() =
+                    ArmorState::from_loadout(Loadout {
+                        armor: ArmorKind::Heavy,
+                        ..default()
+                    });
+                let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+                input.aim = true;
+                input.camera.pitch = pitch;
+                held_steps(&mut app, actor, 120);
+                app.world_mut().get_mut::<ClientInput>(actor).unwrap().left = strafe;
+                for frame in 0..180 {
+                    app.world_mut()
+                        .get_mut::<ClientInput>(actor)
+                        .unwrap()
+                        .camera
+                        .yaw = direction * frame as f32 * (3.0 / 128.0);
+                    held_steps(&mut app, actor, 1);
+                    let world = app.world();
+                    let posture = world.get::<PoseState>(actor).unwrap();
+                    let root = posture.weapon_root.unpack().unwrap_or_else(|| panic!("missing root: strafe={strafe} direction={direction} pitch={pitch} frame={frame}"));
+                    let spec = world.get::<Arsenal>(actor).unwrap().current().spec();
+                    let sight =
+                        root.transform_point(spec.assembly.anchors[&AnchorKind::Sight].translation);
+                    let look = Quat::from_rotation_x(posture.aim_pitch) * Vec3::NEG_Z;
+                    let error = (sight - Vec3::Y * PLAYER_VIEW_HEIGHT).cross(look).length();
+                    assert!(
+                        error < 0.012,
+                        "strafe={strafe} direction={direction} pitch={pitch} frame={frame} error={error} sight={sight:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn ads_tracks_left_turn_while_recovering_from_retraction() {
+    use common::{catalog::AnchorKind, humanoid::PoseState};
+    let (mut app, actor, other) = physical_fixture();
+    app.world_mut()
+        .get_mut::<Transform>(other)
+        .unwrap()
+        .translation
+        .x += 6.0;
+    app.world_mut().get_mut::<ClientInput>(actor).unwrap().aim = true;
+    held_steps(&mut app, actor, 110);
+    let origin = app.world().get::<Transform>(actor).unwrap().translation;
+    let face = origin.z - 0.60;
+    let wall = app
+        .world_mut()
+        .spawn((
+            SurfaceKind::Concrete,
+            Collider::cuboid(1.0, 1.5, 0.05),
+            Transform::from_xyz(origin.x, origin.y, face - 0.05),
+        ))
+        .id();
+    held_steps(&mut app, actor, 35);
+    let unobstructed = app.world().get::<Arsenal>(actor).unwrap().current().spec();
+    let outlet = common::weapon_animation::configured_outlet(unobstructed);
+    let sight = unobstructed.assembly.anchors[&AnchorKind::Sight];
+    let blocked = app
+        .world()
+        .get::<PoseState>(actor)
+        .unwrap()
+        .weapon_root
+        .unpack()
+        .expect("retracted pose");
+    assert!(origin.z + blocked.transform_point(outlet.translation).z > face);
+    app.world_mut().despawn(wall);
+    for frame in 1..38 {
+        app.world_mut()
+            .get_mut::<ClientInput>(actor)
+            .unwrap()
+            .camera
+            .yaw = frame as f32 * 0.035;
+        held_steps(&mut app, actor, 1);
+        if frame > 14 {
+            let root = app
+                .world()
+                .get::<PoseState>(actor)
+                .unwrap()
+                .weapon_root
+                .unpack()
+                .expect("turn remains usable");
+            let sight = root.transform_point(sight.translation);
+            let error = (sight - Vec3::Y * PLAYER_VIEW_HEIGHT)
+                .cross(Vec3::NEG_Z)
+                .length();
+            let angle = (root.rotation * Vec3::NEG_Z).angle_between(Vec3::NEG_Z);
+            assert!(
+                error < 0.02 && angle < 0.026,
+                "frame={frame} sight miss={error} angle={angle}"
+            );
+        }
+    }
+}

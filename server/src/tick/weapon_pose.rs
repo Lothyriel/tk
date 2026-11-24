@@ -41,6 +41,7 @@ pub(super) struct Previous {
     actor: Vec3,
     actor_rotation: Quat,
     aim_roll: f32,
+    raised_aim: Option<Transform>,
     weapon_root: Transform,
     retraction: f32,
     yaw: f32,
@@ -165,12 +166,32 @@ fn calibrate(
                 weight,
             );
             let braced = point - rotation * sight.translation;
-            for fraction in [1.0, 0.75, 0.5, 0.25] {
-                let root = Transform::from_translation(preferred.lerp(braced, weight * fraction))
-                    .with_rotation(rotation);
+            let forward = actor.rotation.inverse() * forward;
+            // The stock/armor posture can place the first sight depth just
+            // outside a hand's reach during a turn. Try along the sight line
+            // before moving it sideways or lowering it.
+            for adjustment in [0.0, -0.025, 0.025, -0.05, 0.05, -0.075, 0.075, -0.10, 0.10] {
+                if (point - eye).dot(forward) + adjustment < 0.015 {
+                    continue;
+                }
+                let root = Transform::from_translation(
+                    preferred.lerp(braced + forward * adjustment, weight),
+                )
+                .with_rotation(rotation);
                 if let Some(solved) = solve_fixed(root, contacts, posture) {
                     aligned = Some(solved);
                     break;
+                }
+            }
+            if aligned.is_none() {
+                for fraction in [0.75, 0.5, 0.25] {
+                    let root =
+                        Transform::from_translation(preferred.lerp(braced, weight * fraction))
+                            .with_rotation(rotation);
+                    if let Some(solved) = solve_fixed(root, contacts, posture) {
+                        aligned = Some(solved);
+                        break;
+                    }
                 }
             }
         }
@@ -537,6 +558,8 @@ pub(super) fn resolve(
             rotation: Quat::from(&camera),
             delta: time.delta_secs(),
         };
+        let raised_aim = (pose.ads > 0.98)
+            .then(|| Transform::from_translation(aim.eye).with_rotation(aim.rotation));
         let Some(base) = calibrate(base, posture, contacts, spec, *actor, pose.ads, aim) else {
             continue;
         };
@@ -686,9 +709,26 @@ pub(super) fn resolve(
                                     && old.crouched == (pose.crouch > 0.5)
                             }) {
                                 let target = actor.mul_transform(solved.root);
-                                let distance =
-                                    old.weapon_root.translation.distance(target.translation);
-                                let angle = old.weapon_root.rotation.angle_between(target.rotation);
+                                // During ADS, recover the obstruction displacement
+                                // relative to the eye. Limiting the old world rotation
+                                // directly makes the barrel lag behind a continuing turn.
+                                // The sweep below still starts at the actual old pose.
+                                let start = if let Some((previous, current)) =
+                                    old.raised_aim.zip(raised_aim)
+                                {
+                                    let turn = current.rotation * previous.rotation.inverse();
+                                    Transform::from_translation(
+                                        current.translation
+                                            + turn
+                                                * (old.weapon_root.translation
+                                                    - previous.translation),
+                                    )
+                                    .with_rotation(turn * old.weapon_root.rotation)
+                                } else {
+                                    old.weapon_root
+                                };
+                                let distance = start.translation.distance(target.translation);
+                                let angle = start.rotation.angle_between(target.rotation);
                                 let moving = Vec3::from(pose.velocity).length() > 0.5;
                                 // Follow actual vertical as well as horizontal body
                                 // displacement. Otherwise jumping or landing can
@@ -719,12 +759,10 @@ pub(super) fn resolve(
                                     let mut accepted = None;
                                     for scale in [1.0, 0.75, 0.5, 0.25, 0.0] {
                                         let weight = factor * scale;
-                                        let world_position = old
-                                            .weapon_root
-                                            .translation
-                                            .lerp(target.translation, weight);
+                                        let world_position =
+                                            start.translation.lerp(target.translation, weight);
                                         let world_rotation =
-                                            old.weapon_root.rotation.slerp(target.rotation, weight);
+                                            start.rotation.slerp(target.rotation, weight);
                                         let local = Transform::from_translation(
                                             actor.rotation.inverse()
                                                 * (world_position - actor.translation),
@@ -802,6 +840,7 @@ pub(super) fn resolve(
                                     actor: actor.translation,
                                     actor_rotation: actor.rotation,
                                     aim_roll: pose.aim_roll,
+                                    raised_aim,
                                     weapon_root: actor.mul_transform(solved.root),
                                     retraction: accepted_retraction,
                                     yaw: accepted_yaw,

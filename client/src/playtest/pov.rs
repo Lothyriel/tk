@@ -535,7 +535,12 @@ impl ArmedStride {
         match self {
             Self::Turn => *turn = (*turn - 1.8 * dt).max(Self::TURN_YAW),
             Self::RecoverAim => {
-                *turn -= 0.6 * dt;
+                let rate = if std::env::var_os("TK_PLAYTEST_ADS_LEFT").is_some() {
+                    3.0
+                } else {
+                    -0.6
+                };
+                *turn += rate * dt;
             }
             _ => {}
         }
