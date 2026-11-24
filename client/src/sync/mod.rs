@@ -18,7 +18,6 @@ pub(crate) fn add_inventory_test_receive(app: &mut App) {
         .add_systems(PreUpdate, inventory::receive);
 }
 mod motion;
-#[cfg(test)]
 pub(crate) use motion::LocalMotionPose;
 
 #[derive(Debug, Default, Resource)]
@@ -240,6 +239,12 @@ fn recv_players_pos(
                 snapshot.simulation_time,
                 motion::LocalMotionPose {
                     position: player.pos.into(),
+                    aim_rotation: Some(Quat::from_euler(
+                        EulerRot::YXZ,
+                        player.rot.yaw,
+                        player.pose.aim_pitch,
+                        player.pose.aim_roll,
+                    )),
                     weapon_root: player.pose.weapon_root.unpack().map(|root| {
                         Transform::from_translation(player.pos.into())
                             .with_rotation(Quat::from_rotation_y(player.rot.yaw))
@@ -378,7 +383,6 @@ fn weapon_shoulders(
 fn discontinuous(previous: &ClientData, next: &ClientData) -> bool {
     previous.weapon_instance != next.weapon_instance
         || previous.configuration != next.configuration
-        || previous.pose.weapon_root.unpack().is_some() != next.pose.weapon_root.unpack().is_some()
         || previous.life != next.life
         || previous.pose.mode != next.pose.mode
         || previous.pose.prone != next.pose.prone

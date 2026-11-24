@@ -532,13 +532,15 @@ impl ArmedStride {
         input.left = *self == Self::RecoverAim;
         input.run = matches!(self, Self::Run | Self::Turn);
         input.aim = matches!(self, Self::Turn | Self::RecoverAim);
-        if matches!(
-            self,
-            Self::Turn | Self::RecoverAim | Self::Stop | Self::Finish
-        ) {
-            *turn = (*turn - 1.8 * dt).max(Self::TURN_YAW);
+        match self {
+            Self::Turn => *turn = (*turn - 1.8 * dt).max(Self::TURN_YAW),
+            Self::RecoverAim => {
+                *turn -= 0.6 * dt;
+            }
+            _ => {}
         }
         input.camera.yaw = *turn;
+        input.camera.pitch = (*turn - Self::TURN_YAW).min(0.0) * 0.20;
     }
 
     pub(super) fn observe(stage: u8, player: &common::ClientData) -> Option<&'static str> {

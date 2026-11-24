@@ -726,6 +726,24 @@ fn fit_view_aspect(
     }
 }
 
+// ADS uses the same look sample as the physical weapon. Blend during
+// raise/lower so hip mouse look remains immediate.
+fn presented_aim(
+    camera: common::CameraInput,
+    motion: Option<crate::sync::LocalMotionPose>,
+) -> common::CameraInput {
+    let Some(motion) = motion else {
+        return camera;
+    };
+    let Some(confirmed) = motion.aim_rotation else {
+        return camera;
+    };
+    let voluntary = Quat::from(&camera);
+    voluntary
+        .slerp(confirmed, common::weapon_animation::ease(motion.ads))
+        .into()
+}
+
 fn sync_local_view(
     player_input: Res<LocalInput>,
     feedback: Option<Res<feedback::Feedback>>,
@@ -763,8 +781,14 @@ fn sync_local_view(
     let vertical_offset = crouch * PLAYER_CROUCH_VIEW_OFFSET;
     let prone = motion.map_or(0.0, |pose| pose.prone);
     let lean = motion.map_or(player_input.camera.roll, |pose| pose.roll);
-    let recoil_roll = camera.roll - player_input.camera.roll;
-    let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, lean + recoil_roll);
+    let camera = presented_aim(
+        common::CameraInput {
+            roll: lean + camera.roll - player_input.camera.roll,
+            ..camera
+        },
+        motion,
+    );
+    let rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera.pitch, camera.roll);
     let eye = (common::humanoid::aim_lean_offset(lean)
         + Vec3::Y * (PLAYER_VIEW_HEIGHT + vertical_offset + bob))
         .lerp(common::stance::Stance::Prone.eye_offset(), prone);
@@ -785,10 +809,11 @@ fn sync_local_player_rotation(
     feedback: Option<Res<feedback::Feedback>>,
     id: Option<Res<PlayerId>>,
     session: Option<Res<ClientSession>>,
+    time: Option<Res<Time<Real>>>,
     mut player_transform: Single<&mut Transform, With<LocalPlayer>>,
 ) {
     let mut voluntary = player_input.camera;
-    if let (Some(session), Some(id)) = (session, id.as_ref())
+    if let (Some(session), Some(id)) = (session.as_ref(), id.as_ref())
         && let Some(player) = session.local(id.0).filter(|player| player.pose.prone)
     {
         voluntary.yaw = player.rot.yaw;
@@ -797,7 +822,20 @@ fn sync_local_player_rotation(
         (Some(feedback), Some(id)) => feedback.camera(id.0, voluntary),
         _ => voluntary,
     };
-    player_transform.rotation = Quat::from_rotation_y(camera.yaw);
+    let motion = session
+        .zip(time)
+        .and_then(|(session, time)| session.local_motion.sample(time.elapsed_secs_f64()));
+    player_transform.rotation = Quat::from_rotation_y(
+        presented_aim(
+            common::CameraInput {
+                roll: motion.map_or(voluntary.roll, |pose| pose.roll) + camera.roll
+                    - voluntary.roll,
+                ..camera
+            },
+            motion,
+        )
+        .yaw,
+    );
 }
 
 fn sync_local_alive_visibility(
@@ -1189,6 +1227,68 @@ mod view_tests {
                 assert!(transform.rotation().dot(expected).abs() > 0.99999);
                 assert!(transform.translation().distance(eye) < 0.00001);
             }
+        }
+    }
+
+    #[test]
+    fn raised_sights_use_interpolated_yaw_and_pitch_on_both_cameras() {
+        let first = Quat::from_euler(EulerRot::YXZ, 0.10, -0.20, 0.0);
+        let second = Quat::from_euler(EulerRot::YXZ, 0.40, 0.28, 0.0);
+        let mut app = App::new();
+        let mut session = ClientSession::default();
+        for (time, rotation) in [(0.0, first), (0.04, second)] {
+            session.local_motion.record(
+                time,
+                crate::sync::LocalMotionPose {
+                    aim_rotation: Some(rotation),
+                    weapon_root: (time == 0.0).then_some(Transform::IDENTITY),
+                    ads: 1.0,
+                    ..default()
+                },
+                f64::from(time),
+                false,
+            );
+        }
+        let mut clock = Time::<Real>::default();
+        clock.advance_by(std::time::Duration::from_millis(70));
+        app.add_plugins(TransformPlugin)
+            .insert_resource(session)
+            .insert_resource(clock)
+            .insert_resource(LocalInput(common::ClientInput {
+                camera: common::CameraInput {
+                    yaw: 0.9,
+                    pitch: -0.7,
+                    roll: 0.0,
+                },
+                ..default()
+            }))
+            .add_systems(Update, (sync_local_player_rotation, sync_local_view));
+        let parent = app
+            .world_mut()
+            .spawn((
+                LocalPlayer,
+                PlayerVisualState::default(),
+                Transform::IDENTITY,
+            ))
+            .id();
+        let cameras = [0, 1].map(|_| {
+            app.world_mut()
+                .spawn((
+                    LocalView,
+                    BaseLocalOffset(Vec3::ZERO),
+                    Transform::IDENTITY,
+                    ChildOf(parent),
+                ))
+                .id()
+        });
+        app.update();
+        for camera in cameras {
+            let rotation = app
+                .world()
+                .get::<GlobalTransform>(camera)
+                .unwrap()
+                .rotation();
+            assert!(rotation.dot(first.slerp(second, 0.5)).abs() > 0.99999);
         }
     }
 

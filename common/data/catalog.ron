@@ -43,6 +43,8 @@
             components: [(node: 1, definition: 102, parent: None, socket: "magazine", position: 0)],
             assembly: (platform: "m1911", caliber: "45acp", mass_kg: 1.03, geometry: (
                 anchors: [
+                    // Centre of the visible rear notch at the front-post height.
+                    (kind: Sight, pose: (translation: (0.0, 0.118, 0.0), rotation: (0.0, 0.0, 0.0, 1.0))),
                     (kind: TriggerGrip, pose: (translation: (0.025, -0.085, 0.015), rotation: (0.0, 0.0, 0.0, 1.0))),
                     (kind: SupportGrip, pose: (translation: (-0.045, -0.085, -0.015), rotation: (0.0, 0.0, 0.0, 1.0))),
                     (kind: ControlGrip, pose: (translation: (-0.045, 0.118, -0.07), rotation: (0.123113036, -0.6963068, -0.123113036, 0.6963068))),

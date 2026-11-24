@@ -19,6 +19,7 @@ struct Sample {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct LocalMotionPose {
     pub position: Vec3,
+    pub aim_rotation: Option<Quat>,
     pub weapon_mechanics: common::catalog::MechanicalSnapshot,
     pub weapon_root: Option<Transform>,
     pub weapon_shoulders: Option<([Vec3; 2], [Vec3; 2])>,
@@ -86,7 +87,12 @@ impl LocalMotion {
                     (next.pose.stride_phase - previous.pose.stride_phase + PI).rem_euclid(TAU) - PI;
                 let a = previous.pose.weapon_mechanics;
                 let b = next.pose.weapon_mechanics;
-                let weapon_alpha = if a.action_id != b.action_id
+                // Losing a reachable weapon pose at cover cuts only the weapon.
+                // Keep interpolating the camera/body through that snapshot.
+                let weapon_cut =
+                    previous.pose.weapon_root.is_some() != next.pose.weapon_root.is_some();
+                let weapon_alpha = if weapon_cut
+                    || a.action_id != b.action_id
                     || a.kind != b.kind
                     || a.phase != b.phase
                     || a.magazine_inserted != b.magazine_inserted
@@ -101,6 +107,11 @@ impl LocalMotion {
                 return Some((
                     LocalMotionPose {
                         position: previous.pose.position.lerp(next.pose.position, alpha),
+                        aim_rotation: previous
+                            .pose
+                            .aim_rotation
+                            .zip(next.pose.aim_rotation)
+                            .map(|(a, b)| a.slerp(b, alpha)),
                         weapon_mechanics,
                         weapon_root: match (previous.pose.weapon_root, next.pose.weapon_root) {
                             (Some(a), Some(b)) => Some(
@@ -109,7 +120,13 @@ impl LocalMotion {
                                 )
                                 .with_rotation(a.rotation.slerp(b.rotation, weapon_alpha)),
                             ),
-                            _ => None,
+                            (a, b) => {
+                                if alpha < 1.0 {
+                                    a
+                                } else {
+                                    b
+                                }
+                            }
                         },
                         weapon_shoulders: match (
                             previous.pose.weapon_shoulders,
@@ -121,7 +138,13 @@ impl LocalMotion {
                                     a.1[i].lerp(b.1[i], weapon_alpha).normalize_or_zero()
                                 }),
                             )),
-                            _ => None,
+                            (a, b) => {
+                                if alpha < 1.0 {
+                                    a
+                                } else {
+                                    b
+                                }
+                            }
                         },
                         crouch: previous.pose.crouch.lerp(next.pose.crouch, alpha),
                         prone: previous.pose.prone.lerp(next.pose.prone, alpha),
@@ -529,6 +552,7 @@ mod tests {
         let mut motion = LocalMotion::default();
         let standing = LocalMotionPose {
             position: Vec3::new(0.0, 1.0, 0.0),
+            aim_rotation: None,
             weapon_mechanics: Default::default(),
             weapon_root: None,
             weapon_shoulders: None,
@@ -545,6 +569,7 @@ mod tests {
         };
         let crouched = LocalMotionPose {
             position: Vec3::new(2.0, 0.7, -1.0),
+            aim_rotation: None,
             weapon_mechanics: Default::default(),
             weapon_root: None,
             weapon_shoulders: None,

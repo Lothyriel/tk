@@ -826,3 +826,85 @@ fn ads_sight_stays_on_eye_axis_during_strafe_and_reversal() {
     }
     assert!(worst < 0.01, "strafe displaced the sight by {worst:.3} m");
 }
+
+#[test]
+fn raised_rifle_and_pistol_track_a_turn_without_passing_through_cover() {
+    use common::{catalog::AnchorKind, humanoid::PoseState};
+
+    for slot in [EquipmentSlot::Primary, EquipmentSlot::Sidearm] {
+        let (mut app, actor, other) = physical_fixture();
+        app.world_mut()
+            .get_mut::<Transform>(other)
+            .unwrap()
+            .translation
+            .x += 5.0;
+        let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+        input.aim = true;
+        input.weapon = slot;
+        held_steps(&mut app, actor, 200);
+        for frame in 0..24 {
+            let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+            input.camera.yaw = frame as f32 * 0.04;
+            input.camera.pitch = frame as f32 * 0.012;
+            held_steps(&mut app, actor, 1);
+
+            let world = app.world();
+            let actor_root = world.get::<Transform>(actor).unwrap();
+            let pose = world.get::<PoseState>(actor).unwrap();
+            assert!(pose.ads > 0.98);
+            let root =
+                actor_root.mul_transform(pose.weapon_root.unpack().expect("unobstructed aim"));
+            let spec = world.get::<Arsenal>(actor).unwrap().current().spec();
+            let sight = root.transform_point(spec.assembly.anchors[&AnchorKind::Sight].translation);
+            let eye = actor_root.translation + Vec3::Y * PLAYER_VIEW_HEIGHT;
+            let look = actor_root.rotation * Quat::from_rotation_x(pose.aim_pitch) * Vec3::NEG_Z;
+            let error = (sight - eye).cross(look).length();
+            assert!(
+                error < 0.012,
+                "{slot:?}, frame {frame}: sight missed eye axis by {error:.3} m"
+            );
+        }
+        let origin = app.world().get::<Transform>(actor).unwrap().translation;
+        let face = origin.z - 0.53;
+        let wall = app
+            .world_mut()
+            .spawn((
+                SurfaceKind::Concrete,
+                Collider::cuboid(1.5, 1.5, 0.05),
+                Transform::from_xyz(origin.x, origin.y, face - 0.05),
+            ))
+            .id();
+        // Allow Rapier to register cover before turning back across it.
+        held_steps(&mut app, actor, 3);
+        for frame in (0..24).rev() {
+            let mut input = app.world_mut().get_mut::<ClientInput>(actor).unwrap();
+            input.camera.yaw = frame as f32 * 0.04;
+            input.camera.pitch = frame as f32 * 0.012;
+            held_steps(&mut app, actor, 1);
+            let world = app.world();
+            let pose = world.get::<PoseState>(actor).unwrap();
+            if let Some(weapon) = pose.weapon_root.unpack() {
+                let spec = world.get::<Arsenal>(actor).unwrap().current().spec();
+                let outlet = world
+                    .get::<Transform>(actor)
+                    .unwrap()
+                    .mul_transform(weapon)
+                    .mul_transform(common::weapon_animation::configured_outlet(spec));
+                assert!(
+                    outlet.translation.z >= face,
+                    "{slot:?} outlet crossed the wall"
+                );
+            }
+        }
+        app.world_mut().despawn(wall);
+        held_steps(&mut app, actor, 80);
+        assert!(
+            app.world()
+                .get::<PoseState>(actor)
+                .unwrap()
+                .weapon_root
+                .unpack()
+                .is_some()
+        );
+    }
+}

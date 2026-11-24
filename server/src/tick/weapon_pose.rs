@@ -110,11 +110,16 @@ fn calibrate(
     let forward = aim.rotation * Vec3::NEG_Z;
     let target = aim.eye + forward * M4A1_GAME_ZERO;
     let eye = actor.rotation.inverse() * (aim.eye - actor.translation);
-    let sight = spec.assembly.anchors.get(&AnchorKind::Sight);
+    let sight = spec.assembly.anchors.get(&AnchorKind::Sight).copied();
     let sight_point = sight.map(|sight| {
         let forward = actor.rotation.inverse() * forward;
         let depth = (base.root.transform_point(sight.translation) - eye).dot(forward);
-        eye + forward * depth.max(0.015)
+        let depth = if spec.class == common::WeaponKind::Pistol {
+            0.43
+        } else {
+            depth.max(0.015)
+        };
+        eye + forward * depth
     });
     let trigger = base.root.transform_point(contacts.trigger.translation);
     let mut result = base;
@@ -697,7 +702,20 @@ pub(super) fn resolve(
                                 let factor = (translation_limit / distance.max(1e-6))
                                     .min(rotation_limit / angle.max(1e-6))
                                     .min(1.0);
-                                if factor < 1.0 {
+                                // A clear, fully raised weapon follows the aim input.
+                                // The candidate's entire path was already swept above.
+                                let clear_ads = pose.ads > 0.98
+                                    && [
+                                        retraction,
+                                        yaw,
+                                        lateral,
+                                        old.retraction,
+                                        old.yaw,
+                                        old.lateral,
+                                    ]
+                                    .into_iter()
+                                    .all(|offset| offset == 0.0);
+                                if factor < 1.0 && !clear_ads {
                                     let mut accepted = None;
                                     for scale in [1.0, 0.75, 0.5, 0.25, 0.0] {
                                         let weight = factor * scale;

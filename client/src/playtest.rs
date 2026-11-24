@@ -905,7 +905,11 @@ fn drive(
             }
             let previous_lean = driver.pov_stop_lean_roll;
             input.camera = CameraInput::default();
-            input.weapon = EquipmentSlot::Primary;
+            input.weapon = if armed && std::env::var_os("TK_PLAYTEST_ADS_SIDEARM").is_some() {
+                EquipmentSlot::Sidearm
+            } else {
+                EquipmentSlot::Primary
+            };
             let elapsed = now - driver.since;
             let ads = local.pose.ads;
             let visual_ready = projections.configured.iter().any(|(weapon, visible)| {
@@ -919,7 +923,7 @@ fn drive(
             }
             let visual_settled = visual_ready
                 && now - *driver.pov_visual_since.get_or_insert(now) >= pov::VIEW_WARMUP_SECONDS;
-            let ready = local.pose.grounded && visual_settled;
+            let ready = local.pose.grounded && visual_settled && local.weapon_slot == input.weapon;
             let before_prone = driver.pov_prone;
             let name = match preset.as_str() {
                 "action-fault" => driver.pov_fault.advance(elapsed, ready, local)
